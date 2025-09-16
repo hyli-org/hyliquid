@@ -71,9 +71,4 @@ cargo build -p contracts --features build --features all
 
 This ensures builds are consistent across environments.
 
-If you want to build in non-reproducible mode (to test contract compilation):
-```bash
-cargo build -p contracts --features build --features all --features nonreproducible
-```
-
 For more details, refer to the [Hyli documentation](https://docs.hyli.org).

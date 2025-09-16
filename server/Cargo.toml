@@ -3,14 +3,14 @@ name = "server"
 edition = "2021"
 
 [dependencies]
+orderbook = { workspace = true, features = ["client"] }
 sdk = { workspace = true, features = ["tracing"] }
 client-sdk = { workspace = true, features = ["risc0", "rest"] }
 hyli-modules = { workspace = true }
-contract1 = { workspace = true, features = ["client"] }
 # Remove features if you want reproducible builds with docker
-contracts = { workspace = true, features = ["nonreproducible"] }
+contracts = { workspace = true, features = [] }
 
-risc0-zkvm = { version = "2.0.0", features = ["prove"] }
+sp1-sdk = { workspace = true, default-features = false, features = ["network"] }
 
 config = { version = "0.15.11", default-features = false, features = ["toml"] }
 axum = "0.8.3"
@@ -41,14 +41,3 @@ prometheus = { version = "0.13.4" }
 
 
 zip = "=2.3.0"
-# risc0-binfmt = "2.0.0"
-# risc0-circuit-keccak = "2.0.0"
-# risc0-zkp = "2.0.0"
-# risc0-circuit-keccak-sys = "2.0.0"
-# risc0-circuit-recursion = "2.0.0"
-# risc0-sys = "1.4.0"
-# risc0-circuit-recursion-sys = "2.0.0"
-# risc0-groth16 = "2.0.0"
-
-[features]
-nonreproducible = ["contracts/nonreproducible"]

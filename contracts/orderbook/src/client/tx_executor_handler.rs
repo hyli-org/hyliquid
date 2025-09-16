@@ -2,18 +2,13 @@ use anyhow::Context;
 use client_sdk::transaction_builder::TxExecutorHandler;
 use sdk::{utils::as_hyli_output, Blob, Calldata, Contract, ContractName, ZkContract};
 
-use crate::Contract1;
+use crate::Orderbook;
 
-pub mod metadata {
-    pub const CONTRACT1_ELF: &[u8] = include_bytes!("../../contract1.img");
-    pub const PROGRAM_ID: [u8; 32] = sdk::str_to_u8(include_str!("../../contract1.txt"));
-}
-
-impl TxExecutorHandler for Contract1 {
-    type Contract = Self;
+impl TxExecutorHandler for Orderbook {
+    type Contract = Orderbook;
 
     fn build_commitment_metadata(&self, _blob: &Blob) -> anyhow::Result<Vec<u8>> {
-        borsh::to_vec(self).context("Failed to encode Contract1")
+        borsh::to_vec(self).context("Failed to encode Orderbook")
     }
 
     fn handle(&mut self, calldata: &Calldata) -> anyhow::Result<sdk::HyliOutput> {
@@ -30,10 +25,10 @@ impl TxExecutorHandler for Contract1 {
 
     fn construct_state(
         _contract_name: &ContractName,
-        _contract: &Contract,
+        contract: &Contract,
         _metadata: &Option<Vec<u8>>,
     ) -> anyhow::Result<Self> {
-        Ok(Self::default())
+        borsh::from_slice(&contract.state.0).context("Failed to decode Orderbook state")
     }
 
     fn get_state_commitment(&self) -> sdk::StateCommitment {
