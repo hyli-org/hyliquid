@@ -1,0 +1,527 @@
+/* Custom styles for the wallet connection page */
+.wallet-page-wrapper {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #fff5f4 0%, #fff9f5 100%);
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+/* Add decorative background elements */
+.wallet-page-wrapper::before,
+.wallet-page-wrapper::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  opacity: 0.15;
+  pointer-events: none;
+}
+
+.wallet-page-wrapper::before {
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(circle, #ff594b 0%, transparent 70%);
+  top: -300px;
+  right: -300px;
+  animation: float 20s ease-in-out infinite;
+  z-index: 1;
+}
+
+.wallet-page-wrapper::after {
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, #ff9660 0%, transparent 70%);
+  bottom: -200px;
+  left: -200px;
+  animation: float 20s ease-in-out infinite reverse;
+  z-index: 1;
+}
+
+@keyframes float {
+  0%, 100% {
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    transform: translate(-20px, -30px) scale(1.1);
+  }
+}
+
+/* Override HyliWallet styles to match our theme */
+.wallet-page-wrapper .hyli-overlay {
+  background: transparent !important;
+  backdrop-filter: none !important;
+  position: relative !important;
+  z-index: 10 !important;
+}
+
+.wallet-page-wrapper .hyli-modal {
+  background: rgba(255, 255, 255, 0.98) !important;
+  backdrop-filter: blur(20px) saturate(180%) !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15) !important;
+  max-width: 480px !important;
+  animation: modalSlideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  position: relative !important;
+  z-index: 20 !important;
+}
+
+@keyframes modalSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(40px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Style the provider buttons */
+.wallet-page-wrapper .provider-row {
+  transition: all var(--anim-fast) var(--anim-ease) !important;
+  border: 2px solid transparent !important;
+  background: var(--background-alt) !important;
+}
+
+.wallet-page-wrapper .provider-row:hover:not(.disabled) {
+  transform: translateX(4px) !important;
+  border-color: var(--color-primary) !important;
+  background: var(--background-main) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+.wallet-page-wrapper .provider-row .provider-icon {
+  background: var(--background-main) !important;
+  transition: all var(--anim-fast) var(--anim-ease) !important;
+}
+
+.wallet-page-wrapper .provider-row:hover .provider-icon {
+  background: var(--color-primary-emphasis) !important;
+}
+
+.wallet-page-wrapper .provider-row .row-arrow {
+  transition: all var(--anim-fast) var(--anim-ease) !important;
+}
+
+.wallet-page-wrapper .provider-row:hover .row-arrow {
+  color: var(--color-primary) !important;
+  transform: translateX(4px) !important;
+}
+
+/* Style password provider flow */
+.wallet-page-wrapper .hyli-password-provider-flow input {
+  border: 2px solid var(--border-main) !important;
+  transition: all var(--anim-fast) var(--anim-ease) !important;
+}
+
+.wallet-page-wrapper .hyli-password-provider-flow input:focus {
+  border-color: var(--color-primary) !important;
+  box-shadow: 0 0 0 3px var(--color-primary-emphasis) !important;
+}
+
+.wallet-page-wrapper .hyli-password-provider-flow .login-wallet-button,
+.wallet-page-wrapper .hyli-password-provider-flow .create-wallet-button {
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%) !important;
+  box-shadow: var(--shadow-md) !important;
+  transition: all var(--anim-fast) var(--anim-ease) !important;
+  position: relative;
+  overflow: hidden;
+}
+
+.wallet-page-wrapper .hyli-password-provider-flow .login-wallet-button::before,
+.wallet-page-wrapper .hyli-password-provider-flow .create-wallet-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.6s ease;
+}
+
+.wallet-page-wrapper .hyli-password-provider-flow .login-wallet-button:hover::before,
+.wallet-page-wrapper .hyli-password-provider-flow .create-wallet-button:hover::before {
+  left: 100%;
+}
+
+.wallet-page-wrapper .hyli-password-provider-flow .login-wallet-button:hover,
+.wallet-page-wrapper .hyli-password-provider-flow .create-wallet-button:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 8px 24px rgba(255, 89, 75, 0.3) !important;
+}
+
+/* Landing page content */
+.landing-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 40px 20px;
+  position: relative;
+  z-index: 2;
+}
+
+/* Simple landing page */
+.landing-content-simple {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 40px 20px;
+  position: relative;
+  z-index: 2;
+  text-align: center;
+}
+
+.hero-section {
+  text-align: center;
+  margin-bottom: 80px;
+  animation: fadeInUp 0.8s ease-out;
+}
+
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hero-badge {
+  display: inline-block;
+  padding: 8px 20px;
+  background: rgba(255, 89, 75, 0.1);
+  color: #ff594b;
+  border-radius: 30px;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 24px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+.hero-title {
+  font-size: 56px;
+  font-weight: 800;
+  color: #333;
+  margin: 0 0 24px 0;
+  line-height: 1.2;
+}
+
+.landing-content-simple .hero-title {
+  font-size: 64px;
+  margin: 0 0 16px 0;
+  animation: fadeInUp 0.8s ease-out;
+}
+
+.gradient-text {
+  background: linear-gradient(90deg, #ff594b 0%, #ff9660 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-subtitle {
+  font-size: 20px;
+  color: #666;
+  max-width: 600px;
+  margin: 0 auto 48px;
+  line-height: 1.6;
+}
+
+.landing-content-simple .hero-subtitle {
+  font-size: 20px;
+  color: #666;
+  margin: 0 0 48px 0;
+  opacity: 0.8;
+  animation: fadeInUp 0.8s ease-out 0.2s both;
+}
+
+.landing-content-simple .hyli-modal {
+  animation: fadeInUp 0.8s ease-out 0.4s both !important;
+}
+
+/* Features Grid */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 24px;
+  margin-bottom: 80px;
+}
+
+.feature-card {
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  padding: 32px;
+  text-align: center;
+  transition: all 0.3s ease;
+  border: 1px solid rgba(255, 89, 75, 0.1);
+}
+
+.feature-card:hover {
+  transform: translateY(-8px);
+  box-shadow: 0 12px 32px rgba(255, 89, 75, 0.15);
+  border-color: rgba(255, 89, 75, 0.3);
+}
+
+.feature-icon {
+  font-size: 48px;
+  margin-bottom: 16px;
+  display: inline-block;
+  animation: bounce 2s ease-in-out infinite;
+  animation-delay: var(--delay, 0s);
+}
+
+.feature-card:nth-child(1) .feature-icon {
+  --delay: 0s;
+}
+
+.feature-card:nth-child(2) .feature-icon {
+  --delay: 0.2s;
+}
+
+.feature-card:nth-child(3) .feature-icon {
+  --delay: 0.4s;
+}
+
+@keyframes bounce {
+  0%, 100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.feature-card h3 {
+  font-size: 20px;
+  font-weight: 600;
+  color: #333;
+  margin: 0 0 12px 0;
+}
+
+.feature-card p {
+  font-size: 16px;
+  color: #666;
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Code Preview Section */
+.code-preview {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(10px);
+  border-radius: 20px;
+  padding: 40px;
+  margin: 60px auto;
+  max-width: 800px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.08);
+  border: 1px solid rgba(255, 89, 75, 0.1);
+}
+
+.code-preview h3 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #333;
+  margin: 0 0 24px 0;
+  text-align: center;
+}
+
+.code-features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.code-feature {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #f9f9f9;
+  border-radius: 12px;
+  transition: all 0.2s ease;
+}
+
+.code-feature:hover {
+  background: #fff;
+  transform: translateX(4px);
+  box-shadow: 0 4px 12px rgba(255, 89, 75, 0.1);
+}
+
+.code-icon {
+  color: #4CAF50;
+  font-size: 20px;
+  font-weight: bold;
+  flex-shrink: 0;
+}
+
+.code-feature span:last-child {
+  color: #333;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+/* Wallet Section */
+.wallet-section {
+  text-align: center;
+  position: relative;
+  z-index: 10;
+}
+
+.wallet-section-title {
+  font-size: 36px;
+  font-weight: 700;
+  color: #333;
+  margin: 0 0 12px 0;
+}
+
+.wallet-section-subtitle {
+  font-size: 18px;
+  color: #666;
+  margin: 0 0 40px 0;
+}
+
+/* Floating Shapes */
+.floating-shapes {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.shape {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(40px);
+  opacity: 0.15;
+}
+
+.shape-1 {
+  width: 300px;
+  height: 300px;
+  background: #ff594b;
+  top: 10%;
+  left: 5%;
+  animation: float 20s ease-in-out infinite;
+}
+
+.shape-2 {
+  width: 400px;
+  height: 400px;
+  background: #ff9660;
+  bottom: 10%;
+  right: 5%;
+  animation: float 25s ease-in-out infinite reverse;
+}
+
+.shape-3 {
+  width: 250px;
+  height: 250px;
+  background: linear-gradient(45deg, #ff594b, #ff9660);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  animation: rotate 30s linear infinite;
+}
+
+@keyframes rotate {
+  from {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  to {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .hero-title {
+    font-size: 40px;
+  }
+  
+  .hero-subtitle {
+    font-size: 18px;
+  }
+  
+  .features-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin-bottom: 60px;
+  }
+  
+  .feature-card {
+    padding: 24px;
+  }
+  
+  .code-preview {
+    padding: 24px;
+    margin: 40px auto;
+  }
+  
+  .code-features {
+    grid-template-columns: 1fr;
+  }
+  
+  .wallet-section-title {
+    font-size: 28px;
+  }
+  
+  .shape-1, .shape-2, .shape-3 {
+    filter: blur(60px);
+  }
+}
+
+@media (max-width: 640px) {
+  .wallet-page-wrapper .hyli-modal {
+    margin: 16px !important;
+    width: calc(100% - 32px) !important;
+  }
+  
+  .hero-title {
+    font-size: 32px;
+  }
+  
+  .hero-subtitle {
+    font-size: 16px;
+    padding: 0 20px;
+  }
+  
+  .hero-badge {
+    font-size: 12px;
+    padding: 6px 16px;
+  }
+  
+  .wallet-page-wrapper::before {
+    width: 300px;
+    height: 300px;
+    top: -150px;
+    right: -150px;
+  }
+  
+  .wallet-page-wrapper::after {
+    width: 200px;
+    height: 200px;
+    bottom: -100px;
+    left: -100px;
+  }
+}

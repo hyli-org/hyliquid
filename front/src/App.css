@@ -1,0 +1,309 @@
+/* === Design tokens & motion === */
+:root {
+  --color-primary: #ff594b;
+  --color-secondary: #ff9660;
+  --color-primary-emphasis: rgba(255, 89, 75, 0.2);
+  --radius-s: 8px;
+  --radius-m: 12px;
+  --radius-l: 24px;
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.1);
+  --shadow-xl: 0 12px 32px rgba(0, 0, 0, 0.12);
+  --text-main: #333;
+  --text-secondary: #666;
+  --border-main: #e5e5e5;
+  --background-main: #fff;
+  --background-alt: #f9f9f9;
+  --background-card: #fafafa;
+  --anim-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --anim-fast: 120ms;
+  --anim-normal: 220ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: var(--background-alt);
+  color: var(--text-main);
+}
+
+/* App Container */
+.App {
+  min-height: 100vh;
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* Logout Button */
+.logout-button {
+  padding: 10px 20px;
+  background: transparent;
+  color: var(--color-primary);
+  border: 2px solid var(--color-primary);
+  border-radius: var(--radius-l);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  transition: all var(--anim-fast) var(--anim-ease);
+}
+
+.logout-button:hover {
+  background: var(--color-primary);
+  color: white;
+  transform: translateY(-1px);
+}
+
+/* Header Section */
+.app-header {
+  text-align: center;
+  margin-bottom: 48px;
+}
+
+.app-title {
+  font-size: 32px;
+  font-weight: 700;
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin: 0 0 8px 0;
+}
+
+.app-subtitle {
+  color: var(--text-secondary);
+  font-size: 16px;
+  margin: 0;
+}
+
+/* Wallet Info Section */
+.wallet-info {
+  max-width: 600px;
+  margin: 0 auto 32px;
+  text-align: center;
+}
+
+.wallet-address {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 24px;
+  background: var(--background-main);
+  border: 1px solid var(--border-main);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-sm);
+}
+
+.wallet-label {
+  font-size: 14px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.wallet-value {
+  font-size: 16px;
+  color: var(--text-main);
+  font-weight: 600;
+  font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+}
+
+/* Main Action Button */
+.blob-button {
+  display: block;
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto 32px;
+  padding: 20px 32px;
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+  color: white;
+  border: none;
+  border-radius: var(--radius-l);
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 600;
+  box-shadow: var(--shadow-xl);
+  transition: all var(--anim-fast) var(--anim-ease);
+  position: relative;
+  overflow: hidden;
+}
+
+.blob-button::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+  transition: left 0.6s ease;
+}
+
+.blob-button:hover::before {
+  left: 100%;
+}
+
+.blob-button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 16px 40px rgba(255, 89, 75, 0.3);
+}
+
+.blob-button:active {
+  transform: translateY(0);
+}
+
+.blob-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Result Messages */
+.result {
+  max-width: 600px;
+  margin: 0 auto 16px;
+  padding: 16px 24px;
+  background: var(--background-main);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-sm);
+  font-size: 14px;
+  line-height: 1.6;
+  animation: slideIn var(--anim-normal) var(--anim-ease);
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Contract States Grid */
+.contract-states {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 24px;
+  margin-top: 48px;
+}
+
+.contract-state {
+  background: var(--background-main);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-md);
+  padding: 24px;
+  transition: transform var(--anim-fast) var(--anim-ease);
+}
+
+.contract-state:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-xl);
+}
+
+.contract-state h2 {
+  margin: 0 0 16px 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.contract-state h2::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  background: linear-gradient(90deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+  border-radius: 50%;
+}
+
+.contract-state pre {
+  margin: 0;
+  padding: 16px;
+  background: var(--background-alt);
+  border-radius: var(--radius-s);
+  overflow-x: auto;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-main);
+  border: 1px solid var(--border-main);
+}
+
+.contract-state .error {
+  color: #e53935;
+  padding: 12px 16px;
+  background-color: rgba(229, 57, 53, 0.1);
+  border-radius: var(--radius-s);
+  font-size: 14px;
+  border: 1px solid rgba(229, 57, 53, 0.2);
+}
+
+/* Loading State */
+.contract-state pre:has-text("Loading...") {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .App {
+    padding: 16px;
+  }
+
+  .app-title {
+    font-size: 24px;
+  }
+
+  .contract-states {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .logout-button {
+    position: static !important;
+    margin-bottom: 24px;
+    width: 100%;
+  }
+}
+
+/* Smooth transitions for all interactive elements */
+button, input {
+  transition: all var(--anim-fast) var(--anim-ease);
+}
+
+/* Focus visible for accessibility */
+*:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--background-alt);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-main);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}

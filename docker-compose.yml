@@ -1,0 +1,78 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready", "-d", "db_prod"]
+      interval: 30s
+      timeout: 60s
+      retries: 5
+      start_period: 80s
+  hyli:
+    image: ghcr.io/hyli-org/hyli:0.13.1
+    environment:
+      - RISC0_DEV_MODE=true
+      - SP1_PROVER=mock
+      - HYLI_DATABASE_URL=postgresql://postgres:postgres@postgres:5432/postgres
+    command: ["/hyli/hyli", "--run-indexer", "true"]
+    ports:
+      - "4321:4321"
+      - "1231:1231"
+      - "4141:4141"
+      - "1414:1414"
+    volumes:
+      - hyli_data:/hyli/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4321/v1/info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+  wallet-server:
+    image: ghcr.io/hyli-org/wallet/wallet-server:0.1.2
+    environment:
+      - RISC0_DEV_MODE=true
+      - SP1_PROVER=mock
+      - HYLI_DA_READ_FROM=hyli:4141
+      - HYLI_NODE_URL=http://hyli:4321
+      - HYLI_INDEXER_URL=http://hyli:4321
+    command: ["/app/server", "-m", "-a", "-w"]
+    ports:
+      - "4001:4000"
+      - "8081:8081"
+    restart: unless-stopped
+    depends_on:
+      hyli:
+        condition: service_healthy
+  wallet-ui:
+    image: ghcr.io/hyli-org/wallet/wallet-ui:0.1.2
+    environment:
+      - VITE_WALLET_SERVER_BASE_URL=http://localhost:4001
+      - VITE_WALLET_WS_URL=ws://localhost:8081/ws
+      - VITE_NODE_BASE_URL=http://localhost:4321
+      - VITE_INDEXER_BASE_URL=http://localhost:4321
+    volumes:
+      - ./wallet_dc_entrypoint.sh:/entrypoint.sh:ro
+    entrypoint: ["/entrypoint.sh"]
+    ports:
+      - "80:80"
+    restart: unless-stopped
+volumes:
+  postgres_data:
+    driver: local
+  hyli_data:
+    driver: local
