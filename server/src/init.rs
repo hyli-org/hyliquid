@@ -6,7 +6,7 @@ use tokio::time::timeout;
 
 pub struct ContractInit {
     pub name: ContractName,
-    pub program_id: [u8; 32],
+    pub program_id: Vec<u8>,
     pub initial_state: StateCommitment,
 }
 
@@ -43,7 +43,7 @@ async fn init_contract(
         Err(_) => {
             info!("🚀 Registering {} contract", contract.name);
             node.register_contract(APIRegisterContract {
-                verifier: "risc0-1".into(),
+                verifier: sdk::verifiers::SP1_4.into(),
                 program_id: ProgramId(contract.program_id.to_vec()),
                 state_commitment: contract.initial_state,
                 contract_name: contract.name.clone(),

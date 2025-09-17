@@ -104,24 +104,371 @@ describe('Server API Tests', () => {
     });
   });
 
-  // describe('Increment Endpoint', () => {
-  //   test('should increment the contract state', async () => {
-  //     const response = await makeRequest(`${BASE_URL}/api/increment`, {
-  //       method: 'POST',
-  //       headers: {
-  //         'x-user': TEST_USER,
-  //         'Content-Type': 'application/json'
-  //       },
-  //       body: JSON.stringify({
-  //         wallet_blobs: WALLET_BLOBS,
-  //       })
-  //     });
-  //
-  //     console.log("Increment response:", response);
-  //
-  //     expect(response.status).toBe(200);
-  //   });
-  // });
+  describe('Orderbook Operations', () => {
+    const ORDER_ID = `order_${Date.now()}`;
+    const PAIR_TOKEN1 = 'ETH';
+    const PAIR_TOKEN2 = 'USDC';
+    const QUANTITY = 100;
+    const PRICE = 2000;
+    const TOKEN = 'ETH';
+    const AMOUNT = 50;
+
+    describe('Create Order', () => {
+      test('should create a buy order with price', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            order_id: `${ORDER_ID}_buy`,
+            order_type: 'buy',
+            price: PRICE,
+            pair_token1: PAIR_TOKEN1,
+            pair_token2: PAIR_TOKEN2,
+            quantity: QUANTITY
+          })
+        });
+
+        console.log("Create buy order response:", response);
+        expect([200, 201]).toContain(response.status);
+      });
+
+      test('should create a sell order with price', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            order_id: `${ORDER_ID}_sell`,
+            order_type: 'sell',
+            price: PRICE,
+            pair_token1: PAIR_TOKEN1,
+            pair_token2: PAIR_TOKEN2,
+            quantity: QUANTITY
+          })
+        });
+
+        console.log("Create sell order response:", response);
+        expect([200, 201]).toContain(response.status);
+      });
+
+      test('should create a market order without price', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            order_id: `${ORDER_ID}_market`,
+            order_type: 'buy',
+            pair_token1: PAIR_TOKEN1,
+            pair_token2: PAIR_TOKEN2,
+            quantity: QUANTITY
+          })
+        });
+
+        console.log("Create market order response:", response);
+        expect([200, 201]).toContain(response.status);
+      });
+
+      test('should reject order with invalid order type', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            order_id: `${ORDER_ID}_invalid`,
+            order_type: 'invalid_type',
+            price: PRICE,
+            pair_token1: PAIR_TOKEN1,
+            pair_token2: PAIR_TOKEN2,
+            quantity: QUANTITY
+          })
+        });
+
+        expect(response.status).toBe(400);
+      });
+
+      test('should reject order with missing required fields', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            order_type: 'buy',
+            quantity: QUANTITY
+            // Missing order_id, pair_token1, pair_token2
+          })
+        });
+
+        expect(response.status).toBe(400);
+      });
+    });
+
+    describe('Cancel Order', () => {
+      test('should cancel an existing order', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/cancel`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            order_id: `${ORDER_ID}_buy`
+          })
+        });
+
+        console.log("Cancel order response:", response);
+        expect([200, 204]).toContain(response.status);
+      });
+
+      test('should handle cancellation of non-existent order', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/cancel`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            order_id: 'non_existent_order'
+          })
+        });
+
+        // Should either succeed (idempotent) or return 404
+        expect([200, 204, 404]).toContain(response.status);
+      });
+
+      test('should reject cancel request with missing order_id', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/cancel`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS
+            // Missing order_id
+          })
+        });
+
+        expect(response.status).toBe(400);
+      });
+    });
+
+    describe('Deposit Tokens', () => {
+      test('should deposit tokens successfully', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: TOKEN,
+            amount: AMOUNT
+          })
+        });
+
+        console.log("Deposit response:", response);
+        expect([200, 201]).toContain(response.status);
+      });
+
+      test('should handle deposit with zero amount', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: TOKEN,
+            amount: 0
+          })
+        });
+
+        // Zero amount should be rejected
+        expect(response.status).toBe(400);
+      });
+
+      test('should reject deposit with missing fields', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: TOKEN
+            // Missing amount
+          })
+        });
+
+        expect(response.status).toBe(400);
+      });
+
+      test('should handle deposit with invalid token', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: '',
+            amount: AMOUNT
+          })
+        });
+
+        expect(response.status).toBe(400);
+      });
+    });
+
+    describe('Withdraw Tokens', () => {
+      test('should withdraw tokens successfully', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: TOKEN,
+            amount: AMOUNT
+          })
+        });
+
+        console.log("Withdraw response:", response);
+        expect([200, 204]).toContain(response.status);
+      });
+
+      test('should handle withdrawal with zero amount', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: TOKEN,
+            amount: 0
+          })
+        });
+
+        // Zero amount should be rejected
+        expect(response.status).toBe(400);
+      });
+
+      test('should handle withdrawal exceeding balance', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: TOKEN,
+            amount: 999999999 // Very large amount
+          })
+        });
+
+        // Should reject insufficient balance
+        expect([400, 422]).toContain(response.status);
+      });
+
+      test('should reject withdrawal with missing fields', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            amount: AMOUNT
+            // Missing token
+          })
+        });
+
+        expect(response.status).toBe(400);
+      });
+    });
+
+    describe('Authentication and Authorization', () => {
+      test('should reject requests without wallet_blobs', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            token: TOKEN,
+            amount: AMOUNT
+            // Missing wallet_blobs
+          })
+        });
+
+        expect([400, 401, 403]).toContain(response.status);
+      });
+
+      test('should reject requests without x-user header', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+            // Missing x-user header
+          },
+          body: JSON.stringify({
+            wallet_blobs: WALLET_BLOBS,
+            token: TOKEN,
+            amount: AMOUNT
+          })
+        });
+
+        expect([400, 401, 403]).toContain(response.status);
+      });
+
+      test('should reject requests with invalid wallet_blobs', async () => {
+        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
+          method: 'POST',
+          headers: {
+            'x-user': TEST_USER,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            wallet_blobs: ['invalid_blob_1', 'invalid_blob_2'],
+            token: TOKEN,
+            amount: AMOUNT
+          })
+        });
+
+        expect([400, 401, 403]).toContain(response.status);
+      });
+    });
+  });
 
   describe('CORS Headers', () => {
     test('should include CORS headers in responses', async () => {

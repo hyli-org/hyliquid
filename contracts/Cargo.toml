@@ -8,18 +8,13 @@ path = "metadata.rs"
 
 [dependencies]
 sdk = { workspace = true }
-contract1 = { workspace = true, features = ["client"] }
+orderbook = { workspace = true, features = ["sp1"] }
+sp1-sdk = { workspace = true }
 
 [build-dependencies]
-risc0-build = { version = "=2.3", optional = true }
-
-[package.metadata.risc0]
-methods = ["contract1"]
+sp1-helper = { workspace = true }
 
 [features]
-build = ["dep:risc0-build"]
-nonreproducible = ["build", "all"]
-
-# Following features are used to choose which contracts should be rebuild with docker
-all = ["contract1"]
-contract1 = []
+default = ["nonreproducible"]
+build = []
+nonreproducible = []
