@@ -5,7 +5,7 @@ use axum::{
     extract::{Json, State},
     http::{HeaderMap, Method},
     response::IntoResponse,
-    routing::{get, post},
+    routing::get,
     Router,
 };
 use client_sdk::{
@@ -110,15 +110,6 @@ struct RouterCtx {
     pub lane_id: LaneId,
 }
 
-async fn health() -> impl IntoResponse {
-    Json("OK")
-}
-
-#[derive(Serialize)]
-struct ConfigResponse {
-    contract_name: String,
-}
-
 // --------------------------------------------------------
 //     Headers
 // --------------------------------------------------------
@@ -164,12 +155,6 @@ struct AddSessionKeyRequest {
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
-
-async fn get_config(State(ctx): State<RouterCtx>) -> impl IntoResponse {
-    Json(ConfigResponse {
-        contract_name: ctx.orderbook_cn.0,
-    })
-}
 
 async fn create_order(
     State(ctx): State<RouterCtx>,

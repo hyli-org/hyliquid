@@ -18,7 +18,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::services::{book_service::BookService, user_service::UserService};
+use crate::services::{
+    book_service::{self, BookService},
+    user_service::UserService,
+};
 
 pub struct ApiModule {
     bus: AppModuleBusClient,
@@ -46,9 +49,6 @@ impl Module for ApiModule {
             book_service: ctx.book_service.clone(),
             user_service: ctx.user_service.clone(),
         };
-
-
-
 
         // Créer un middleware CORS
         let cors = CorsLayer::new()
@@ -139,8 +139,12 @@ async fn get_config(State(ctx): State<RouterCtx>) -> impl IntoResponse {
     })
 }
 
-async fn get_info(State(_ctx): State<RouterCtx>) -> impl IntoResponse {
-    Json("Orderbook API")
+async fn get_info(State(_ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
+    let book_service = _ctx.book_service.read().await;
+
+    let info = book_service.get_info().await?;
+
+    Ok(Json(info))
 }
 
 async fn get_book(

@@ -9,9 +9,6 @@ use contracts::ORDERBOOK_ELF;
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
-        contract_state_indexer::{ContractStateIndexer, ContractStateIndexerCtx},
-        da_listener::{DAListener, DAListenerConf},
-        prover::{AutoProver, AutoProverCtx},
         rest::{RestApi, RestApiRunContext},
         websocket::WebSocketModule,
         BuildApiContextInner, ModulesHandler,
@@ -209,10 +206,10 @@ async fn main() -> Result<()> {
     let api_module_ctx = Arc::new(ApiModuleCtx {
         api: api_ctx.clone(),
         book_service: Arc::new(RwLock::new(
-            server::services::book_service::BookService::new(),
+            server::services::book_service::BookService::new(pool.clone()),
         )),
         user_service: Arc::new(RwLock::new(
-            server::services::user_service::UserService::new(),
+            server::services::user_service::UserService::new(pool.clone()),
         )),
         contract1_cn: args.orderbook_cn.clone().into(),
     });
