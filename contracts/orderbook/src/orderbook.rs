@@ -494,7 +494,7 @@ impl Orderbook {
 
 impl Orderbook {
     pub fn init(lane_id: LaneId) -> Self {
-        let accepted_tokens = BTreeSet::from(["oranj".into(), "hyllar".into()]);
+        let accepted_tokens = BTreeSet::from(["ORANJ".into(), "HYLLAR".into()]);
 
         Orderbook {
             lane_id,
@@ -533,9 +533,9 @@ impl Orderbook {
         let from_user_info = self
             .balances
             .get_mut(token)
-            .ok_or(format!("Token {} not found", token))?
+            .ok_or(format!("Token {token} not found"))?
             .get_mut(from)
-            .ok_or(format!("Token {} not found for user {}", token, from))?;
+            .ok_or(format!("Token {token} not found for user {from}"))?;
 
         if from_user_info.balance < amount {
             return Err(format!(
@@ -549,7 +549,7 @@ impl Orderbook {
         let to_user_info = self
             .balances
             .get_mut(token)
-            .ok_or(format!("Token {} not found", token))?
+            .ok_or(format!("Token {token} not found"))?
             .entry(to.to_string())
             .or_default();
         to_user_info.balance += amount;

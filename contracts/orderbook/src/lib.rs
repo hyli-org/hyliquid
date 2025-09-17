@@ -110,7 +110,6 @@ impl sdk::ZkContract for Orderbook {
                 // &calldata.private_input
 
                 // TODO: assert there is a transfer blob for that token
-
                 self.withdraw(token, amount, user)?
             }
         };

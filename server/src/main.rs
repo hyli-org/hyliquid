@@ -1,13 +1,11 @@
 use anyhow::{Context, Result};
-use app::{AppModule, AppModuleCtx};
 use axum::Router;
 use clap::Parser;
 use client_sdk::{
-    helpers::risc0::Risc0Prover,
-    rest_client::{IndexerApiHttpClient, NodeApiHttpClient},
+    helpers::{sp1::SP1Prover, ClientSdkProver},
+    rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient},
 };
-use conf::Conf;
-use contract1::Contract1;
+use contracts::ORDERBOOK_ELF;
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
@@ -15,18 +13,21 @@ use hyli_modules::{
         da_listener::{DAListener, DAListenerConf},
         prover::{AutoProver, AutoProverCtx},
         rest::{RestApi, RestApiRunContext},
+        websocket::WebSocketModule,
         BuildApiContextInner, ModulesHandler,
     },
     utils::logger::setup_tracing,
 };
+use orderbook::orderbook::{Orderbook, OrderbookEvent};
 use prometheus::Registry;
-use sdk::{api::NodeInfo, info, ZkContract};
+use sdk::{api::NodeInfo, info, Calldata, ZkContract};
+use server::{
+    app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
+    conf::Conf,
+};
+use sp1_sdk::{Prover, ProverClient};
 use std::sync::{Arc, Mutex};
 use tracing::error;
-
-mod app;
-mod conf;
-mod init;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -34,8 +35,8 @@ pub struct Args {
     #[arg(long, default_value = "config.toml")]
     pub config_file: Vec<String>,
 
-    #[arg(long, default_value = "contract1")]
-    pub contract1_cn: String,
+    #[arg(long, default_value = "orderbook")]
+    pub orderbook_cn: String,
 
     /// Clean the data directory before starting the server
     /// Argument used by hylix tests commands
@@ -66,7 +67,7 @@ async fn main() -> Result<()> {
         std::fs::remove_dir_all(&config.data_directory).context("cleaning data directory")?;
     }
 
-    info!("Starting app with config: {:?}", &config);
+    info!("Starting orderbook with config: {:?}", &config);
 
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
@@ -74,13 +75,34 @@ async fn main() -> Result<()> {
         IndexerApiHttpClient::new(config.indexer_url.clone()).context("build indexer client")?,
     );
 
-    let contracts = vec![init::ContractInit {
-        name: args.contract1_cn.clone().into(),
-        program_id: contract1::client::tx_executor_handler::metadata::PROGRAM_ID,
-        initial_state: Contract1::default().commit(),
+    let local_client = ProverClient::builder().cpu().build();
+    let (pk, _) = local_client.setup(ORDERBOOK_ELF);
+
+    info!("Building Proving Key");
+    let prover = SP1Prover::new(pk).await;
+
+    let validator_lane_id = node_client
+        .get_node_info()
+        .await?
+        .pubkey
+        .map(sdk::LaneId)
+        .ok_or_else(|| {
+            error!("Validator lane id not found");
+        })
+        .ok();
+    let Some(validator_lane_id) = validator_lane_id else {
+        return Ok(());
+    };
+
+    let default_state = Orderbook::init(validator_lane_id.clone());
+
+    let contracts = vec![server::init::ContractInit {
+        name: args.orderbook_cn.clone().into(),
+        program_id: <SP1Prover as ClientSdkProver<Calldata>>::program_id(&prover).0,
+        initial_state: default_state.commit(),
     }];
 
-    match init::init_node(node_client.clone(), indexer_client.clone(), contracts).await {
+    match server::init::init_node(node_client.clone(), indexer_client.clone(), contracts).await {
         Ok(_) => {}
         Err(e) => {
             error!("Error initializing node: {:?}", e);
@@ -98,32 +120,38 @@ async fn main() -> Result<()> {
         openapi: Default::default(),
     });
 
-    let app_ctx = Arc::new(AppModuleCtx {
+    let orderbook_ctx = Arc::new(OrderbookModuleCtx {
+        node_client: node_client.clone(),
         api: api_ctx.clone(),
-        node_client,
-        contract1_cn: args.contract1_cn.clone().into(),
+        orderbook_cn: args.orderbook_cn.clone().into(),
+        default_state: default_state.clone(),
     });
 
-    handler.build_module::<AppModule>(app_ctx.clone()).await?;
+    handler
+        .build_module::<OrderbookModule>(orderbook_ctx.clone())
+        .await?;
 
     handler
-        .build_module::<ContractStateIndexer<Contract1>>(ContractStateIndexerCtx {
-            contract_name: args.contract1_cn.clone().into(),
+        .build_module::<WebSocketModule<OrderbookWsInMessage, OrderbookEvent>>(
+            config.websocket.clone(),
+        )
+        .await?;
+
+    handler
+        .build_module::<ContractStateIndexer<Orderbook>>(ContractStateIndexerCtx {
+            contract_name: args.orderbook_cn.clone().into(),
             data_directory: config.data_directory.clone(),
             api: api_ctx.clone(),
         })
         .await?;
 
     handler
-        .build_module::<AutoProver<Contract1>>(Arc::new(AutoProverCtx {
+        .build_module::<AutoProver<Orderbook>>(Arc::new(AutoProverCtx {
             data_directory: config.data_directory.clone(),
-            prover: Arc::new(Risc0Prover::new(
-                contracts::CONTRACT1_ELF,
-                contracts::CONTRACT1_ID,
-            )),
-            contract_name: args.contract1_cn.clone().into(),
-            node: app_ctx.node_client.clone(),
-            default_state: Default::default(),
+            prover: Arc::new(prover),
+            contract_name: args.orderbook_cn.clone().into(),
+            node: node_client.clone(),
+            default_state,
             buffer_blocks: config.buffer_blocks,
             max_txs_per_proof: config.max_txs_per_proof,
             tx_working_window_size: config.tx_working_window_size,

@@ -1,4 +1,5 @@
 use config::{Config, Environment, File};
+use hyli_modules::modules::websocket::WebSocketConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -20,6 +21,9 @@ pub struct Conf {
     pub buffer_blocks: u32,
     pub max_txs_per_proof: usize,
     pub tx_working_window_size: usize,
+
+    /// Websocket configuration
+    pub websocket: WebSocketConfig,
 }
 
 impl Conf {

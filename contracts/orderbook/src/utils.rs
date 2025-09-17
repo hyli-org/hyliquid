@@ -19,10 +19,10 @@ pub fn verify_user_signature_authorization(
     // Verify that the public key exists for this user
     let user_keys = user_session_keys
         .get(user)
-        .ok_or_else(|| format!("No session keys found for user {}", user))?;
+        .ok_or_else(|| format!("No session keys found for user {user}"))?;
 
     if !user_keys.contains(pubkey) {
-        return Err(format!("Public key not found for user {}", user));
+        return Err(format!("Public key not found for user {user}"));
     }
 
     // Verify the signature of the order_id with the public key
