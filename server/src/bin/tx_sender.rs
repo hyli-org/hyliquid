@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{command, Parser, Subcommand};
 use hyli_modules::utils::logger::setup_tracing;
+use k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey};
 use orderbook::orderbook::{OrderType, TokenPair};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -39,6 +40,8 @@ enum Commands {
         #[arg(long)]
         quantity: u32,
     },
+    /// Add a session key for user authentication
+    AddSessionKey,
     // /// Cancel an existing order
     // Cancel {
     //     #[arg(long)]
@@ -69,10 +72,17 @@ struct CreateOrderRequest {
     quantity: u32,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct AddSessionKeyRequest {
+    public_key: String,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
+    const HARDCODED_PRIVATE_KEY: &str =
+        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
     setup_tracing(&config.log_format, "tx_sender".to_string()).context("setting up tracing")?;
 
@@ -115,6 +125,44 @@ async fn main() -> Result<()> {
             if response.status().is_success() {
                 let response_text = response.text().await?;
                 println!("Order created successfully! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+        }
+        Commands::AddSessionKey => {
+            let private_key_bytes =
+                hex::decode(HARDCODED_PRIVATE_KEY).context("Impossible to decode private key")?;
+
+            let secret_key =
+                SecretKey::from_slice(&private_key_bytes).context("Invalid private key")?;
+
+            let public_key = secret_key.public_key();
+            let public_key_bytes = public_key.to_encoded_point(false).as_bytes().to_vec();
+            let public_key_hex = hex::encode(public_key_bytes);
+
+            let request = AddSessionKeyRequest {
+                public_key: public_key_hex.clone(),
+            };
+
+            tracing::info!(
+                "Sending add session key request with derived public key: {}",
+                public_key_hex
+            );
+
+            let response = client
+                .post(format!("{}/add_session_key", args.server_url))
+                .header("x-identity", args.identity)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Session key added successfully! Response: {response_text}");
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();

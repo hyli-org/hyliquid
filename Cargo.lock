@@ -6332,6 +6332,7 @@ dependencies = [
  "hyli-client-sdk",
  "hyli-contract-sdk",
  "hyli-modules",
+ "k256",
  "opentelemetry",
  "opentelemetry-prometheus",
  "opentelemetry_sdk",

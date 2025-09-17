@@ -76,7 +76,10 @@ impl Module for OrderbookModule {
             .allow_headers(Any);
 
         let api = Router::new()
-            .route("/create_order", get(create_order))
+            .route("/_health", get(health))
+            .route("/api/config", get(get_config))
+            .route("/create_order", post(create_order))
+            .route("/add_session_key", post(add_session_key))
             .with_state(state)
             .layer(cors);
 
@@ -153,6 +156,11 @@ struct CreateOrderRequest {
     quantity: u32,
 }
 
+#[derive(serde::Deserialize)]
+struct AddSessionKeyRequest {
+    public_key: String,
+}
+
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
@@ -169,33 +177,20 @@ async fn create_order(
     Json(request): Json<CreateOrderRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
-    send(
-        ctx,
-        OrderbookAction::CreateOrder {
-            order_id: request.order_id,
-            order_type: request.order_type,
-            price: request.price,
-            pair: request.pair,
-            quantity: request.quantity,
-        },
-        auth,
-    )
-    .await
-}
-
-async fn send(
-    ctx: RouterCtx,
-    action: OrderbookAction,
-    auth: AuthHeaders,
-) -> Result<impl IntoResponse, AppError> {
     let identity = Identity(auth.identity);
     let mut orderbook = ctx.orderbook.lock().await;
-
     let tx_ctx = TxContext {
         lane_id: ctx.lane_id.clone(),
         ..Default::default()
     };
 
+    let action = OrderbookAction::CreateOrder {
+        order_id: request.order_id,
+        order_type: request.order_type,
+        price: request.price,
+        pair: request.pair,
+        quantity: request.quantity,
+    };
     let calldata = match action {
         OrderbookAction::CreateOrder {
             order_id,
@@ -236,6 +231,66 @@ async fn send(
         _ => {
             todo!()
         }
+    };
+
+    let res = orderbook.execute(&calldata);
+    tracing::error!("orderbook execute result: {:?}", res);
+
+    if res.is_ok() {
+        let tx_hash = ctx
+            .client
+            .send_tx_blob(BlobTransaction::new(
+                calldata.identity,
+                calldata
+                    .blobs
+                    .iter()
+                    .map(|(_, blob)| blob.clone())
+                    .collect(),
+            ))
+            .await?;
+
+        Ok(Json(tx_hash))
+    } else {
+        Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow::anyhow!("Something went wrong, could not execute the transaction"),
+        ))
+    }
+}
+
+async fn add_session_key(
+    State(ctx): State<RouterCtx>,
+    headers: HeaderMap,
+    Json(request): Json<AddSessionKeyRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let auth = AuthHeaders::from_headers(&headers)?;
+
+    // Convert hex string to bytes
+    let public_key_bytes = hex::decode(&request.public_key).map_err(|_| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow::anyhow!("Invalid hex public key"),
+        )
+    })?;
+
+    let identity = Identity(auth.identity);
+    let mut orderbook = ctx.orderbook.lock().await;
+
+    let tx_ctx = TxContext {
+        lane_id: ctx.lane_id.clone(),
+        ..Default::default()
+    };
+
+    let orderbook_blob = OrderbookAction::AddSessionKey {}.as_blob(ctx.orderbook_cn.clone());
+
+    let calldata = Calldata {
+        identity,
+        index: sdk::BlobIndex(0),
+        blobs: vec![orderbook_blob].into(),
+        tx_blob_count: 1,
+        tx_hash: TxHash::default(),
+        tx_ctx: Some(tx_ctx),
+        private_input: public_key_bytes,
     };
 
     let res = orderbook.execute(&calldata);

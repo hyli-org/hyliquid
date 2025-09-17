@@ -33,6 +33,7 @@ tower-http = { version = "0.6.2", features = ["cors"] }
 anyhow = "1.0.93"
 reqwest = { version = "0.12.9", features = ["json"] }
 hex = "0.4.3"
+k256 = "0.13.4"
 sha2 = "0.10.8"
 hmac = "0.12.1"
 
