@@ -5,7 +5,7 @@ use axum::{
     extract::{Json, State},
     http::{HeaderMap, Method},
     response::IntoResponse,
-    routing::get,
+    routing::post,
     Router,
 };
 use client_sdk::{
@@ -76,8 +76,6 @@ impl Module for OrderbookModule {
             .allow_headers(Any);
 
         let api = Router::new()
-            .route("/_health", get(health))
-            .route("/api/config", get(get_config))
             .route("/create_order", post(create_order))
             .route("/add_session_key", post(add_session_key))
             .with_state(state)

@@ -18,10 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::services::{
-    book_service::{self, BookService},
-    user_service::UserService,
-};
+use crate::services::{book_service::BookService, user_service::UserService};
 
 pub struct ApiModule {
     bus: AppModuleBusClient,
