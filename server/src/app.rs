@@ -76,9 +76,7 @@ impl Module for OrderbookModule {
             .allow_headers(Any);
 
         let api = Router::new()
-            .route("/_health", get(health))
-            .route("/api/config", get(get_config))
-            .route("/create_order", post(create_order))
+            .route("/create_order", get(create_order))
             .with_state(state)
             .layer(cors);
 

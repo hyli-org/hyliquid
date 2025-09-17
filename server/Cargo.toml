@@ -14,6 +14,13 @@ hyli-modules = { workspace = true }
 # Remove features if you want reproducible builds with docker
 contracts = { workspace = true, features = ["nonreproducible"] }
 
+sqlx = { version = "0.8.6", features = [
+  "runtime-tokio",
+  "postgres",
+  "migrate",
+  "chrono",
+] }
+
 sp1-sdk = { workspace = true, default-features = false, features = ["network"] }
 
 config = { version = "0.15.11", default-features = false, features = ["toml"] }

@@ -22,11 +22,14 @@ use orderbook::orderbook::{Orderbook, OrderbookEvent};
 use prometheus::Registry;
 use sdk::{api::NodeInfo, info, Calldata, ZkContract};
 use server::{
+    api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
     conf::Conf,
 };
 use sp1_sdk::{Prover, ProverClient};
+use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::{Arc, Mutex};
+use tokio::sync::RwLock;
 use tracing::error;
 
 #[derive(Parser, Debug)]
@@ -38,6 +41,9 @@ pub struct Args {
     #[arg(long, default_value = "orderbook")]
     pub orderbook_cn: String,
 
+    #[arg(long, default_value = "false")]
+    pub clean_db: bool,
+
     /// Clean the data directory before starting the server
     /// Argument used by hylix tests commands
     #[arg(long, default_value = "false")]
@@ -47,6 +53,75 @@ pub struct Args {
     /// Argument used by hylix tests commands
     #[arg(long)]
     pub server_port: Option<u16>,
+}
+
+pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/migrations");
+
+async fn connect_database(config: &Conf) -> Result<PgPool> {
+    let pool = PgPoolOptions::new()
+        .max_connections(20)
+        .acquire_timeout(std::time::Duration::from_secs(1))
+        .connect(&config.database_url)
+        .await
+        .context("Failed to connect to the config database")?;
+
+    if !config.database_url.ends_with(&config.database_name) {
+        // Check if database exists
+        let database_exists = sqlx::query(
+            format!(
+                "SELECT 1 FROM pg_database WHERE datname = '{}'",
+                config.database_name
+            )
+            .as_str(),
+        )
+        .fetch_optional(&pool)
+        .await?;
+        if database_exists.is_some() {
+            return Ok(pool);
+        }
+
+        info!("Creating database: {}", config.database_name);
+        sqlx::query(format!("CREATE DATABASE {}", config.database_name).as_str())
+            .execute(&pool)
+            .await?;
+    } else {
+        return Ok(pool);
+    }
+
+    let database_url = format!("{}/{}", config.database_url, config.database_name);
+
+    info!("Connecting to the created database: {}", database_url);
+
+    let pool = PgPoolOptions::new()
+        .max_connections(20)
+        .acquire_timeout(std::time::Duration::from_secs(1))
+        .connect(&database_url)
+        .await
+        .context("Failed to connect to the created database")?;
+
+    Ok(pool)
+}
+
+async fn setup_database(config: &Conf, clean_db: bool) -> Result<PgPool> {
+    let pool = connect_database(config).await?;
+
+    if clean_db {
+        info!("Cleaning database: {}", config.database_name);
+        sqlx::query("DROP SCHEMA public CASCADE;")
+            .execute(&pool)
+            .await
+            .context("cleaning database")?;
+        sqlx::query("CREATE SCHEMA public;")
+            .execute(&pool)
+            .await
+            .context("creating public schema")?;
+    }
+
+    info!("Running database migrations");
+    MIGRATOR.run(&pool).await?;
+    info!("Database migrations completed");
+
+    Ok(pool)
 }
 
 #[tokio::main]
@@ -75,6 +150,9 @@ async fn main() -> Result<()> {
         IndexerApiHttpClient::new(config.indexer_url.clone()).context("build indexer client")?,
     );
 
+    let pool = setup_database(&config, args.clean_db).await?;
+
+    info!("Setup sp1 prover client");
     let local_client = ProverClient::builder().cpu().build();
     let (pk, _) = local_client.setup(ORDERBOOK_ELF);
 
@@ -128,8 +206,22 @@ async fn main() -> Result<()> {
         default_state: default_state.clone(),
     });
 
+    let api_module_ctx = Arc::new(ApiModuleCtx {
+        api: api_ctx.clone(),
+        book_service: Arc::new(RwLock::new(
+            server::services::book_service::BookService::new(),
+        )),
+        user_service: Arc::new(RwLock::new(
+            server::services::user_service::UserService::new(),
+        )),
+        contract1_cn: args.orderbook_cn.clone().into(),
+    });
+
     handler
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
+        .await?;
+    handler
+        .build_module::<ApiModule>(api_module_ctx.clone())
         .await?;
 
     handler
@@ -138,37 +230,29 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    handler
-        .build_module::<ContractStateIndexer<Orderbook>>(ContractStateIndexerCtx {
-            contract_name: args.orderbook_cn.clone().into(),
-            data_directory: config.data_directory.clone(),
-            api: api_ctx.clone(),
-        })
-        .await?;
-
-    handler
-        .build_module::<AutoProver<Orderbook>>(Arc::new(AutoProverCtx {
-            data_directory: config.data_directory.clone(),
-            prover: Arc::new(prover),
-            contract_name: args.orderbook_cn.clone().into(),
-            node: node_client.clone(),
-            default_state,
-            buffer_blocks: config.buffer_blocks,
-            max_txs_per_proof: config.max_txs_per_proof,
-            tx_working_window_size: config.tx_working_window_size,
-            api: Some(api_ctx.clone()),
-        }))
-        .await?;
+    // handler
+    //     .build_module::<AutoProver<Orderbook>>(Arc::new(AutoProverCtx {
+    //         data_directory: config.data_directory.clone(),
+    //         prover: Arc::new(prover),
+    //         contract_name: args.orderbook_cn.clone().into(),
+    //         node: node_client.clone(),
+    //         default_state,
+    //         buffer_blocks: config.buffer_blocks,
+    //         max_txs_per_proof: config.max_txs_per_proof,
+    //         tx_working_window_size: config.tx_working_window_size,
+    //         api: Some(api_ctx.clone()),
+    //     }))
+    //     .await?;
 
     // This module connects to the da_address and receives all the blocks²
-    handler
-        .build_module::<DAListener>(DAListenerConf {
-            start_block: None,
-            data_directory: config.data_directory.clone(),
-            da_read_from: config.da_read_from.clone(),
-            timeout_client_secs: 10,
-        })
-        .await?;
+    // handler
+    //     .build_module::<DAListener>(DAListenerConf {
+    //         start_block: None,
+    //         data_directory: config.data_directory.clone(),
+    //         da_read_from: config.da_read_from.clone(),
+    //         timeout_client_secs: 10,
+    //     })
+    //     .await?;
 
     // Should come last so the other modules have nested their own routes.
     #[allow(clippy::expect_used, reason = "Fail on misconfiguration")]
