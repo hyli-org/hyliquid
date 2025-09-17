@@ -161,7 +161,6 @@ async fn create_order(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let identity = Identity(auth.identity);
-    let mut orderbook = ctx.orderbook.lock().await;
     let tx_ctx = TxContext {
         lane_id: ctx.lane_id.clone(),
         ..Default::default()
@@ -216,29 +215,7 @@ async fn create_order(
         }
     };
 
-    let res = orderbook.execute(&calldata);
-    tracing::error!("orderbook execute result: {:?}", res);
-
-    if res.is_ok() {
-        let tx_hash = ctx
-            .client
-            .send_tx_blob(BlobTransaction::new(
-                calldata.identity,
-                calldata
-                    .blobs
-                    .iter()
-                    .map(|(_, blob)| blob.clone())
-                    .collect(),
-            ))
-            .await?;
-
-        Ok(Json(tx_hash))
-    } else {
-        Err(AppError(
-            StatusCode::BAD_REQUEST,
-            anyhow::anyhow!("Something went wrong, could not execute the transaction"),
-        ))
-    }
+    execute_orderbook_action(&calldata, &ctx).await
 }
 
 async fn add_session_key(
@@ -257,7 +234,6 @@ async fn add_session_key(
     })?;
 
     let identity = Identity(auth.identity);
-    let mut orderbook = ctx.orderbook.lock().await;
 
     let tx_ctx = TxContext {
         lane_id: ctx.lane_id.clone(),
@@ -276,14 +252,33 @@ async fn add_session_key(
         private_input: public_key_bytes,
     };
 
-    let res = orderbook.execute(&calldata);
-    tracing::error!("orderbook execute result: {:?}", res);
+    execute_orderbook_action(&calldata, &ctx).await
+}
+
+async fn execute_orderbook_action(
+    calldata: &Calldata,
+    ctx: &RouterCtx,
+) -> Result<impl IntoResponse, AppError> {
+    let mut orderbook = ctx.orderbook.lock().await;
+    let res = orderbook.execute(calldata);
+
+    let events: Vec<OrderbookEvent> = match &res {
+        Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
+            Ok(events) => events,
+            Err(e) => {
+                tracing::error!("Failed to deserialize events: {:?}", e);
+                vec![]
+            }
+        },
+        Err(_) => vec![],
+    };
+    tracing::info!("orderbook execute results: {:?}", events);
 
     if res.is_ok() {
         let tx_hash = ctx
             .client
             .send_tx_blob(BlobTransaction::new(
-                calldata.identity,
+                calldata.identity.clone(),
                 calldata
                     .blobs
                     .iter()
