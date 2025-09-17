@@ -1,19 +1,22 @@
 use anyhow::{Context, Result};
 use clap::{command, Parser, Subcommand};
-use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_modules::utils::logger::setup_tracing;
-use orderbook::{orderbook::OrderType, OrderbookAction};
-use sdk::{BlobTransaction, ContractName};
+use orderbook::orderbook::{OrderType, TokenPair};
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
 use server::conf::Conf;
 
 #[derive(Parser, Debug)]
-#[command(version, about = "Send transactions to a node", long_about = None)]
+#[command(version, about = "Send transactions to a server", long_about = None)]
 pub struct Args {
     #[arg(long, default_value = "config.toml")]
     pub config_file: Vec<String>,
 
-    #[arg(long, default_value = "orderbook")]
-    pub orderbook_cn: String,
+    #[arg(long, default_value = "http://localhost:9002")]
+    pub server_url: String,
+
+    #[arg(long, default_value = "txsender@orderbook")]
+    pub identity: String,
 
     #[command(subcommand)]
     command: Commands,
@@ -36,25 +39,34 @@ enum Commands {
         #[arg(long)]
         quantity: u32,
     },
-    /// Cancel an existing order
-    Cancel {
-        #[arg(long)]
-        order_id: String,
-    },
-    /// Deposit tokens
-    Deposit {
-        #[arg(long)]
-        token: String,
-        #[arg(long)]
-        amount: u32,
-    },
-    /// Withdraw tokens
-    Withdraw {
-        #[arg(long)]
-        token: String,
-        #[arg(long)]
-        amount: u32,
-    },
+    // /// Cancel an existing order
+    // Cancel {
+    //     #[arg(long)]
+    //     order_id: String,
+    // },
+    // /// Deposit tokens
+    // Deposit {
+    //     #[arg(long)]
+    //     token: String,
+    //     #[arg(long)]
+    //     amount: u32,
+    // },
+    // /// Withdraw tokens
+    // Withdraw {
+    //     #[arg(long)]
+    //     token: String,
+    //     #[arg(long)]
+    //     amount: u32,
+    // },
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct CreateOrderRequest {
+    order_id: String,
+    order_type: OrderType,
+    price: Option<u32>,
+    pair: TokenPair,
+    quantity: u32,
 }
 
 #[tokio::main]
@@ -64,9 +76,9 @@ async fn main() -> Result<()> {
 
     setup_tracing(&config.log_format, "tx_sender".to_string()).context("setting up tracing")?;
 
-    let client = NodeApiHttpClient::new(config.node_url).context("build node client")?;
+    let client = Client::new();
 
-    let action = match args.command {
+    match args.command {
         Commands::CreateOrder {
             order_id,
             order_type,
@@ -81,30 +93,35 @@ async fn main() -> Result<()> {
                 _ => anyhow::bail!("Invalid order type. Must be 'buy' or 'sell'"),
             };
 
-            OrderbookAction::CreateOrder {
+            let request = CreateOrderRequest {
                 order_id,
                 order_type,
                 price,
                 pair: (pair_token1, pair_token2),
                 quantity,
+            };
+
+            tracing::info!("Sending create order request: {:?}", request);
+
+            let response = client
+                .post(format!("{}/create_order", args.server_url))
+                .header("x-identity", args.identity)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Order created successfully! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
             }
         }
-        Commands::Cancel { order_id } => OrderbookAction::Cancel { order_id },
-        Commands::Deposit { token, amount } => OrderbookAction::Deposit { token, amount },
-        Commands::Withdraw { token, amount } => OrderbookAction::Withdraw { token, amount },
-    };
-
-    tracing::info!("Action to be sent: {:?}", action);
-
-    // Create the blob for the action
-    let blob = action.as_blob(ContractName(args.orderbook_cn));
-
-    let blob_tx = BlobTransaction::new("txsender@orderbook", vec![blob]);
-
-    // Send transaction
-    let tx_hash = client.send_tx_blob(blob_tx).await?;
-
-    println!("Transaction sent successfully! Hash: {tx_hash}");
+    }
 
     Ok(())
 }

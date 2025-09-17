@@ -71,7 +71,10 @@ impl sdk::ZkContract for Orderbook {
             } => {
                 let private_data =
                     borsh::from_slice::<CreateOrderPrivateInput>(&calldata.private_input)
-                        .map_err(|_| "Failed to deserialize CreateOrderPrivateInput")?;
+                        .unwrap_or_else(|_| {
+                            // We need to panic here to avoid generating a proof
+                            panic!("Failed to deserialize CreateOrderPrivateInput")
+                        });
 
                 // Verify user signature authorization
                 // On this step, signature is provided in private_input and hence is never public.

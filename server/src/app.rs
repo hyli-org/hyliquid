@@ -1,11 +1,11 @@
-use std::{sync::Arc, time::Duration};
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::Result;
 use axum::{
     extract::{Json, State},
     http::{HeaderMap, Method},
     response::IntoResponse,
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use client_sdk::{
@@ -13,11 +13,9 @@ use client_sdk::{
     rest_client::{NodeApiClient, NodeApiHttpClient},
 };
 use hyli_modules::{
-    bus::{BusClientReceiver, SharedMessageBus},
+    bus::SharedMessageBus,
     module_bus_client, module_handle_messages,
     modules::{
-        contract_state_indexer::CSIBusEvent,
-        prover::AutoProverEvent,
         websocket::{WsInMessage, WsTopicMessage},
         BuildApiContextInner, Module,
     },
@@ -27,21 +25,22 @@ use orderbook::{
     OrderbookAction,
 };
 use reqwest::StatusCode;
-use sdk::{Blob, BlobTransaction, ContractName, Identity};
+use sdk::{
+    BlobTransaction, Calldata, ContractName, Identity, LaneId, TxContext, TxHash, ZkContract,
+};
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
+use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
 pub struct OrderbookModule {
     bus: OrderbookModuleBusClient,
-    orderbook_cn: ContractName,
-    contract: Arc<RwLock<Orderbook>>,
 }
 
 pub struct OrderbookModuleCtx {
     pub api: Arc<BuildApiContextInner>,
     pub node_client: Arc<NodeApiHttpClient>,
     pub orderbook_cn: ContractName,
+    pub lane_id: LaneId,
     pub default_state: Orderbook,
 }
 
@@ -62,12 +61,13 @@ impl Module for OrderbookModule {
     type Context = Arc<OrderbookModuleCtx>;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let contract = Arc::new(RwLock::new(ctx.default_state.clone()));
+        let orderbook = Arc::new(Mutex::new(ctx.default_state.clone()));
 
         let state = RouterCtx {
             client: ctx.node_client.clone(),
             orderbook_cn: ctx.orderbook_cn.clone(),
-            contract: contract.clone(),
+            orderbook: orderbook.clone(),
+            lane_id: ctx.lane_id.clone(),
         };
 
         let cors = CorsLayer::new()
@@ -78,7 +78,7 @@ impl Module for OrderbookModule {
         let api = Router::new()
             .route("/_health", get(health))
             .route("/api/config", get(get_config))
-            .route("/create_order", get(create_order))
+            .route("/create_order", post(create_order))
             .with_state(state)
             .layer(cors);
 
@@ -89,133 +89,24 @@ impl Module for OrderbookModule {
         }
         let bus = OrderbookModuleBusClient::new_from_bus(bus.new_handle()).await;
 
-        Ok(OrderbookModule {
-            bus,
-            contract,
-            orderbook_cn: ctx.orderbook_cn.clone(),
-        })
+        Ok(OrderbookModule { bus })
     }
 
     async fn run(&mut self) -> Result<()> {
         module_handle_messages! {
             on_self self,
-
-            // listen<RollupExecutorEvent> event => {
-            //     self.handle_rollup_executor_event(event).await?;
-            // }
-
         };
 
         Ok(())
     }
 }
 
-impl OrderbookModule {
-    // async fn handle_rollup_executor_event(&mut self, event: RollupExecutorEvent) -> Result<()> {
-    // match event {
-    //     RollupExecutorEvent::TxExecutionSuccess(_, hyli_outputs, optimistic_contracts) => {
-    //         tracing::error!("received TxExecutionSuccess");
-    //         let mut events = vec![];
-    //         for (hyli_output, contract_name) in hyli_outputs {
-    //             if contract_name != self.orderbook_cn {
-    //                 continue;
-    //             }
-    //             let evts: Vec<OrderbookEvent> = borsh::from_slice(&hyli_output.program_outputs)
-    //                 .expect("output comes from contract, should always be valid");
-
-    //             for event in evts {
-    //                 events.push(event);
-    //             }
-    //         }
-
-    //         // Update contract state for optimistic RestAPI
-    //         // TODO: il faudra retirer l'indexer de l'app, et le mettre direct dans le module RollupExecutor
-    //         // TODO: cela permettra de ne pas avoir à envoyer le state de l'orderbook à chaque transaction successful
-    //         {
-    //             if let Some(orderbook_contract) = optimistic_contracts
-    //                 .get(&self.orderbook_cn)
-    //                 .expect("Orderbook contract not found")
-    //                 .downcast::<Orderbook>()
-    //             {
-    //                 let mut contract_guard = self.contract.write().await;
-    //                 *contract_guard = orderbook_contract.clone();
-    //             }
-    //         }
-
-    //         // Send events to all clients
-    //         tracing::debug!("Sending events: {:?}", events);
-    //         for event in events {
-    //             let event_clone = event.clone();
-    //             match &event {
-    //                 OrderbookEvent::BalanceUpdated { user, .. } => {
-    //                     _ = log_warn!(
-    //                         self.bus.send(WsTopicMessage {
-    //                             topic: user.clone(),
-    //                             message: event_clone,
-    //                         }),
-    //                         "Failed to send balance update"
-    //                     );
-    //                 }
-    //                 OrderbookEvent::OrderCancelled { pair, .. }
-    //                 | OrderbookEvent::OrderExecuted { pair, .. }
-    //                 | OrderbookEvent::OrderUpdate { pair, .. } => {
-    //                     let pair = format!("{}-{}", pair.0, pair.1);
-    //                     _ = log_warn!(
-    //                         self.bus.send(WsTopicMessage {
-    //                             topic: pair,
-    //                             message: event_clone,
-    //                         }),
-    //                         "Failed to send order event"
-    //                     );
-    //                 }
-    //                 OrderbookEvent::OrderCreated { order } => {
-    //                     let pair = format!("{}-{}", order.pair.0, order.pair.1);
-    //                     _ = log_warn!(
-    //                         self.bus.send(WsTopicMessage {
-    //                             topic: pair,
-    //                             message: event_clone,
-    //                         }),
-    //                         "Failed to send order created event"
-    //                     );
-    //                 }
-    //             }
-    //         }
-    //         Ok(())
-    //     }
-    //     RollupExecutorEvent::Rollback(optimistic_contracts) => {
-    //         tracing::error!("received TxExecutionRollback");
-    //         {
-    //             if let Some(orderbook_contract) = optimistic_contracts
-    //                 .get(&self.orderbook_cn)
-    //                 .expect("Orderbook contract not found")
-    //                 .downcast::<Orderbook>()
-    //             {
-    //                 let mut contract_guard = self.contract.write().await;
-    //                 *contract_guard = orderbook_contract.clone();
-    //             }
-    //         }
-    //         // Handle reverted transactions
-    //         // We would probably just want to notify clients about the failure
-    //         // todo!("Handle reverted transactions");
-    //         Ok(())
-    //     }
-    //     RollupExecutorEvent::FailedTx(identity, tx_hash, message) => {
-    //         tracing::error!("received FailedTx");
-    //         self.bus.send(WsTopicMessage {
-    //             topic: identity.to_string(),
-    //             message: format!("Transaction {} failed: {}", tx_hash, message),
-    //         })?;
-    //         Ok(())
-    //     }
-    // }
-    // }
-}
-
 #[derive(Clone)]
 struct RouterCtx {
     pub client: Arc<NodeApiHttpClient>,
     pub orderbook_cn: ContractName,
-    pub contract: Arc<RwLock<Orderbook>>,
+    pub orderbook: Arc<Mutex<Orderbook>>,
+    pub lane_id: LaneId,
 }
 
 async fn health() -> impl IntoResponse {
@@ -300,9 +191,14 @@ async fn send(
     auth: AuthHeaders,
 ) -> Result<impl IntoResponse, AppError> {
     let identity = Identity(auth.identity);
-    let mut blobs = vec![];
+    let mut orderbook = ctx.orderbook.lock().await;
 
-    match action {
+    let tx_ctx = TxContext {
+        lane_id: ctx.lane_id.clone(),
+        ..Default::default()
+    };
+
+    let calldata = match action {
         OrderbookAction::CreateOrder {
             order_id,
             order_type,
@@ -313,72 +209,58 @@ async fn send(
             // Assert that the auth headers contains the signature
             // Assert the signature is valid for that user
 
-            blobs.push(
-                OrderbookAction::CreateOrder {
-                    order_id,
-                    order_type,
-                    price,
-                    pair,
-                    quantity,
-                }
-                .as_blob(ctx.orderbook_cn.clone()),
-            );
+            let orderbook_blob = OrderbookAction::CreateOrder {
+                order_id,
+                order_type,
+                price,
+                pair,
+                quantity,
+            }
+            .as_blob(ctx.orderbook_cn.clone());
+            let private_input = orderbook::CreateOrderPrivateInput {
+                user: identity.to_string(),
+                public_key: vec![],
+                signature: vec![],
+                order_user_map: BTreeMap::default(),
+            };
+
+            Calldata {
+                identity,
+                index: sdk::BlobIndex(0),
+                blobs: vec![orderbook_blob].into(),
+                tx_blob_count: 1,
+                tx_hash: TxHash::default(),
+                tx_ctx: Some(tx_ctx),
+                private_input: borsh::to_vec(&private_input)
+                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?,
+            }
         }
         _ => {
             todo!()
         }
+    };
+
+    let res = orderbook.execute(&calldata);
+    tracing::error!("orderbook execute result: {:?}", res);
+
+    if res.is_ok() {
+        let tx_hash = ctx
+            .client
+            .send_tx_blob(BlobTransaction::new(
+                calldata.identity,
+                calldata
+                    .blobs
+                    .iter()
+                    .map(|(_, blob)| blob.clone())
+                    .collect(),
+            ))
+            .await?;
+
+        Ok(Json(tx_hash))
+    } else {
+        Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow::anyhow!("Something went wrong, could not execute the transaction"),
+        ))
     }
-
-    execute_transaction(ctx, identity, blobs).await
-}
-
-async fn execute_transaction(
-    ctx: RouterCtx,
-    identity: Identity,
-    blobs: Vec<Blob>,
-) -> Result<impl IntoResponse, AppError> {
-    // let tx_hash = ctx
-    //     .client
-    //     .send_tx_blob(BlobTransaction::new(identity.clone(), blobs))
-    //     .await?;
-
-    // let mut bus = {
-    //     let app = ctx.contract.lock().await;
-    //     OrderbookModuleBusClient::new_from_bus(app.bus.new_handle()).await
-    // };
-
-    // tokio::time::timeout(Duration::from_secs(5), async {
-    //     loop {
-    //         let event = bus.recv().await?;
-    //         match event {
-    //             CSIBusEvent {
-    //                 event: AutoProverEvent::SuccessTx(sequenced_tx_hash, state),
-    //             } => {
-    //                 // if sequenced_tx_hash == tx_hash {
-    //                 //     let balance = state.oranj_balances.get(&identity).copied().unwrap_or(0);
-    //                 //     let mut table: ApiTable = state
-    //                 //         .tables
-    //                 //         .get(&identity)
-    //                 //         .cloned()
-    //                 //         .unwrap_or_default()
-    //                 //         .into();
-    //                 //     table.balance = balance;
-    //                 return Ok(Json(Resp {
-    //                     tx_hash: sequenced_tx_hash.to_string(),
-    //                     table,
-    //                 }));
-    //                 // }
-    //             }
-    //             CSIBusEvent {
-    //                 event: AutoProverEvent::FailedTx(sequenced_tx_hash, error),
-    //             } => {
-    //                 if sequenced_tx_hash == tx_hash {
-    //                     return Err(AppError(StatusCode::BAD_REQUEST, anyhow::anyhow!(error)));
-    //                 }
-    //             }
-    //         }
-    //     }
-    // })
-    // .await?
-    Ok(Json("ok"))
 }

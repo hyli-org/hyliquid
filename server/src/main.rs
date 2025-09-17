@@ -124,6 +124,7 @@ async fn main() -> Result<()> {
         node_client: node_client.clone(),
         api: api_ctx.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
+        lane_id: validator_lane_id,
         default_state: default_state.clone(),
     });
 
