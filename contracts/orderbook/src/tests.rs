@@ -8,7 +8,7 @@ mod orderbook_tests {
     };
 
     fn setup() -> (String, String, Orderbook) {
-        let mut orderbook = Orderbook::init(LaneId::default(), true);
+        let mut orderbook = Orderbook::init(LaneId::default(), true, vec![]);
         let eth_user = "eth_user".to_string();
         let usd_user = "usd_user".to_string();
 
@@ -1092,6 +1092,142 @@ mod orderbook_tests {
 
         assert_eq!(eth_balances.get(&usd_user).unwrap().balance, 1); // usd_user bought 1 ETH ...
         assert_eq!(usd_balances.get(&usd_user).unwrap().balance, 1000); // .. for 2000 USD
+    }
+
+    #[test_log::test]
+    fn test_cancel_order() {
+        let (eth_user, _, mut orderbook) = setup();
+
+        // Create a limit sell order first
+        let sell_order = Order {
+            order_id: "sell1".to_string(),
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
+            price: Some(2000),
+            pair: ("ETH".to_string(), "USD".to_string()),
+            quantity: 1,
+            timestamp: TimestampMs(0),
+        };
+
+        // Execute the order
+        orderbook
+            .execute_order(&eth_user, sell_order, BTreeMap::default())
+            .unwrap();
+
+        // Verify order exists
+        assert!(orderbook.orders.contains_key("sell1"));
+        assert_eq!(orderbook.orders.len(), 1);
+
+        // Check initial balances after order creation
+        let eth_user_balance_before = orderbook
+            .balances
+            .get("ETH")
+            .unwrap()
+            .get(&eth_user)
+            .unwrap()
+            .balance;
+        let orderbook_balance_before = orderbook
+            .balances
+            .get("ETH")
+            .unwrap()
+            .get("orderbook")
+            .unwrap()
+            .balance;
+
+        assert_eq!(eth_user_balance_before, 9); // 10 - 1 (reserved for order)
+        assert_eq!(orderbook_balance_before, 1); // 1 reserved for the order
+
+        // Cancel the order
+        let events = orderbook
+            .cancel_order("sell1".to_string(), &eth_user)
+            .unwrap();
+
+        // Check events
+        assert_eq!(events.len(), 3);
+        let cancelled_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::OrderCancelled { .. }))
+            .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
+        assert_eq!(cancelled_count, 1);
+        assert_eq!(balance_count, 2);
+
+        // Verify order was removed
+        assert!(!orderbook.orders.contains_key("sell1"));
+        assert_eq!(orderbook.orders.len(), 0);
+
+        // Check balances were restored
+        let eth_user_balance_after = orderbook
+            .balances
+            .get("ETH")
+            .unwrap()
+            .get(&eth_user)
+            .unwrap()
+            .balance;
+        let orderbook_balance_after = orderbook
+            .balances
+            .get("ETH")
+            .unwrap()
+            .get("orderbook")
+            .unwrap()
+            .balance;
+
+        assert_eq!(eth_user_balance_after, 10); // Balance restored
+        assert_eq!(orderbook_balance_after, 0); // Orderbook balance back to 0
+    }
+
+    #[test_log::test]
+    fn test_withdraw() {
+        let (eth_user, _, mut orderbook) = setup();
+
+        // Check initial balance
+        let initial_balance = orderbook
+            .balances
+            .get("ETH")
+            .unwrap()
+            .get(&eth_user)
+            .unwrap()
+            .balance;
+        assert_eq!(initial_balance, 10);
+
+        // Test successful withdrawal
+        let events = orderbook.withdraw("ETH".to_string(), 3, &eth_user).unwrap();
+
+        // Check events
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], OrderbookEvent::BalanceUpdated { .. }));
+
+        // Check balance was updated
+        let new_balance = orderbook
+            .balances
+            .get("ETH")
+            .unwrap()
+            .get(&eth_user)
+            .unwrap()
+            .balance;
+        assert_eq!(new_balance, 7); // 10 - 3
+
+        // Test withdrawal with insufficient balance
+        let result = orderbook.withdraw("ETH".to_string(), 10, &eth_user);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Insufficient balance"));
+        assert!(err.contains(&eth_user));
+        assert!(err.contains("has 7 ETH tokens"));
+        assert!(err.contains("trying to withdraw 10"));
+
+        // Verify balance unchanged after failed withdrawal
+        let balance_after_fail = orderbook
+            .balances
+            .get("ETH")
+            .unwrap()
+            .get(&eth_user)
+            .unwrap()
+            .balance;
+        assert_eq!(balance_after_fail, 7);
     }
 
     // TODO: This test is disabled as get_latest_deposit_mut and BlockHeight are not implemented

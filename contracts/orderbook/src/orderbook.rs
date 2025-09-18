@@ -3,10 +3,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use sdk::hyli_model_utils::TimestampMs;
-use sdk::{ContractName, LaneId};
+use sdk::{ContractName, LaneId, TxContext};
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
 pub struct Orderbook {
+    // Server secret for authentication on permissionned actions
+    pub secret: Vec<u8>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
     // User balances per token: token -> (user -> (balance, secret))
@@ -98,34 +100,40 @@ pub enum OrderbookEvent {
 impl Orderbook {
     pub fn add_session_key(
         &mut self,
-        user: String,
+        user: &str,
         pubkey: &Vec<u8>,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Add the session key to the user's list of session keys
-        let keys = self.session_keys.entry(user.clone()).or_default();
+        let keys = self.session_keys.entry(user.to_string()).or_default();
         if keys.contains(pubkey) {
             return Err("Session key already exists".to_string());
         }
         keys.push(pubkey.clone());
 
-        Ok(vec![OrderbookEvent::SessionKeyAdded { user }])
+        if self.server_execution {
+            Ok(vec![OrderbookEvent::SessionKeyAdded {
+                user: user.to_string(),
+            }])
+        } else {
+            Ok(vec![])
+        }
     }
 
     pub fn deposit(
         &mut self,
         token: String,
         amount: u32,
-        user: String,
+        user: &String,
         secret: &Vec<u8>,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Check if user already exists for this token
         let user_exists = self
             .balances
             .get(&token)
-            .and_then(|token_balances| token_balances.get(&user))
+            .and_then(|token_balances| token_balances.get(user))
             .is_some();
 
-        let user_info = self.get_user_info_mut(&user, &token);
+        let user_info = self.get_user_info_mut(user, &token);
         user_info.balance += amount;
 
         // Only write the secret if the user doesn't exist yet (empty secret means new user)
@@ -135,7 +143,7 @@ impl Orderbook {
 
         if self.server_execution {
             Ok(vec![OrderbookEvent::BalanceUpdated {
-                user,
+                user: user.to_string(),
                 token,
                 amount,
             }])
@@ -146,20 +154,104 @@ impl Orderbook {
 
     pub fn withdraw(
         &mut self,
-        _token: String,
-        _amount: u32,
-        _user: String,
+        token: String,
+        amount: u32,
+        user: &str,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        todo!("Implement withdraw logic")
+        let server_execution = self.server_execution;
+        let balance = self.get_balance_mut(user, &token);
+
+        if *balance < amount {
+            return Err(format!(
+                "Could not withdraw: Insufficient balance: user {user} has {balance} {token} tokens, trying to withdraw {amount}"
+            ));
+        }
+
+        *balance -= amount;
+
+        if server_execution {
+            Ok(vec![OrderbookEvent::BalanceUpdated {
+                user: user.to_string(),
+                token,
+                amount: *balance,
+            }])
+        } else {
+            Ok(vec![])
+        }
     }
 
-    pub fn cancel_order(&mut self, _order_id: OrderId) -> Result<Vec<OrderbookEvent>, String> {
-        todo!("Implement order cancellation logic")
+    pub fn cancel_order(
+        &mut self,
+        order_id: OrderId,
+        user: &str,
+    ) -> Result<Vec<OrderbookEvent>, String> {
+        let order = self
+            .orders
+            .get(&order_id)
+            .ok_or(format!("Order {order_id} not found"))?
+            .clone();
+
+        let required_token = match &order.order_side {
+            OrderSide::Bid => order.pair.1.clone(),
+            OrderSide::Ask => order.pair.0.clone(),
+        };
+
+        // Refund the reserved amount to the user
+        self.transfer_tokens("orderbook", user, &required_token, order.quantity)?;
+
+        // Now that all operations have succeeded, remove the order from storage
+        self.orders.remove(&order_id);
+
+        // Remove from orders list
+        match order.order_side {
+            OrderSide::Bid => {
+                if let Some(orders) = self.buy_orders.get_mut(&order.pair) {
+                    orders.retain(|id| id != &order_id);
+                }
+            }
+            OrderSide::Ask => {
+                if let Some(orders) = self.sell_orders.get_mut(&order.pair) {
+                    orders.retain(|id| id != &order_id);
+                }
+            }
+        }
+
+        let user_balance = self.get_balance(user, &required_token);
+
+        let mut events = vec![OrderbookEvent::OrderCancelled {
+            order_id,
+            pair: order.pair,
+        }];
+        if self.server_execution {
+            events.push(OrderbookEvent::BalanceUpdated {
+                user: user.to_string(),
+                token: required_token.to_string(),
+                amount: user_balance,
+            });
+            let orderbook_balance = self.get_balance("orderbook", &required_token);
+            events.push(OrderbookEvent::BalanceUpdated {
+                user: "orderbook".into(),
+                token: required_token.clone(),
+                amount: orderbook_balance + order.quantity * order.price.unwrap(),
+            });
+        }
+        Ok(events)
+    }
+
+    pub fn escape(
+        &mut self,
+        _tx_ctx: &TxContext,
+        _user: String,
+    ) -> Result<Vec<OrderbookEvent>, String> {
+        // Logic to allow user to escape with their funds
+        // This could involve transferring all their balances to a safe contract or address
+        // For now, we just return an empty event list
+        Ok(vec![])
     }
 
     pub fn execute_order(
         &mut self,
-        user: &String,
+        user: &str,
         mut order: Order,
         order_user_map: BTreeMap<OrderId, String>,
     ) -> Result<Vec<OrderbookEvent>, String> {
@@ -195,7 +287,7 @@ impl Orderbook {
 
                 if sell_orders_option.is_none() && order.order_type == OrderType::Limit {
                     // If there are no sell orders and this is a limit order, add it to the orderbook
-                    self.insert_order(order.clone(), user.clone())?;
+                    self.insert_order(order.clone(), user.to_string())?;
                     events.push(OrderbookEvent::OrderCreated {
                         order: order.clone(),
                     });
@@ -203,7 +295,7 @@ impl Orderbook {
                     // Remove liquitidy from the user balance
                     if self.server_execution {
                         events.push(OrderbookEvent::BalanceUpdated {
-                            user: user.clone(),
+                            user: user.to_string(),
                             token: required_token.clone(),
                             amount: user_balance - order.quantity * order.price.unwrap(),
                         });
@@ -359,7 +451,7 @@ impl Orderbook {
 
                 if buy_orders_option.is_none() && order.order_type == OrderType::Limit {
                     // If there are no buy orders and this is a limit order, add it to the orderbook
-                    self.insert_order(order.clone(), user.clone())?;
+                    self.insert_order(order.clone(), user.to_string())?;
                     events.push(OrderbookEvent::OrderCreated {
                         order: order.clone(),
                     });
@@ -367,7 +459,7 @@ impl Orderbook {
                     // Remove liquitidy from the user balance
                     if self.server_execution {
                         events.push(OrderbookEvent::BalanceUpdated {
-                            user: user.clone(),
+                            user: user.to_string(),
                             token: required_token.clone(),
                             amount: user_balance - order.quantity,
                         });
@@ -542,7 +634,7 @@ impl Orderbook {
                 for user in users {
                     let user_balance = self.get_balance(&user, &token);
                     events.push(OrderbookEvent::BalanceUpdated {
-                        user: user.clone(),
+                        user: user.to_string(),
                         token: token.clone(),
                         amount: user_balance,
                     });
@@ -555,10 +647,11 @@ impl Orderbook {
 }
 
 impl Orderbook {
-    pub fn init(lane_id: LaneId, server_execution: bool) -> Self {
+    pub fn init(lane_id: LaneId, server_execution: bool, secret: Vec<u8>) -> Self {
         let accepted_tokens = BTreeSet::from(["ORANJ".into(), "HYLLAR".into()]);
 
         Orderbook {
+            secret,
             lane_id,
             orders: BTreeMap::new(),
             balances: BTreeMap::new(),
@@ -617,6 +710,10 @@ impl Orderbook {
 
     pub fn get_balance(&mut self, user: &str, token: &str) -> u32 {
         self.get_user_info_mut(user, token).balance
+    }
+
+    pub fn get_balance_mut(&mut self, user: &str, token: &str) -> &mut u32 {
+        &mut self.get_user_info_mut(user, token).balance
     }
 
     fn insert_order(&mut self, order: Order, user: String) -> Result<(), String> {

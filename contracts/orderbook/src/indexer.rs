@@ -326,4 +326,10 @@ impl Orderbook {
         }
         map
     }
+
+    /// Returns user nonce
+    pub fn get_user_nonce(&self, _user: &str) -> u32 {
+        // TODO: implement
+        0
+    }
 }

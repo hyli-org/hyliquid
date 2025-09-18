@@ -56,17 +56,17 @@ enum Commands {
         amount: u32,
     },
     // /// Cancel an existing order
-    // Cancel {
-    //     #[arg(long)]
-    //     order_id: String,
-    // },
+    Cancel {
+        #[arg(long)]
+        order_id: String,
+    },
     // /// Withdraw tokens
-    // Withdraw {
-    //     #[arg(long)]
-    //     token: String,
-    //     #[arg(long)]
-    //     amount: u32,
-    // },
+    Withdraw {
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        amount: u32,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -177,26 +177,16 @@ async fn main() -> Result<()> {
             }
         }
         Commands::AddSessionKey => {
-            let request = AddSessionKeyRequest {
-                public_key: public_key_hex.clone(),
-            };
-
             tracing::info!(
                 "Sending add session key request with derived public key: {}",
                 public_key_hex
             );
 
-            // Create signature for the request data
-            let request_json = serde_json::to_string(&request)?;
-            let signature = create_signature(&signing_key, &request_json)?;
-
             let response = client
                 .post(format!("{}/add_session_key", args.server_url))
                 .header("x-identity", args.identity)
                 .header("x-public-key", &public_key_hex)
-                .header("x-signature", &signature)
                 .header("Content-Type", "application/json")
-                .json(&request)
                 .send()
                 .await
                 .context("Failed to send request to server")?;
@@ -218,15 +208,9 @@ async fn main() -> Result<()> {
 
             tracing::info!("Sending deposit request: {:?}", request);
 
-            // Create signature for the token+amount data
-            let data_to_sign = format!("{token}:{amount}");
-            let signature = create_signature(&signing_key, &data_to_sign)?;
-
             let response = client
                 .post(format!("{}/deposit", args.server_url))
                 .header("x-identity", args.identity)
-                .header("x-public-key", &public_key_hex)
-                .header("x-signature", &signature)
                 .header("Content-Type", "application/json")
                 .json(&request)
                 .send()
@@ -236,6 +220,65 @@ async fn main() -> Result<()> {
             if response.status().is_success() {
                 let response_text = response.text().await?;
                 println!("Deposit successful! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+        }
+        Commands::Cancel { order_id } => {
+            tracing::info!("Sending cancel order request for order_id: {}", order_id);
+
+            // Create signature for the order cancellation
+            let data_to_sign = format!("cancel:{order_id}");
+            let signature = create_signature(&signing_key, &data_to_sign)?;
+
+            let response = client
+                .post(format!("{}/cancel_order", args.server_url))
+                .header("x-identity", args.identity)
+                .header("x-public-key", &public_key_hex)
+                .header("x-signature", &signature)
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({ "order_id": order_id }))
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Order cancelled successfully! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+        }
+        Commands::Withdraw { token, amount } => {
+            tracing::info!(
+                "Sending withdraw request for token: {}, amount: {}",
+                token,
+                amount
+            );
+
+            // Create signature for the withdraw
+            let nonce = 0; // TODO: fix
+            let data_to_sign = format!("{}:{}:{token}:{amount}", args.identity, nonce);
+            let signature = create_signature(&signing_key, &data_to_sign)?;
+
+            let response = client
+                .post(format!("{}/withdraw", args.server_url))
+                .header("x-identity", args.identity)
+                .header("x-public-key", &public_key_hex)
+                .header("x-signature", &signature)
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({ "token": token, "amount": amount }))
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Withdraw successful! Response: {response_text}");
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();

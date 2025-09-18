@@ -13,7 +13,7 @@ pub fn verify_user_signature_authorization(
     user: &str,
     pubkey: &Vec<u8>,
     signature: &Vec<u8>,
-    order_id: &str,
+    msg: &str,
     user_session_keys: &BTreeMap<String, Vec<Vec<u8>>>,
 ) -> Result<(), String> {
     // Verify that the public key exists for this user
@@ -26,7 +26,7 @@ pub fn verify_user_signature_authorization(
     }
 
     // Verify the signature of the order_id with the public key
-    if !verify_order_creation_signature(signature, order_id, pubkey) {
+    if !verify_signature(signature, msg, pubkey) {
         return Err("Invalid signature for order_id".to_string());
     }
 
@@ -35,11 +35,7 @@ pub fn verify_user_signature_authorization(
 
 /// Verifies a signature for a given message with a public key
 /// Uses ECDSA with secp256k1 curve and SHA256 hashing
-pub fn verify_order_creation_signature(
-    signature: &Vec<u8>,
-    order_id: &str,
-    public_key: &Vec<u8>,
-) -> bool {
+pub fn verify_signature(signature: &Vec<u8>, msg: &str, public_key: &Vec<u8>) -> bool {
     // Parse the signature
     let signature = match Signature::try_from(signature.as_slice()) {
         Ok(sig) => sig,
@@ -57,9 +53,9 @@ pub fn verify_order_creation_signature(
         Err(_) => return false,
     };
 
-    // Hash the message (order_id) with SHA256
+    // Hash the message with SHA256
     let mut hasher = Sha256::new();
-    hasher.update(order_id.as_bytes());
+    hasher.update(msg.as_bytes());
     let message_hash = hasher.finalize();
 
     // Verify the signature

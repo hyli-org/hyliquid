@@ -87,7 +87,7 @@ async function checkServerHealth() {
 async function getAllBalances() {
   try {
     const response = await fetch(`${SERVER_URL}/temp/balances`, {
-      method: 'POST',
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json'
       },
@@ -111,7 +111,7 @@ async function getAllBalances() {
 async function getBalanceForAccount(user) {
   try {
     const response = await fetch(`${SERVER_URL}/temp/balance/${encodeURIComponent(user)}`, {
-      method: 'POST',
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json'
       },
@@ -135,7 +135,7 @@ async function getBalanceForAccount(user) {
 async function getAllOrders() {
   try {
     const response = await fetch(`${SERVER_URL}/temp/orders`, {
-      method: 'POST',
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json'
       },
@@ -159,7 +159,7 @@ async function getAllOrders() {
 async function getOrdersByPair(token1, token2) {
   try {
     const response = await fetch(`${SERVER_URL}/temp/orders/${encodeURIComponent(token1)}/${encodeURIComponent(token2)}`, {
-      method: 'POST',
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json'
       },
@@ -223,7 +223,7 @@ function verifyOrderExists(orders, orderId, description = '') {
 async function resetOrderbookState() {
   try {
     const response = await fetch(`${SERVER_URL}/temp/reset_state`, {
-      method: 'POST',
+      method: 'GET',
       headers: {
         'Content-Type': 'application/json'
       },
@@ -384,6 +384,63 @@ describe('TX Sender Integration Tests', () => {
         // Verify ORANJ tokens are reserved for buy order
         const expectedOranjBalance = DEPOSIT_AMOUNT - (ORDER_QUANTITY * BUY_PRICE);
         verifyBalance(finalBalances, IDENTITY, TOKENS.ORANJ, expectedOranjBalance, 'final state (ORANJ reserved for buy)');
+        
+        // Step 5: Cancel one of the orders (test order cancellation)
+        console.log('Step 5: Testing order cancellation...');
+        const orderToCancel = sellOrderId; // Cancel the sell order
+        
+        // Get balances before cancellation
+        const balancesBeforeCancel = await getAllBalances();
+        const hyllarBalanceBeforeCancel = balancesBeforeCancel[TOKENS.HYLLAR]?.[IDENTITY]?.balance || 0;
+        
+        const cancelResult = await runTxSenderCommand('cancel-order', [
+          '--order-id', orderToCancel
+        ]);
+        expect(cancelResult.success).toBe(true);
+        console.log(`✓ Cancelled order ${orderToCancel}`);
+        
+        // Verify order was removed and balance was restored
+        const ordersAfterCancel = await getAllOrders();
+        const balancesAfterCancel = await getAllBalances();
+        
+        if (ordersAfterCancel[orderToCancel]) {
+          throw new Error(`Order ${orderToCancel} should have been cancelled but still exists`);
+        }
+        console.log(`✓ Order ${orderToCancel} successfully removed from orderbook`);
+        
+        // Balance should be restored (tokens should be returned to user)
+        const hyllarBalanceAfterCancel = balancesAfterCancel[TOKENS.HYLLAR]?.[IDENTITY]?.balance || 0;
+        const expectedHyllarAfterCancel = hyllarBalanceBeforeCancel + ORDER_QUANTITY; // Tokens returned
+        verifyBalance(balancesAfterCancel, IDENTITY, TOKENS.HYLLAR, expectedHyllarAfterCancel, 'after order cancellation (tokens returned)');
+        
+        console.log(`✓ Order cancellation test completed - ${ORDER_QUANTITY} ${TOKENS.HYLLAR} tokens returned to user`);
+      }
+
+      // Step 6: Test withdrawal functionality
+      console.log('Step 6: Testing token withdrawal...');
+      
+      // Get current balance before withdrawal
+      const balancesBeforeWithdraw = await getAllBalances();
+      const oranjBalanceBeforeWithdraw = balancesBeforeWithdraw[TOKENS.ORANJ]?.[IDENTITY]?.balance || 0;
+      
+      const withdrawAmount = 500; // Withdraw a portion of ORANJ tokens
+      if (oranjBalanceBeforeWithdraw < withdrawAmount) {
+        console.log(`⚠️ Insufficient ${TOKENS.ORANJ} balance for withdrawal test. Current: ${oranjBalanceBeforeWithdraw}, needed: ${withdrawAmount}`);
+        // Skip withdrawal test if insufficient balance
+      } else {
+        const withdrawResult = await runTxSenderCommand('withdraw', [
+          '--token', TOKENS.ORANJ,
+          '--amount', withdrawAmount.toString()
+        ]);
+        expect(withdrawResult.success).toBe(true);
+        console.log(`✓ Withdrew ${withdrawAmount} ${TOKENS.ORANJ} tokens`);
+        
+        // Verify balance was reduced correctly
+        const balancesAfterWithdraw = await getAllBalances();
+        const expectedOranjAfterWithdraw = oranjBalanceBeforeWithdraw - withdrawAmount;
+        verifyBalance(balancesAfterWithdraw, IDENTITY, TOKENS.ORANJ, expectedOranjAfterWithdraw, 'after withdrawal');
+        
+        console.log(`✓ Withdrawal test completed - balance correctly reduced by ${withdrawAmount} ${TOKENS.ORANJ} tokens`);
       }
 
       console.log('🎉 Complete trading workflow executed successfully!');
@@ -466,6 +523,76 @@ describe('TX Sender Integration Tests', () => {
       const pairOrders = await getOrdersByPair(TOKENS.HYLLAR, TOKENS.ORANJ);
       console.log(`Orders for ${TOKENS.HYLLAR}/${TOKENS.ORANJ} pair:`, Object.keys(pairOrders.buy_orders || {}), Object.keys(pairOrders.sell_orders || {}));
     }, 30000);
+
+    test('should handle order cancellation and withdrawals independently', async () => {
+      console.log('Testing isolated order cancellation and withdrawal...');
+      
+      // First, ensure we have some balance for testing
+      const depositAmount = 1000;
+      const depositResult = await runTxSenderCommand('deposit', [
+        '--token', TOKENS.HYLLAR,
+        '--amount', depositAmount.toString()
+      ]);
+      expect(depositResult.success).toBe(true);
+      
+      // Create an order specifically for cancellation testing
+      const testOrderId = `cancel_test_${orderCounter++}`;
+      const orderResult = await runTxSenderCommand('create-order', [
+        '--order-id', testOrderId,
+        '--order-side', 'ask',
+        '--order-type', 'limit',
+        '--pair-token1', TOKENS.HYLLAR,
+        '--pair-token2', TOKENS.ORANJ,
+        '--quantity', '5',
+        '--price', '2000'
+      ]);
+      expect(orderResult.success).toBe(true);
+      console.log(`✓ Created test order ${testOrderId} for cancellation`);
+      
+      // Get balances before cancellation
+      const balancesBeforeCancel = await getAllBalances();
+      const hyllarBeforeCancel = balancesBeforeCancel[TOKENS.HYLLAR]?.[IDENTITY]?.balance || 0;
+      
+      // Verify order exists
+      const ordersBeforeCancel = await getAllOrders();
+      verifyOrderExists(ordersBeforeCancel, testOrderId, 'before cancellation');
+      
+      // Cancel the order
+      const cancelResult = await runTxSenderCommand('cancel', [
+        '--order-id', testOrderId
+      ]);
+      expect(cancelResult.success).toBe(true);
+      console.log(`✓ Successfully cancelled order ${testOrderId}`);
+      
+      // Verify order was removed
+      const ordersAfterCancel = await getAllOrders();
+      if (ordersAfterCancel[testOrderId]) {
+        throw new Error(`Order ${testOrderId} should have been cancelled but still exists`);
+      }
+      console.log(`✓ Order ${testOrderId} correctly removed from orderbook`);
+      
+      // Verify balance was restored (tokens returned)
+      const balancesAfterCancel = await getAllBalances();
+      const hyllarAfterCancel = balancesAfterCancel[TOKENS.HYLLAR]?.[IDENTITY]?.balance || 0;
+      const expectedBalance = hyllarBeforeCancel + 5; // 5 tokens should be returned
+      verifyBalance(balancesAfterCancel, IDENTITY, TOKENS.HYLLAR, expectedBalance, 'after order cancellation');
+      
+      // Test withdrawal with the newly restored balance
+      const withdrawAmount = 100;
+      const withdrawResult = await runTxSenderCommand('withdraw', [
+        '--token', TOKENS.HYLLAR,
+        '--amount', withdrawAmount.toString()
+      ]);
+      expect(withdrawResult.success).toBe(true);
+      console.log(`✓ Successfully withdrew ${withdrawAmount} ${TOKENS.HYLLAR} tokens`);
+      
+      // Verify withdrawal reduced balance correctly
+      const balancesAfterWithdraw = await getAllBalances();
+      const expectedAfterWithdraw = expectedBalance - withdrawAmount;
+      verifyBalance(balancesAfterWithdraw, IDENTITY, TOKENS.HYLLAR, expectedAfterWithdraw, 'after withdrawal');
+      
+      console.log('✓ Order cancellation and withdrawal test completed successfully');
+    }, 45000);
   });
 
   describe('Error Handling', () => {
@@ -582,8 +709,5 @@ describe('TX Sender Integration Tests', () => {
       
       console.log('✓ Orderbook state verification completed successfully');
     }, 30000);
-  });
-
-  describe('Performance and Reliability', () => {
   });
 });
