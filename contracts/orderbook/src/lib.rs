@@ -94,7 +94,6 @@ impl sdk::ZkContract for Orderbook {
                     price,
                     pair,
                     quantity,
-                    filled_quantity: 0,
                     timestamp: tx_ctx.timestamp.clone(),
                 };
                 if self.orders.contains_key(&order.order_id) {

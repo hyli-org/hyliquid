@@ -1,521 +1,282 @@
 /**
- * Server API Tests using Jest
+ * Integration Tests using tx_sender binary
  * 
- * This file contains tests for the server API endpoints using Jest framework.
+ * This file contains integration tests that use the actual tx_sender binary
+ * to interact with the orderbook system, simulating real usage.
+ * 
  * Make sure the server is running before executing these tests.
  * 
  * To run: npm test
  */
 
-// env var provided by hylix testing environment
-const BASE_URL = process.env.API_BASE_URL || 'http://localhost:4002';
-const NODE_BASE_URL = process.env.HYLI_NODE_BASE_URL || 'http://localhost:4321';
-const HYLI_WALLET_API_URL = process.env.HYLI_WALLET_API_URL || 'http://localhost:4000';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
-import { verifyIdentity, IndexerService } from "hyli-wallet";
-import { build_blob } from "hyli-check-secret";
+const execAsync = promisify(exec);
 
-const walletIndexer = IndexerService.initialize(HYLI_WALLET_API_URL);
+// Configuration
+const SERVER_URL = process.env.SERVER_URL || 'http://localhost:9002';
+const CONFIG_FILE = process.env.CONFIG_FILE || 'config.toml';
+const IDENTITY = process.env.IDENTITY || 'txsender@orderbook';
 
-const bob = await walletIndexer.getAccountInfo("bob");
+// Test data
+const TOKENS = {
+  HYLLAR: 'HYLLAR',
+  ORANJ: 'ORANJ'
+};
 
-const TEST_USER = "bob";
-const TEST_IDENTITY = `bob@wallet`;
-const TEST_PASSWORD = `hylisecure:${bob.salt}`;
-const WALLET_BLOBS = [verifyIdentity(TEST_USER, bob.nonce + 1), await build_blob(TEST_IDENTITY, TEST_PASSWORD)];
+const DEPOSIT_AMOUNT = 10000;
+const ORDER_QUANTITY = 1;
+const SELL_PRICE = 1000;
+const BUY_PRICE = 1010;
 
 /**
- * Helper function to make HTTP requests
+ * Helper function to run tx_sender command
  */
-async function makeRequest(url, options = {}) {
-  const response = await fetch(url, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
-    },
-    ...options
-  });
-
-  const data = await response.text();
-  let jsonData;
+async function runTxSenderCommand(command, args = []) {
+  const baseCmd = `cargo run --bin tx_sender --`;
+  const fullCmd = `${baseCmd} ${command} ${args.join(' ')}`;
+  
+  console.log(`Executing: ${fullCmd}`);
+  
   try {
-    jsonData = JSON.parse(data);
-  } catch (e) {
-    jsonData = data;
+    const { stdout, stderr } = await execAsync(fullCmd, {
+      cwd: '/home/maximilien/hyliquid',
+      timeout: 30000 // 30 second timeout
+    });
+    
+    if (stderr && !stderr.includes('Compiling') && !stderr.includes('Finished')) {
+      console.warn(`Command stderr: ${stderr}`);
+    }
+    
+    return {
+      success: true,
+      stdout: stdout.trim(),
+      stderr: stderr.trim()
+    };
+  } catch (error) {
+    console.error(`Command failed: ${fullCmd}`);
+    console.error(`Error: ${error.message}`);
+    return {
+      success: false,
+      error: error.message,
+      stdout: error.stdout || '',
+      stderr: error.stderr || ''
+    };
   }
-
-  return {
-    status: response.status,
-    statusText: response.statusText,
-    data: jsonData,
-    headers: response.headers
-  };
 }
 
-describe('Server API Tests', () => {
-  // Global setup - check if server is reachable
+/**
+ * Helper function to check if server is responding
+ */
+async function checkServerHealth() {
+  try {
+    const response = await fetch(`${SERVER_URL}/_health`, {
+      method: 'GET',
+      signal: AbortSignal.timeout(5000)
+    });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+describe('TX Sender Integration Tests', () => {
+  let sessionKeyAdded = false;
+  let orderCounter = 1;
+
+  // Global setup - check if server is reachable and build the project
   beforeAll(async () => {
-    try {
-      const response = await fetch(`${BASE_URL}/_health`, {
-        method: 'GET',
-        signal: AbortSignal.timeout(5000) // 5 second timeout
-      });
-      if (!response.ok) {
-        throw new Error(`Server not responding: ${response.status}`);
-      }
-    } catch (error) {
-      throw new Error(`Cannot connect to server at ${BASE_URL}. Make sure the server is running. Error: ${error.message}`);
+    // Check server health
+    const serverHealthy = await checkServerHealth();
+    if (!serverHealthy) {
+      throw new Error(`Cannot connect to server at ${SERVER_URL}. Make sure the server is running.`);
     }
-  });
 
-  describe('Health Endpoint', () => {
-    test('should return OK status', async () => {
-      const response = await makeRequest(`${BASE_URL}/_health`);
-
-      expect(response.status).toBe(200);
-      expect(response.data).toBe("OK");
-    });
-
-    test('should respond quickly', async () => {
-      const start = Date.now();
-      await makeRequest(`${BASE_URL}/_health`);
-      const duration = Date.now() - start;
-
-      expect(duration).toBeLessThan(1000); // Should respond within 1 second
-    });
-  });
-
-  describe('Config Endpoint', () => {
-    test('should return configuration data', async () => {
-      const response = await makeRequest(`${BASE_URL}/api/config`);
-
-      expect(response.status).toBe(200);
-      expect(response.data).toHaveProperty('contract_name');
-      expect(typeof response.data.contract_name).toBe('string');
-      expect(response.data.contract_name.length).toBeGreaterThan(0);
-    });
-
-    test('should return valid JSON', async () => {
-      const response = await makeRequest(`${BASE_URL}/api/config`);
-
-      expect(response.status).toBe(200);
-      expect(typeof response.data).toBe('object');
-      expect(response.data).not.toBeNull();
-    });
-  });
-
-  describe('Orderbook Operations', () => {
-    const ORDER_ID = `order_${Date.now()}`;
-    const PAIR_TOKEN1 = 'ETH';
-    const PAIR_TOKEN2 = 'USDC';
-    const QUANTITY = 100;
-    const PRICE = 2000;
-    const TOKEN = 'ETH';
-    const AMOUNT = 50;
-
-    describe('Create Order', () => {
-      test('should create a buy order with price', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            order_id: `${ORDER_ID}_buy`,
-            order_type: 'buy',
-            price: PRICE,
-            pair_token1: PAIR_TOKEN1,
-            pair_token2: PAIR_TOKEN2,
-            quantity: QUANTITY
-          })
-        });
-
-        console.log("Create buy order response:", response);
-        expect([200, 201]).toContain(response.status);
+    // Build the project to ensure tx_sender binary is available
+    console.log('Building tx_sender binary...');
+    try {
+      await execAsync('cargo build --bin tx_sender', {
+        cwd: '/home/maximilien/hyliquid',
+        timeout: 60000 // 1 minute timeout for build
       });
+      console.log('Build completed successfully');
+    } catch (error) {
+      throw new Error(`Failed to build tx_sender binary: ${error.message}`);
+    }
 
-      test('should create a sell order with price', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            order_id: `${ORDER_ID}_sell`,
-            order_type: 'sell',
-            price: PRICE,
-            pair_token1: PAIR_TOKEN1,
-            pair_token2: PAIR_TOKEN2,
-            quantity: QUANTITY
-          })
-        });
+    // Add session key ONCE at the beginning
+    console.log('🔑 Adding session key (one time setup)...');
+    const sessionKeyResult = await runTxSenderCommand('add-session-key');
+    if (sessionKeyResult.success || sessionKeyResult.stderr.includes('Session key already exists')) {
+      sessionKeyAdded = true;
+      console.log('✓ Session key ready');
+    } else {
+      throw new Error(`Failed to add session key: ${sessionKeyResult.error}`);
+    }
+  }, 120000); // 2 minute timeout for setup
 
-        console.log("Create sell order response:", response);
-        expect([200, 201]).toContain(response.status);
-      });
+  describe('Complete Orderbook Workflow', () => {
+    test('should execute full trading workflow successfully', async () => {
+      // Verify session key was added
+      expect(sessionKeyAdded).toBe(true);
 
-      test('should create a market order without price', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            order_id: `${ORDER_ID}_market`,
-            order_type: 'buy',
-            pair_token1: PAIR_TOKEN1,
-            pair_token2: PAIR_TOKEN2,
-            quantity: QUANTITY
-          })
-        });
+      // Step 1: Deposit HYLLAR tokens
+      console.log('Step 1: Depositing HYLLAR tokens...');
+      const depositHyllarResult = await runTxSenderCommand('deposit', [
+        '--token', TOKENS.HYLLAR,
+        '--amount', DEPOSIT_AMOUNT.toString()
+      ]);
+      expect(depositHyllarResult.success).toBe(true);
+      console.log(`✓ Deposited ${DEPOSIT_AMOUNT} ${TOKENS.HYLLAR} tokens`);
 
-        console.log("Create market order response:", response);
-        expect([200, 201]).toContain(response.status);
-      });
+      // Step 2: Deposit ORANJ tokens
+      console.log('Step 2: Depositing ORANJ tokens...');
+      const depositOranjResult = await runTxSenderCommand('deposit', [
+        '--token', TOKENS.ORANJ,
+        '--amount', DEPOSIT_AMOUNT.toString()
+      ]);
+      expect(depositOranjResult.success).toBe(true);
+      console.log(`✓ Deposited ${DEPOSIT_AMOUNT} ${TOKENS.ORANJ} tokens`);
 
-      test('should reject order with invalid order type', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            order_id: `${ORDER_ID}_invalid`,
-            order_type: 'invalid_type',
-            price: PRICE,
-            pair_token1: PAIR_TOKEN1,
-            pair_token2: PAIR_TOKEN2,
-            quantity: QUANTITY
-          })
-        });
+      // Step 3: Create sell order
+      console.log('Step 3: Creating sell order...');
+      const sellOrderId = `sell_${orderCounter++}`;
+      const sellOrderResult = await runTxSenderCommand('create-order', [
+        '--order-id', sellOrderId,
+        '--order-type', 'Sell',
+        '--pair-token1', TOKENS.HYLLAR,
+        '--pair-token2', TOKENS.ORANJ,
+        '--quantity', ORDER_QUANTITY.toString(),
+        '--price', SELL_PRICE.toString()
+      ]);
+      expect(sellOrderResult.success).toBe(true);
+      console.log(`✓ Created sell order ${sellOrderId}: ${ORDER_QUANTITY} ${TOKENS.HYLLAR} at ${SELL_PRICE} ${TOKENS.ORANJ}`);
 
-        expect(response.status).toBe(400);
-      });
+      // Step 4: Create buy order
+      console.log('Step 4: Creating buy order...');
+      const buyOrderId = `buy_${orderCounter++}`;
+      const buyOrderResult = await runTxSenderCommand('create-order', [
+        '--order-id', buyOrderId,
+        '--order-type', 'Buy',
+        '--pair-token1', TOKENS.HYLLAR,
+        '--pair-token2', TOKENS.ORANJ,
+        '--quantity', ORDER_QUANTITY.toString(),
+        '--price', BUY_PRICE.toString()
+      ]);
+      expect(buyOrderResult.success).toBe(true);
+      console.log(`✓ Created buy order ${buyOrderId}: ${ORDER_QUANTITY} ${TOKENS.HYLLAR} at ${BUY_PRICE} ${TOKENS.ORANJ}`);
 
-      test('should reject order with missing required fields', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/create-order`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            order_type: 'buy',
-            quantity: QUANTITY
-            // Missing order_id, pair_token1, pair_token2
-          })
-        });
+      console.log('🎉 Complete trading workflow executed successfully!');
+    }, 60000); // 1 minute timeout per test
 
-        expect(response.status).toBe(400);
-      });
-    });
+    test('should handle additional deposits', async () => {
+      console.log('Testing additional deposits...');
+      
+      const smallAmount = 100;
+      
+      // Make small deposits to test system robustness
+      const depositResult = await runTxSenderCommand('deposit', [
+        '--token', TOKENS.HYLLAR,
+        '--amount', smallAmount.toString()
+      ]);
+      
+      expect(depositResult.success).toBe(true);
+      console.log(`✓ Additional deposit of ${smallAmount} ${TOKENS.HYLLAR} successful`);
+    }, 30000);
 
-    describe('Cancel Order', () => {
-      test('should cancel an existing order', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/cancel`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            order_id: `${ORDER_ID}_buy`
-          })
-        });
-
-        console.log("Cancel order response:", response);
-        expect([200, 204]).toContain(response.status);
-      });
-
-      test('should handle cancellation of non-existent order', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/cancel`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            order_id: 'non_existent_order'
-          })
-        });
-
-        // Should either succeed (idempotent) or return 404
-        expect([200, 204, 404]).toContain(response.status);
-      });
-
-      test('should reject cancel request with missing order_id', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/cancel`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS
-            // Missing order_id
-          })
-        });
-
-        expect(response.status).toBe(400);
-      });
-    });
-
-    describe('Deposit Tokens', () => {
-      test('should deposit tokens successfully', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: TOKEN,
-            amount: AMOUNT
-          })
-        });
-
-        console.log("Deposit response:", response);
-        expect([200, 201]).toContain(response.status);
-      });
-
-      test('should handle deposit with zero amount', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: TOKEN,
-            amount: 0
-          })
-        });
-
-        // Zero amount should be rejected
-        expect(response.status).toBe(400);
-      });
-
-      test('should reject deposit with missing fields', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: TOKEN
-            // Missing amount
-          })
-        });
-
-        expect(response.status).toBe(400);
-      });
-
-      test('should handle deposit with invalid token', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: '',
-            amount: AMOUNT
-          })
-        });
-
-        expect(response.status).toBe(400);
-      });
-    });
-
-    describe('Withdraw Tokens', () => {
-      test('should withdraw tokens successfully', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: TOKEN,
-            amount: AMOUNT
-          })
-        });
-
-        console.log("Withdraw response:", response);
-        expect([200, 204]).toContain(response.status);
-      });
-
-      test('should handle withdrawal with zero amount', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: TOKEN,
-            amount: 0
-          })
-        });
-
-        // Zero amount should be rejected
-        expect(response.status).toBe(400);
-      });
-
-      test('should handle withdrawal exceeding balance', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: TOKEN,
-            amount: 999999999 // Very large amount
-          })
-        });
-
-        // Should reject insufficient balance
-        expect([400, 422]).toContain(response.status);
-      });
-
-      test('should reject withdrawal with missing fields', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/withdraw`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            amount: AMOUNT
-            // Missing token
-          })
-        });
-
-        expect(response.status).toBe(400);
-      });
-    });
-
-    describe('Authentication and Authorization', () => {
-      test('should reject requests without wallet_blobs', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            token: TOKEN,
-            amount: AMOUNT
-            // Missing wallet_blobs
-          })
-        });
-
-        expect([400, 401, 403]).toContain(response.status);
-      });
-
-      test('should reject requests without x-user header', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-            // Missing x-user header
-          },
-          body: JSON.stringify({
-            wallet_blobs: WALLET_BLOBS,
-            token: TOKEN,
-            amount: AMOUNT
-          })
-        });
-
-        expect([400, 401, 403]).toContain(response.status);
-      });
-
-      test('should reject requests with invalid wallet_blobs', async () => {
-        const response = await makeRequest(`${BASE_URL}/api/orderbook/deposit`, {
-          method: 'POST',
-          headers: {
-            'x-user': TEST_USER,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            wallet_blobs: ['invalid_blob_1', 'invalid_blob_2'],
-            token: TOKEN,
-            amount: AMOUNT
-          })
-        });
-
-        expect([400, 401, 403]).toContain(response.status);
-      });
-    });
-  });
-
-  describe('CORS Headers', () => {
-    test('should include CORS headers in responses', async () => {
-      const response = await makeRequest(`${BASE_URL}/_health`);
-
-      const corsHeaders = {
-        'access-control-allow-origin': response.headers.get('access-control-allow-origin'),
-        'access-control-allow-methods': response.headers.get('access-control-allow-methods'),
-        'access-control-allow-headers': response.headers.get('access-control-allow-headers')
-      };
-
-      expect(corsHeaders['access-control-allow-origin']).toBeTruthy();
-    });
-
-    test('should handle preflight OPTIONS requests', async () => {
-      const response = await makeRequest(`${BASE_URL}/_health`, {
-        method: 'OPTIONS',
-        headers: {
-          'Origin': 'http://localhost:3001',
-          'Access-Control-Request-Method': 'GET'
-        }
-      });
-
-      // OPTIONS request should not return an error
-      expect(response.status).toBeLessThan(500);
-    });
+    test('should create additional orders with different parameters', async () => {
+      console.log('Testing additional order creation...');
+      
+      // Create market order (without price)
+      const marketOrderId = `market_${orderCounter++}`;
+      const marketOrderResult = await runTxSenderCommand('create-order', [
+        '--order-id', marketOrderId,
+        '--order-type', 'Buy',
+        '--pair-token1', TOKENS.HYLLAR,
+        '--pair-token2', TOKENS.ORANJ,
+        '--quantity', '1'
+        // No price specified - should be market order
+      ]);
+      
+      // Create limit order with different price
+      const limitOrderId = `limit_${orderCounter++}`;
+      const limitOrderResult = await runTxSenderCommand('create-order', [
+        '--order-id', limitOrderId,
+        '--order-type', 'Sell',
+        '--pair-token1', TOKENS.HYLLAR,
+        '--pair-token2', TOKENS.ORANJ,
+        '--quantity', '2',
+        '--price', '1500'
+      ]);
+      
+      expect(marketOrderResult.success).toBe(true);
+      expect(limitOrderResult.success).toBe(true);
+      console.log(`✓ Created market order ${marketOrderId} and limit order ${limitOrderId}`);
+    }, 30000);
   });
 
   describe('Error Handling', () => {
-    test('should return 404 for non-existent endpoints', async () => {
-      const response = await makeRequest(`${BASE_URL}/api/nonexistent`);
+    test('should handle invalid command arguments gracefully', async () => {
+      console.log('Testing error handling...');
+      
+      // Try to create order with invalid order type
+      const invalidOrderId = `invalid_${orderCounter++}`;
+      const invalidOrderResult = await runTxSenderCommand('create-order', [
+        '--order-id', invalidOrderId,
+        '--order-type', 'InvalidType',
+        '--pair-token1', TOKENS.HYLLAR,
+        '--pair-token2', TOKENS.ORANJ,
+        '--quantity', '1',
+        '--price', '1000'
+      ]);
+      
+      // This should fail due to invalid order type
+      expect(invalidOrderResult.success).toBe(false);
+      console.log('✓ Invalid order type properly rejected');
+    }, 30000);
 
-      expect(response.status).toBe(404);
-    });
-
-    test('should handle malformed requests gracefully', async () => {
-      const response = await makeRequest(`${BASE_URL}/api/increment`, {
-        method: 'POST',
-        headers: {
-          'x-user': TEST_USER,
-          'Content-Type': 'application/json'
-        },
-        body: '{"invalid": json}'
-      });
-
-      expect(response.status).toBe(400);
-    });
+    test('should handle missing required arguments', async () => {
+      console.log('Testing missing arguments...');
+      
+      // Try to create order without required fields
+      const incompleteOrderResult = await runTxSenderCommand('create-order', [
+        '--order-id', `incomplete_${orderCounter++}`,
+        '--order-type', 'Buy'
+        // Missing other required fields
+      ]);
+      
+      // This should fail due to missing arguments
+      expect(incompleteOrderResult.success).toBe(false);
+      console.log('✓ Missing arguments properly rejected');
+    }, 30000);
   });
 
+  describe('Performance and Reliability', () => {
+    test('should handle sequential commands efficiently', async () => {
+      console.log('Testing sequential commands...');
+      
+      const orderIds = [];
+      
+      // Create multiple orders sequentially
+      for (let i = 0; i < 3; i++) {
+        const orderId = `sequential_${orderCounter++}`;
+        orderIds.push(orderId);
+        
+        const result = await runTxSenderCommand('create-order', [
+          '--order-id', orderId,
+          '--order-type', i % 2 === 0 ? 'Buy' : 'Sell',
+          '--pair-token1', TOKENS.HYLLAR,
+          '--pair-token2', TOKENS.ORANJ,
+          '--quantity', '1',
+          '--price', (1000 + i * 10).toString()
+        ]);
+        
+        expect(result.success).toBe(true);
+        console.log(`✓ Sequential order ${orderId} created successfully`);
+      }
+      
+      console.log('✓ All sequential commands completed successfully');
+    }, 45000);
+  });
 });

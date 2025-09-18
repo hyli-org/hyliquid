@@ -42,7 +42,6 @@ pub struct Order {
     pub price: Option<u32>,
     pub pair: TokenPair,
     pub quantity: u32,
-    pub filled_quantity: u32,
     pub timestamp: TimestampMs,
 }
 
