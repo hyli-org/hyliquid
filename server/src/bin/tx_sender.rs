@@ -1,11 +1,15 @@
 use anyhow::{Context, Result};
 use clap::{command, Parser, Subcommand};
 use hyli_modules::utils::logger::setup_tracing;
-use k256::{elliptic_curve::sec1::ToEncodedPoint, SecretKey};
+use k256::{
+    ecdsa::{signature::Signer, Signature, SigningKey},
+    SecretKey,
+};
 use orderbook::orderbook::{OrderType, TokenPair};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use server::conf::Conf;
+use sha2::{Digest, Sha256};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Send transactions to a server", long_about = None)]
@@ -42,17 +46,17 @@ enum Commands {
     },
     /// Add a session key for user authentication
     AddSessionKey,
+    /// Deposit tokens
+    Deposit {
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        amount: u32,
+    },
     // /// Cancel an existing order
     // Cancel {
     //     #[arg(long)]
     //     order_id: String,
-    // },
-    // /// Deposit tokens
-    // Deposit {
-    //     #[arg(long)]
-    //     token: String,
-    //     #[arg(long)]
-    //     amount: u32,
     // },
     // /// Withdraw tokens
     // Withdraw {
@@ -77,6 +81,22 @@ struct AddSessionKeyRequest {
     public_key: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct DepositRequest {
+    token: String,
+    amount: u32,
+}
+
+// Helper function to create a signature for the given data
+fn create_signature(signing_key: &SigningKey, data: &str) -> Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(data.as_bytes());
+    let hash = hasher.finalize();
+
+    let signature: Signature = signing_key.sign(&hash);
+    Ok(hex::encode(signature.to_bytes()))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -85,6 +105,15 @@ async fn main() -> Result<()> {
         "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
     setup_tracing(&config.log_format, "tx_sender".to_string()).context("setting up tracing")?;
+
+    // Generate the key pair once for all operations
+    let private_key_bytes =
+        hex::decode(HARDCODED_PRIVATE_KEY).context("Impossible to decode private key")?;
+    let secret_key = SecretKey::from_slice(&private_key_bytes).context("Invalid private key")?;
+    let signing_key = SigningKey::from(secret_key);
+    let public_key = signing_key.verifying_key();
+    let public_key_bytes = public_key.to_encoded_point(false).as_bytes().to_vec();
+    let public_key_hex = hex::encode(public_key_bytes);
 
     let client = Client::new();
 
@@ -104,7 +133,7 @@ async fn main() -> Result<()> {
             };
 
             let request = CreateOrderRequest {
-                order_id,
+                order_id: order_id.clone(),
                 order_type,
                 price,
                 pair: (pair_token1, pair_token2),
@@ -113,9 +142,14 @@ async fn main() -> Result<()> {
 
             tracing::info!("Sending create order request: {:?}", request);
 
+            // Create signature for the order_id (as expected by the validation logic)
+            let signature = create_signature(&signing_key, &order_id)?;
+
             let response = client
                 .post(format!("{}/create_order", args.server_url))
                 .header("x-identity", args.identity)
+                .header("x-public-key", &public_key_hex)
+                .header("x-signature", &signature)
                 .header("Content-Type", "application/json")
                 .json(&request)
                 .send()
@@ -132,16 +166,6 @@ async fn main() -> Result<()> {
             }
         }
         Commands::AddSessionKey => {
-            let private_key_bytes =
-                hex::decode(HARDCODED_PRIVATE_KEY).context("Impossible to decode private key")?;
-
-            let secret_key =
-                SecretKey::from_slice(&private_key_bytes).context("Invalid private key")?;
-
-            let public_key = secret_key.public_key();
-            let public_key_bytes = public_key.to_encoded_point(false).as_bytes().to_vec();
-            let public_key_hex = hex::encode(public_key_bytes);
-
             let request = AddSessionKeyRequest {
                 public_key: public_key_hex.clone(),
             };
@@ -151,9 +175,15 @@ async fn main() -> Result<()> {
                 public_key_hex
             );
 
+            // Create signature for the request data
+            let request_json = serde_json::to_string(&request)?;
+            let signature = create_signature(&signing_key, &request_json)?;
+
             let response = client
                 .post(format!("{}/add_session_key", args.server_url))
                 .header("x-identity", args.identity)
+                .header("x-public-key", &public_key_hex)
+                .header("x-signature", &signature)
                 .header("Content-Type", "application/json")
                 .json(&request)
                 .send()
@@ -163,6 +193,38 @@ async fn main() -> Result<()> {
             if response.status().is_success() {
                 let response_text = response.text().await?;
                 println!("Session key added successfully! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+        }
+        Commands::Deposit { token, amount } => {
+            let request = DepositRequest {
+                token: token.clone(),
+                amount,
+            };
+
+            tracing::info!("Sending deposit request: {:?}", request);
+
+            // Create signature for the token+amount data
+            let data_to_sign = format!("{token}:{amount}");
+            let signature = create_signature(&signing_key, &data_to_sign)?;
+
+            let response = client
+                .post(format!("{}/deposit", args.server_url))
+                .header("x-identity", args.identity)
+                .header("x-public-key", &public_key_hex)
+                .header("x-signature", &signature)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Deposit successful! Response: {response_text}");
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();

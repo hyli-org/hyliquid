@@ -19,10 +19,14 @@ pub struct Orderbook {
     pub buy_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
     // Sell orders sorted by price (lowest first) for each token pair
     pub sell_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
-    // History of orders executed, indexed by token pair and timestamp
-    pub orders_history: BTreeMap<TokenPair, BTreeMap<TimestampMs, u32>>,
     // Accepted tokens
     pub accepted_tokens: BTreeSet<ContractName>,
+    // Mapping of order IDs to their owners
+    pub orders_owner: BTreeMap<OrderId, String>,
+
+    /// These fields are not committed on-chain
+    // History of orders executed, indexed by token pair and timestamp
+    pub orders_history: BTreeMap<TokenPair, BTreeMap<TimestampMs, u32>>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
@@ -166,12 +170,7 @@ impl Orderbook {
 
                 if sell_orders_option.is_none() && order.price.is_some() {
                     // If there are no sell orders and this is a limit order, add it to the orderbook
-
-                    self.orders.insert(order.order_id.clone(), order.clone());
-                    self.buy_orders
-                        .entry(order.pair.clone())
-                        .or_default()
-                        .push_back(order.order_id.clone());
+                    self.insert_order(order.clone(), user.clone())?;
                     events.push(OrderbookEvent::OrderCreated {
                         order: order.clone(),
                     });
@@ -321,11 +320,7 @@ impl Orderbook {
 
                 if buy_orders_option.is_none() && order.price.is_some() {
                     // If there are no buy orders and this is a limit order, add it to the orderbook
-                    self.orders.insert(order.order_id.clone(), order.clone());
-                    self.sell_orders
-                        .entry(order.pair.clone())
-                        .or_default()
-                        .push_back(order.order_id.clone());
+                    self.insert_order(order.clone(), user.clone())?;
                     events.push(OrderbookEvent::OrderCreated {
                         order: order.clone(),
                     });
@@ -461,8 +456,9 @@ impl Orderbook {
         // If there is still some quantity left, we need to insert the order in the orderbook
         if let Some(order) = order_to_insert {
             if order.price.is_some() {
-                self.insert_order(order.clone())?;
-                // Remove liquitidy from the user balance
+                // Insert order
+                self.insert_order(order.clone(), user.to_string())?;
+                // Remove liquidity from the user balance
                 let quantity = match order.order_type {
                     OrderType::Buy => order.quantity * order.price.unwrap(),
                     OrderType::Sell => order.quantity,
@@ -503,8 +499,9 @@ impl Orderbook {
             session_keys: BTreeMap::new(),
             buy_orders: BTreeMap::new(),
             sell_orders: BTreeMap::new(),
-            orders_history: BTreeMap::new(),
+            orders_owner: BTreeMap::new(),
             accepted_tokens,
+            orders_history: BTreeMap::new(),
         }
     }
 
@@ -569,7 +566,7 @@ impl Orderbook {
         self.get_user_info_mut(user, token).balance
     }
 
-    fn insert_order(&mut self, order: Order) -> Result<(), String> {
+    fn insert_order(&mut self, order: Order, user: String) -> Result<(), String> {
         // Function only called for Limit orders
         let price = order.price.unwrap();
         if price == 0 {
@@ -594,6 +591,9 @@ impl Orderbook {
 
         order_list.insert(insert_pos, order.order_id.clone());
         self.orders.insert(order.order_id.clone(), order.clone());
+        // Keep track of the order owner
+        self.orders_owner
+            .insert(order.order_id.clone(), user.clone());
         Ok(())
     }
 

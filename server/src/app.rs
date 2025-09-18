@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{
@@ -78,6 +78,7 @@ impl Module for OrderbookModule {
         let api = Router::new()
             .route("/create_order", post(create_order))
             .route("/add_session_key", post(add_session_key))
+            .route("/deposit", post(deposit))
             .with_state(state)
             .layer(cors);
 
@@ -113,10 +114,14 @@ struct RouterCtx {
 // --------------------------------------------------------
 
 const IDENTITY_HEADER: &str = "x-identity";
+const PUBLIC_KEY_HEADER: &str = "x-public-key";
+const SIGNATURE_HEADER: &str = "x-signature";
 
 #[derive(Debug)]
 struct AuthHeaders {
     identity: String,
+    public_key: Option<Vec<u8>>,
+    signature: Option<Vec<u8>>,
 }
 
 impl AuthHeaders {
@@ -132,7 +137,21 @@ impl AuthHeaders {
             })?
             .to_string();
 
-        Ok(AuthHeaders { identity })
+        let public_key: Option<Vec<u8>> = headers
+            .get(PUBLIC_KEY_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| hex::decode(s).ok());
+
+        let signature = headers
+            .get(SIGNATURE_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| hex::decode(s).ok());
+
+        Ok(AuthHeaders {
+            identity,
+            public_key,
+            signature,
+        })
     }
 }
 
@@ -148,6 +167,12 @@ struct CreateOrderRequest {
 #[derive(serde::Deserialize)]
 struct AddSessionKeyRequest {
     public_key: String,
+}
+
+#[derive(serde::Deserialize)]
+struct DepositRequest {
+    token: String,
+    amount: u32,
 }
 
 // --------------------------------------------------------
@@ -166,53 +191,36 @@ async fn create_order(
         ..Default::default()
     };
 
-    let action = OrderbookAction::CreateOrder {
-        order_id: request.order_id,
-        order_type: request.order_type,
-        price: request.price,
-        pair: request.pair,
-        quantity: request.quantity,
+    // FIXME: locking here makes locking another time in execute_orderbook_action ...
+    let order_user_map = {
+        let orderbook = ctx.orderbook.lock().await;
+        orderbook.get_order_user_map(&request.order_type, &request.pair)
     };
-    let calldata = match action {
-        OrderbookAction::CreateOrder {
-            order_id,
-            order_type,
-            price,
-            pair,
-            quantity,
-        } => {
-            // Assert that the auth headers contains the signature
-            // Assert the signature is valid for that user
 
-            let orderbook_blob = OrderbookAction::CreateOrder {
-                order_id,
-                order_type,
-                price,
-                pair,
-                quantity,
-            }
-            .as_blob(ctx.orderbook_cn.clone());
-            let private_input = orderbook::CreateOrderPrivateInput {
-                user: identity.to_string(),
-                public_key: vec![],
-                signature: vec![],
-                order_user_map: BTreeMap::default(),
-            };
+    let private_input = orderbook::CreateOrderPrivateInput {
+        user: identity.to_string(),
+        public_key: auth.public_key.expect("Missing public key in headers"),
+        signature: auth.signature.expect("Missing signature in headers"),
+        order_user_map,
+    };
 
-            Calldata {
-                identity,
-                index: sdk::BlobIndex(0),
-                blobs: vec![orderbook_blob].into(),
-                tx_blob_count: 1,
-                tx_hash: TxHash::default(),
-                tx_ctx: Some(tx_ctx),
-                private_input: borsh::to_vec(&private_input)
-                    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?,
-            }
+    let calldata = Calldata {
+        identity,
+        index: sdk::BlobIndex(0),
+        blobs: vec![OrderbookAction::CreateOrder {
+            order_id: request.order_id,
+            order_type: request.order_type,
+            price: request.price,
+            pair: request.pair,
+            quantity: request.quantity,
         }
-        _ => {
-            todo!()
-        }
+        .as_blob(ctx.orderbook_cn.clone())]
+        .into(),
+        tx_blob_count: 1,
+        tx_hash: TxHash::default(),
+        tx_ctx: Some(tx_ctx),
+        private_input: borsh::to_vec(&private_input)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?,
     };
 
     execute_orderbook_action(&calldata, &ctx).await
@@ -255,6 +263,37 @@ async fn add_session_key(
     execute_orderbook_action(&calldata, &ctx).await
 }
 
+async fn deposit(
+    State(ctx): State<RouterCtx>,
+    headers: HeaderMap,
+    Json(request): Json<DepositRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let auth = AuthHeaders::from_headers(&headers)?;
+    let identity = Identity(auth.identity);
+    let tx_ctx = TxContext {
+        lane_id: ctx.lane_id.clone(),
+        ..Default::default()
+    };
+
+    let orderbook_blob = OrderbookAction::Deposit {
+        token: request.token,
+        amount: request.amount,
+    }
+    .as_blob(ctx.orderbook_cn.clone());
+
+    let calldata = Calldata {
+        identity,
+        index: sdk::BlobIndex(0),
+        blobs: vec![orderbook_blob].into(),
+        tx_blob_count: 1,
+        tx_hash: TxHash::default(),
+        tx_ctx: Some(tx_ctx),
+        private_input: vec![],
+    };
+
+    execute_orderbook_action(&calldata, &ctx).await
+}
+
 async fn execute_orderbook_action(
     calldata: &Calldata,
     ctx: &RouterCtx,
@@ -262,36 +301,38 @@ async fn execute_orderbook_action(
     let mut orderbook = ctx.orderbook.lock().await;
     let res = orderbook.execute(calldata);
 
-    let events: Vec<OrderbookEvent> = match &res {
+    match &res {
         Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
-            Ok(events) => events,
+            Ok(events) => {
+                tracing::info!("orderbook execute results: {:?}", events);
+                let tx_hash = ctx
+                    .client
+                    .send_tx_blob(BlobTransaction::new(
+                        calldata.identity.clone(),
+                        calldata
+                            .blobs
+                            .iter()
+                            .map(|(_, blob)| blob.clone())
+                            .collect(),
+                    ))
+                    .await?;
+
+                Ok(Json(tx_hash))
+            }
             Err(e) => {
                 tracing::error!("Failed to deserialize events: {:?}", e);
-                vec![]
+                Err(AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Failed to deserialize events: {e}"),
+                ))
             }
         },
-        Err(_) => vec![],
-    };
-    tracing::info!("orderbook execute results: {:?}", events);
-
-    if res.is_ok() {
-        let tx_hash = ctx
-            .client
-            .send_tx_blob(BlobTransaction::new(
-                calldata.identity.clone(),
-                calldata
-                    .blobs
-                    .iter()
-                    .map(|(_, blob)| blob.clone())
-                    .collect(),
+        Err(e) => {
+            tracing::error!("Could not execute the transaction: {:?}", e);
+            Err(AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Could not execute the transaction: {e}"),
             ))
-            .await?;
-
-        Ok(Json(tx_hash))
-    } else {
-        Err(AppError(
-            StatusCode::BAD_REQUEST,
-            anyhow::anyhow!("Something went wrong, could not execute the transaction"),
-        ))
+        }
     }
 }
