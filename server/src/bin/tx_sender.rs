@@ -5,7 +5,7 @@ use k256::{
     ecdsa::{signature::Signer, Signature, SigningKey},
     SecretKey,
 };
-use orderbook::orderbook::{OrderType, TokenPair};
+use orderbook::orderbook::{OrderSide, OrderType, TokenPair};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use server::conf::Conf;
@@ -33,6 +33,8 @@ enum Commands {
     CreateOrder {
         #[arg(long)]
         order_id: String,
+        #[arg(long)]
+        order_side: String,
         #[arg(long)]
         order_type: String,
         #[arg(long)]
@@ -70,6 +72,7 @@ enum Commands {
 #[derive(Serialize, Deserialize, Debug)]
 struct CreateOrderRequest {
     order_id: String,
+    order_side: OrderSide,
     order_type: OrderType,
     price: Option<u32>,
     pair: TokenPair,
@@ -120,20 +123,28 @@ async fn main() -> Result<()> {
     match args.command {
         Commands::CreateOrder {
             order_id,
+            order_side,
             order_type,
             price,
             pair_token1,
             pair_token2,
             quantity,
         } => {
+            let order_side = match order_side.to_lowercase().as_str() {
+                "bid" => OrderSide::Bid,
+                "ask" => OrderSide::Ask,
+                _ => anyhow::bail!("Invalid order side. Must be 'bid' or 'ask'"),
+            };
+
             let order_type = match order_type.to_lowercase().as_str() {
-                "buy" => OrderType::Buy,
-                "sell" => OrderType::Sell,
-                _ => anyhow::bail!("Invalid order type. Must be 'buy' or 'sell'"),
+                "limit" => OrderType::Limit,
+                "market" => OrderType::Market,
+                _ => anyhow::bail!("Invalid order type. Must be 'limit' or 'market'"),
             };
 
             let request = CreateOrderRequest {
                 order_id: order_id.clone(),
+                order_side,
                 order_type,
                 price,
                 pair: (pair_token1, pair_token2),

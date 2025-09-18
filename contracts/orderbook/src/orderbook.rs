@@ -36,20 +36,30 @@ pub struct UserInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+pub enum OrderSide {
+    Bid, // Buy
+    Ask, // Sell
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+pub enum OrderType {
+    Market,
+    Limit,
+    Stop,
+    StopLimit,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub struct Order {
     pub order_id: OrderId,
     pub order_type: OrderType,
+    pub order_side: OrderSide,
     pub price: Option<u32>,
     pub pair: TokenPair,
     pub quantity: u32,
     pub timestamp: TimestampMs,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
-pub enum OrderType {
-    Buy,
-    Sell,
-}
 pub type OrderId = String;
 pub type TokenName = String;
 pub type TokenPair = (TokenName, TokenName);
@@ -142,12 +152,12 @@ impl Orderbook {
         let mut transfers_to_process: Vec<(String, String, String, u32)> = vec![];
         let mut order_to_insert: Option<Order> = None;
 
-        let (required_token, required_amount) = match order.order_type {
-            OrderType::Buy => (
+        let (required_token, required_amount) = match order.order_side {
+            OrderSide::Bid => (
                 order.pair.1.clone(),
                 order.price.map(|p| order.quantity * p),
             ),
-            OrderType::Sell => (order.pair.0.clone(), Some(order.quantity)),
+            OrderSide::Ask => (order.pair.0.clone(), Some(order.quantity)),
         };
 
         let user_balance = self.get_balance(user, &required_token);
@@ -157,17 +167,17 @@ impl Orderbook {
             if user_balance < amount {
                 return Err(format!(
                     "Insufficient balance for {:?} order: user {} has {} {} tokens, requires {}",
-                    order.order_type, user, user_balance, required_token, amount
+                    order.order_side, user, user_balance, required_token, amount
                 ));
             }
         }
 
         // Try to fill already existing orders
-        match &order.order_type {
-            OrderType::Buy => {
+        match &order.order_side {
+            OrderSide::Bid => {
                 let sell_orders_option = self.sell_orders.get_mut(&order.pair);
 
-                if sell_orders_option.is_none() && order.price.is_some() {
+                if sell_orders_option.is_none() && order.order_type == OrderType::Limit {
                     // If there are no sell orders and this is a limit order, add it to the orderbook
                     self.insert_order(order.clone(), user.clone())?;
                     events.push(OrderbookEvent::OrderCreated {
@@ -314,10 +324,10 @@ impl Orderbook {
                     }
                 }
             }
-            OrderType::Sell => {
+            OrderSide::Ask => {
                 let buy_orders_option = self.buy_orders.get_mut(&order.pair);
 
-                if buy_orders_option.is_none() && order.price.is_some() {
+                if buy_orders_option.is_none() && order.order_type == OrderType::Limit {
                     // If there are no buy orders and this is a limit order, add it to the orderbook
                     self.insert_order(order.clone(), user.clone())?;
                     events.push(OrderbookEvent::OrderCreated {
@@ -454,13 +464,13 @@ impl Orderbook {
 
         // If there is still some quantity left, we need to insert the order in the orderbook
         if let Some(order) = order_to_insert {
-            if order.price.is_some() {
+            if order.order_type == OrderType::Limit {
                 // Insert order
                 self.insert_order(order.clone(), user.to_string())?;
                 // Remove liquidity from the user balance
-                let quantity = match order.order_type {
-                    OrderType::Buy => order.quantity * order.price.unwrap(),
-                    OrderType::Sell => order.quantity,
+                let quantity = match order.order_side {
+                    OrderSide::Bid => order.quantity * order.price.unwrap(),
+                    OrderSide::Ask => order.quantity,
                 };
 
                 transfers_to_process.push((
@@ -571,9 +581,9 @@ impl Orderbook {
         if price == 0 {
             return Err("Price cannot be zero".to_string());
         }
-        let order_list = match order.order_type {
-            OrderType::Buy => self.buy_orders.entry(order.pair.clone()).or_default(),
-            OrderType::Sell => self.sell_orders.entry(order.pair.clone()).or_default(),
+        let order_list = match order.order_side {
+            OrderSide::Bid => self.buy_orders.entry(order.pair.clone()).or_default(),
+            OrderSide::Ask => self.sell_orders.entry(order.pair.clone()).or_default(),
         };
 
         let insert_pos = order_list
@@ -581,9 +591,9 @@ impl Orderbook {
             .position(|id| {
                 let other_order = self.orders.get(id).unwrap();
                 // To be inserted, the order must be <> than the current one
-                match order.order_type {
-                    OrderType::Buy => other_order.price.unwrap_or(0) < price,
-                    OrderType::Sell => other_order.price.unwrap_or(0) > price,
+                match order.order_side {
+                    OrderSide::Bid => other_order.price.unwrap_or(0) < price,
+                    OrderSide::Ask => other_order.price.unwrap_or(0) > price,
                 }
             })
             .unwrap_or(order_list.len());

@@ -291,16 +291,16 @@ impl Orderbook {
     /// Returns a mapping from order IDs to user names
     pub fn get_order_user_map(
         &self,
-        order_type: &OrderType,
+        order_side: &OrderSide,
         pair: &TokenPair,
     ) -> BTreeMap<OrderId, String> {
         let mut map = BTreeMap::new();
         let (base_token, quote_token) = pair.clone();
         let pair_key = (base_token.clone(), quote_token.clone());
 
-        let relevant_orders = match order_type {
-            OrderType::Buy => self.sell_orders.get(&pair_key),
-            OrderType::Sell => self.buy_orders.get(&pair_key),
+        let relevant_orders = match order_side {
+            OrderSide::Bid => self.sell_orders.get(&pair_key),
+            OrderSide::Ask => self.buy_orders.get(&pair_key),
         };
 
         if let Some(order_ids) = relevant_orders {

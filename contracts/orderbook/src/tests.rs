@@ -2,7 +2,10 @@
 mod orderbook_tests {
     use sdk::{hyli_model_utils::TimestampMs, LaneId};
 
-    use crate::{orderbook::OrderbookEvent, *};
+    use crate::{
+        orderbook::{OrderSide, OrderbookEvent},
+        *,
+    };
 
     fn setup() -> (String, String, Orderbook) {
         let mut orderbook = Orderbook::init(LaneId::default());
@@ -39,7 +42,8 @@ mod orderbook_tests {
         // Create a limit sell order
         let order = Order {
             order_id: "order1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -71,10 +75,11 @@ mod orderbook_tests {
     fn test_limit_buy_order_create() {
         let (_, usd_user, mut orderbook) = setup();
 
-        // Create a limit sell order
+        // Create a limit buy order
         let order = Order {
             order_id: "order1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -93,7 +98,7 @@ mod orderbook_tests {
             .count();
         assert_eq!(created_count, 1);
 
-        // Check that the order is in the sell orders list
+        // Check that the order is in the buy orders list
         assert!(orderbook.orders.contains_key("order1"));
         assert!(orderbook
             .buy_orders
@@ -109,7 +114,8 @@ mod orderbook_tests {
         // Create a limit sell order first
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -122,7 +128,8 @@ mod orderbook_tests {
         // Create a matching buy order
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -174,7 +181,8 @@ mod orderbook_tests {
         // Create a limit sell order first
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -187,7 +195,8 @@ mod orderbook_tests {
         // Create a matching buy order
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(1900),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -250,10 +259,11 @@ mod orderbook_tests {
     fn test_limit_order_match_same_quantity_lower_price_bis() {
         let (eth_user, usd_user, mut orderbook) = setup();
 
-        // Create a limit sell order first
+        // Create a limit buy order first
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(1900),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -263,10 +273,11 @@ mod orderbook_tests {
             .execute_order(&usd_user, sell_order, BTreeMap::default())
             .unwrap();
 
-        // Create a matching buy order
+        // Create a matching sell order
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -334,7 +345,8 @@ mod orderbook_tests {
         // Create a limit sell order first
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -347,7 +359,8 @@ mod orderbook_tests {
         // Create a matching buy order
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(2100),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -392,7 +405,8 @@ mod orderbook_tests {
         // Create a limit sell order for 1 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(1000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -405,7 +419,8 @@ mod orderbook_tests {
         // Create a buy order for 2 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(1000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
@@ -440,7 +455,7 @@ mod orderbook_tests {
 
         assert_eq!(orderbook.orders.len(), 1);
         let only_order = orderbook.orders.values().next().unwrap();
-        assert!(matches!(only_order.order_type, OrderType::Buy));
+        assert!(matches!(only_order.order_side, OrderSide::Bid));
 
         // Check balances were updated correctly
         let usd_balances = orderbook.balances.get("USD").unwrap();
@@ -462,7 +477,8 @@ mod orderbook_tests {
         // Create a limit sell order for 2 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
@@ -475,7 +491,8 @@ mod orderbook_tests {
         // Create a buy order for 1 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -528,7 +545,8 @@ mod orderbook_tests {
         // Create a limit sell order for 2 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
@@ -541,7 +559,8 @@ mod orderbook_tests {
         // Create a buy order for 1 ETH at a higher price
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(2100),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -594,7 +613,8 @@ mod orderbook_tests {
         // Create a limit buy order first for 2 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(1000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
@@ -607,7 +627,8 @@ mod orderbook_tests {
         // Create a market sell order for 1 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Market,
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -656,7 +677,8 @@ mod orderbook_tests {
         // Create a limit buy order first for 1 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -669,7 +691,8 @@ mod orderbook_tests {
         // Create a market sell order for 1 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Market,
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -712,7 +735,8 @@ mod orderbook_tests {
         // Create a limit buy order first for 1 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -726,7 +750,8 @@ mod orderbook_tests {
         // Create a market sell order for 2 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Market,
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
@@ -770,7 +795,8 @@ mod orderbook_tests {
         // Create a limit sell order first for 2 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
@@ -783,7 +809,8 @@ mod orderbook_tests {
         // Create a market buy order for 1 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Market,
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -832,7 +859,8 @@ mod orderbook_tests {
         // Create a limit sell order first for 1 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -845,7 +873,8 @@ mod orderbook_tests {
         // Create a market buy order for 1 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Market,
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -894,7 +923,8 @@ mod orderbook_tests {
         // Create a limit sell order first for 1 ETH
         let sell_order = Order {
             order_id: "sell1".to_string(),
-            order_type: OrderType::Sell,
+            order_side: OrderSide::Ask,
+            order_type: OrderType::Limit,
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
@@ -907,7 +937,8 @@ mod orderbook_tests {
         // Create a market buy order for 2 ETH
         let buy_order = Order {
             order_id: "buy1".to_string(),
-            order_type: OrderType::Buy,
+            order_side: OrderSide::Bid,
+            order_type: OrderType::Market,
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
@@ -954,7 +985,8 @@ mod orderbook_tests {
     //     // Try to create a sell order when deposit was too recent
     //     let sell_order = Order {
     //         order_id: "sell1".to_string(),
-    //         order_type: OrderType::Sell,
+    //         order_side: OrderSide::Sell,
+    //         order_type: OrderType::Limit,
     //         price: Some(2000),
     //         pair: ("ETH".to_string(), "USD".to_string()),
     //         quantity: 1,

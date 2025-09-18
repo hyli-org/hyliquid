@@ -21,7 +21,7 @@ use hyli_modules::{
     },
 };
 use orderbook::{
-    orderbook::{OrderType, Orderbook, OrderbookEvent, TokenPair},
+    orderbook::{OrderSide, OrderType, Orderbook, OrderbookEvent, TokenPair},
     OrderbookAction,
 };
 use reqwest::StatusCode;
@@ -158,6 +158,7 @@ impl AuthHeaders {
 #[derive(serde::Deserialize)]
 struct CreateOrderRequest {
     order_id: String,
+    order_side: OrderSide,
     order_type: OrderType,
     price: Option<u32>,
     pair: TokenPair,
@@ -194,7 +195,7 @@ async fn create_order(
     // FIXME: locking here makes locking another time in execute_orderbook_action ...
     let order_user_map = {
         let orderbook = ctx.orderbook.lock().await;
-        orderbook.get_order_user_map(&request.order_type, &request.pair)
+        orderbook.get_order_user_map(&request.order_side, &request.pair)
     };
 
     let private_input = orderbook::CreateOrderPrivateInput {
@@ -209,6 +210,7 @@ async fn create_order(
         index: sdk::BlobIndex(0),
         blobs: vec![OrderbookAction::CreateOrder {
             order_id: request.order_id,
+            order_side: request.order_side,
             order_type: request.order_type,
             price: request.price,
             pair: request.pair,

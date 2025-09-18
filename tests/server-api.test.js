@@ -144,7 +144,8 @@ describe('TX Sender Integration Tests', () => {
       const sellOrderId = `sell_${orderCounter++}`;
       const sellOrderResult = await runTxSenderCommand('create-order', [
         '--order-id', sellOrderId,
-        '--order-type', 'Sell',
+        '--order-side', 'ask',
+        '--order-type', 'limit',
         '--pair-token1', TOKENS.HYLLAR,
         '--pair-token2', TOKENS.ORANJ,
         '--quantity', ORDER_QUANTITY.toString(),
@@ -158,7 +159,8 @@ describe('TX Sender Integration Tests', () => {
       const buyOrderId = `buy_${orderCounter++}`;
       const buyOrderResult = await runTxSenderCommand('create-order', [
         '--order-id', buyOrderId,
-        '--order-type', 'Buy',
+        '--order-side', 'bid',
+        '--order-type', 'limit',
         '--pair-token1', TOKENS.HYLLAR,
         '--pair-token2', TOKENS.ORANJ,
         '--quantity', ORDER_QUANTITY.toString(),
@@ -192,7 +194,8 @@ describe('TX Sender Integration Tests', () => {
       const marketOrderId = `market_${orderCounter++}`;
       const marketOrderResult = await runTxSenderCommand('create-order', [
         '--order-id', marketOrderId,
-        '--order-type', 'Buy',
+        '--order-side', 'bid',
+        '--order-type', 'market',
         '--pair-token1', TOKENS.HYLLAR,
         '--pair-token2', TOKENS.ORANJ,
         '--quantity', '1'
@@ -203,7 +206,8 @@ describe('TX Sender Integration Tests', () => {
       const limitOrderId = `limit_${orderCounter++}`;
       const limitOrderResult = await runTxSenderCommand('create-order', [
         '--order-id', limitOrderId,
-        '--order-type', 'Sell',
+        '--order-side', 'ask',
+        '--order-type', 'limit',
         '--pair-token1', TOKENS.HYLLAR,
         '--pair-token2', TOKENS.ORANJ,
         '--quantity', '2',
@@ -224,6 +228,7 @@ describe('TX Sender Integration Tests', () => {
       const invalidOrderId = `invalid_${orderCounter++}`;
       const invalidOrderResult = await runTxSenderCommand('create-order', [
         '--order-id', invalidOrderId,
+        '--order-side', 'bid',
         '--order-type', 'InvalidType',
         '--pair-token1', TOKENS.HYLLAR,
         '--pair-token2', TOKENS.ORANJ,
@@ -242,7 +247,7 @@ describe('TX Sender Integration Tests', () => {
       // Try to create order without required fields
       const incompleteOrderResult = await runTxSenderCommand('create-order', [
         '--order-id', `incomplete_${orderCounter++}`,
-        '--order-type', 'Buy'
+        '--order-side', 'bid'
         // Missing other required fields
       ]);
       
@@ -265,7 +270,8 @@ describe('TX Sender Integration Tests', () => {
         
         const result = await runTxSenderCommand('create-order', [
           '--order-id', orderId,
-          '--order-type', i % 2 === 0 ? 'Buy' : 'Sell',
+          '--order-side', i % 2 === 0 ? 'bid' : 'ask',
+          '--order-type', 'limit',
           '--pair-token1', TOKENS.HYLLAR,
           '--pair-token2', TOKENS.ORANJ,
           '--quantity', '1',

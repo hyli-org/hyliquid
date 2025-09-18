@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use sdk::RunResult;
 
-use crate::orderbook::{Order, OrderType, Orderbook, TokenPair};
+use crate::orderbook::{Order, OrderSide, OrderType, Orderbook, TokenPair};
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -64,6 +64,7 @@ impl sdk::ZkContract for Orderbook {
             }
             OrderbookAction::CreateOrder {
                 order_id,
+                order_side,
                 order_type,
                 price,
                 pair,
@@ -91,6 +92,7 @@ impl sdk::ZkContract for Orderbook {
                 let order = Order {
                     order_id,
                     order_type,
+                    order_side,
                     price,
                     pair,
                     quantity,
@@ -148,6 +150,7 @@ pub enum OrderbookAction {
     },
     CreateOrder {
         order_id: String,
+        order_side: OrderSide,
         order_type: OrderType,
         price: Option<u32>,
         pair: TokenPair,
