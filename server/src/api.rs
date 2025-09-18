@@ -14,7 +14,7 @@ use hyli_modules::{
 };
 use sdk::ContractName;
 use serde::Serialize;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -147,10 +147,14 @@ async fn get_info(State(_ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
 async fn get_book(
     State(ctx): State<RouterCtx>,
     axum::extract::Path((base_asset_symbol, quote_asset_symbol)): axum::extract::Path<(String, String)>,
+    axum::extract::Query(query): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, AppError> {
     let book_service = ctx.book_service.read().await;
 
-    let book = book_service.get_order_book(&base_asset_symbol, &quote_asset_symbol).await?;
+    let levels = query.get("levels").unwrap_or("20").parse::<u32>().unwrap_or(20);
+    let group_ticks = query.get("group_ticks").unwrap_or("10").parse::<u32>().unwrap_or(10);
+
+    let book = book_service.get_order_book(&base_asset_symbol, &quote_asset_symbol, levels, group_ticks).await?;
 
     Ok(Json(book))
 }

@@ -32,11 +32,13 @@ impl BookService {
         Ok("Order book info".to_string())
     }
 
-    pub async fn get_order_book(&self, base_asset_symbol: &str, quote_asset_symbol: &str) -> Result<OrderbookAPI, AppError> {
+    pub async fn get_order_book(&self, base_asset_symbol: &str, quote_asset_symbol: &str, levels: u32, group_ticks: u32) -> Result<OrderbookAPI, AppError> {
         let symbol = format!("{}/{}", base_asset_symbol.to_uppercase(), quote_asset_symbol.to_uppercase());
 
-        let rows = sqlx::query("SELECT * FROM get_orderbook_grouped_by_ticks($1, 20, 10);")
+        let rows = sqlx::query("SELECT * FROM get_orderbook_grouped_by_ticks($1, $2, $3);")
             .bind(symbol)
+            .bind(levels)
+            .bind(group_ticks)
             .fetch_all(&self.pool)
             .await?;
 
