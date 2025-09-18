@@ -4,64 +4,83 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a React + TypeScript frontend application built with Vite that interacts with smart contracts. The project uses the hyli-wallet library for blockchain integration.
+Blackjack-Win95 is a React + TypeScript frontend application built with Vite that interacts with Hyli blockchain smart contracts. It features wallet integration, contract state monitoring, and transaction submission capabilities.
 
 ## Development Commands
 
 ```bash
-# Install dependencies
+# Install dependencies (using bun or npm)
 bun install
+npm install
 
-# Run development server (hot reload enabled)
+# Run development server (port 5173 by default)
 bun run dev
+npm run dev
 
 # Build for production
 bun run build
-
-# Preview production build
-bun run preview
+npm run build
 
 # Run linter
 bun run lint
+npm run lint
+
+# Preview production build
+bun run preview
+npm run preview
 ```
 
 ## Architecture
 
-### Core Application Flow
-1. **App.tsx** - Main component that orchestrates:
-   - Contract state fetching from indexer API endpoints
-   - Transaction submission via `/api/increment`
-   - Transaction status polling with 30-second timeout
-   - Username management with localStorage persistence
+### Application Structure
+- **src/App.tsx** - Main component with three primary views:
+  - `LandingPage` - Authentication UI with wallet providers (password, Google, GitHub)
+  - `ScaffoldApp` - Main application UI after authentication
+  - `AppContent` - Router that displays based on wallet connection status
 
-### API Integration Pattern
-- All API calls use environment variables for base URLs
-- Session management via headers: `x-user`, `x-session-key`, `x-request-signature`
-- Contract states fetched from: `/indexer/data/{contractName}/raw_state`
-- Transactions sent to: `/api/increment` with blob data
+### Core Features Implementation
 
-### Key Dependencies
-- **hyli-wallet** (v0.3.4) - Wallet integration library
-- **crypto-js** & **elliptic** - Cryptographic operations
-- **React Router DOM** - Routing (though currently single-page)
+1. **Wallet Integration (hyli-wallet v0.3.4)**
+   - WalletProvider wraps the app with configuration for node URLs and session keys
+   - Session keys configured with 24-hour duration and contract whitelist
+   - Identity blobs created via `createIdentityBlobs()` for transactions
+
+2. **Contract State Management**
+   - States fetched from `/v1/indexer/contract/{contractName}/state` endpoint
+   - Auto-refresh every 60 seconds via `setInterval`
+   - Error handling for failed fetches with user-friendly messages
+
+3. **Transaction Flow**
+   - Submit transactions to `/api/increment` with wallet blobs
+   - Poll transaction status at `/v1/indexer/transaction/hash/{txHash}`
+   - 30-second polling timeout with 1-second intervals
+   - Real-time UI updates showing initial submission and confirmation status
+
+### API Communication Pattern
+- Base URLs configured via environment variables
+- Authentication headers: `x-user`, `x-session-key`, `x-request-signature`
+- JSON request/response format
+- Comprehensive error handling with status code and message display
 
 ## Environment Configuration
 
-The app expects these environment variables (defined in `.env`):
-- `VITE_SERVER_BASE_URL` - Main API server
-- `VITE_NODE_BASE_URL` - Node API server  
-- `VITE_WALLET_SERVER_BASE_URL` - Wallet server
-- `VITE_WALLET_WS_URL` - WebSocket connection for wallet
+Required environment variables (`.env` file):
+- `VITE_SERVER_BASE_URL` - Main API server (default: http://localhost:9003)
+- `VITE_NODE_BASE_URL` - Blockchain node API (default: http://localhost:4321)
+- `VITE_WALLET_SERVER_BASE_URL` - Wallet service (default: http://localhost:4000)
+- `VITE_WALLET_WS_URL` - WebSocket for wallet updates (default: ws://localhost:8081/ws)
 
-## TypeScript Configuration
+## Build Configuration
 
-- Strict mode enabled
-- Target: ES2020
-- Module resolution: bundler
-- Separate configs for app (`tsconfig.app.json`) and node (`tsconfig.node.json`)
+### Vite Configuration
+- React plugin for JSX transformation
+- Optimized for Noir-lang libraries (excluded from dependency optimization)
+- Buffer polyfill configured
+- Global defined as globalThis for browser compatibility
 
-## State Management
-
-- Contract states stored in component state with 1-minute auto-refresh
-- Username persisted in localStorage
-- Transaction status tracked during polling with real-time UI updates
+### TypeScript Configuration
+- Strict mode enabled with all checks
+- Target: ES2020 with DOM libraries
+- Module: ESNext with bundler resolution
+- JSX: react-jsx
+- Separate configs for app and node environments
