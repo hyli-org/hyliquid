@@ -8,7 +8,7 @@ mod orderbook_tests {
     };
 
     fn setup() -> (String, String, Orderbook) {
-        let mut orderbook = Orderbook::init(LaneId::default());
+        let mut orderbook = Orderbook::init(LaneId::default(), true);
         let eth_user = "eth_user".to_string();
         let usd_user = "usd_user".to_string();
 
@@ -55,12 +55,17 @@ mod orderbook_tests {
             .unwrap();
 
         // Check that the order was created
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 3);
         let created_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderCreated { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(created_count, 1);
+        assert_eq!(balance_count, 2);
 
         // Check that the order is in the sell orders list
         assert!(orderbook.orders.contains_key("order1"));
@@ -91,12 +96,17 @@ mod orderbook_tests {
             .unwrap();
 
         // Check that the order was created
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 3);
         let created_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderCreated { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(created_count, 1);
+        assert_eq!(balance_count, 2);
 
         // Check that the order is in the buy orders list
         assert!(orderbook.orders.contains_key("order1"));
@@ -145,12 +155,21 @@ mod orderbook_tests {
             .unwrap();
 
         // Check that the order was executed
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 6);
         let executed_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderExecuted { .. }))
             .count();
+        let balance_updated_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(executed_count, 2);
+        // usd_user received ETH
+        // usd_user sent USD
+        // orderbook sent ETH
+        // eth_user received USD
+        assert_eq!(balance_updated_count, 4);
         // usd_user received ETH
         // usd_user sent USD
         // orderbook sent ETH
@@ -211,13 +230,17 @@ mod orderbook_tests {
             .unwrap();
 
         // Check that the order was NOT executed
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 3);
         let created_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderCreated { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(created_count, 1);
-
+        assert_eq!(balance_count, 2);
         // Check balances were updated correctly
         let eth_user_usd = orderbook
             .balances
@@ -292,12 +315,17 @@ mod orderbook_tests {
             .unwrap();
 
         // Check that the order was NOT executed
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 3);
         let created_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderCreated { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(created_count, 1);
+        assert_eq!(balance_count, 2);
 
         // Check balances were updated correctly
         let eth_user_usd = orderbook
@@ -376,16 +404,21 @@ mod orderbook_tests {
             .unwrap();
 
         // Check that the order was executed
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 6);
         let executed_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderExecuted { .. }))
+            .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
             .count();
         assert_eq!(executed_count, 2);
         // usd_user received ETH
         // usd_user sent USD
         // orderbook sent ETH
         // eth_user received USD
+        assert_eq!(balance_count, 4);
 
         // Check balances were updated correctly
         let usd_balances = orderbook.balances.get("USD").unwrap();
@@ -436,7 +469,7 @@ mod orderbook_tests {
             .unwrap();
 
         // Check that the order was NOT executed
-        assert_eq!(events.len(), 2);
+        assert_eq!(events.len(), 7);
         let executed_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderExecuted { .. }))
@@ -445,6 +478,10 @@ mod orderbook_tests {
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderCreated { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(executed_count, 1);
         assert_eq!(created_count, 1);
         // eth_user received USD
@@ -452,6 +489,7 @@ mod orderbook_tests {
         // usd_user received ETH
         // orderbook received USD
         // orderbook sent ETH
+        assert_eq!(balance_count, 5);
 
         assert_eq!(orderbook.orders.len(), 1);
         let only_order = orderbook.orders.values().next().unwrap();
@@ -515,6 +553,17 @@ mod orderbook_tests {
                 pair: _
             } if order_id == "sell1" && *remaining_quantity == 1
         )));
+
+        // Check balance updates
+        let balance_updated_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
+        // eth_user received USD
+        // usd_user sent USD
+        // usd_user received ETH
+        // orderbook sent ETH
+        assert_eq!(balance_updated_count, 4);
 
         // Check balances were updated correctly
         let seller_usd = orderbook
@@ -584,6 +633,17 @@ mod orderbook_tests {
             } if order_id == "sell1" && *remaining_quantity == 1
         )));
 
+        // Check balance updates
+        let balance_updated_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
+        // eth_user received USD
+        // usd_user sent USD
+        // usd_user received ETH
+        // orderbook sent ETH
+        assert_eq!(balance_updated_count, 4);
+
         // Check balances were updated correctly
         let seller_usd = orderbook
             .balances
@@ -652,6 +712,17 @@ mod orderbook_tests {
             pair: _
         } if order_id == "buy1" && *remaining_quantity == 1)));
 
+        // Check balance updates
+        let balance_updated_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
+        // eth_user sent ETH
+        // usd_user received ETH
+        // orderbook sent USD
+        // eth_user received USD
+        assert_eq!(balance_updated_count, 4);
+
         // Check balances were updated correctly
         let eth_user_usd = orderbook
             .balances
@@ -707,12 +778,21 @@ mod orderbook_tests {
             )
             .unwrap();
 
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 5);
         let executed_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderExecuted { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(executed_count, 1);
+        // eth_user sent ETH
+        // usd_user received ETH
+        // orderbook sent USD
+        // eth_user received USD
+        assert_eq!(balance_count, 4);
 
         // Assert orderbook is empty
         assert_eq!(orderbook.orders.len(), 0);
@@ -766,12 +846,21 @@ mod orderbook_tests {
             )
             .unwrap();
 
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 5);
         let executed_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderExecuted { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(executed_count, 1);
+        // eth_user sent ETH
+        // usd_user received ETH
+        // orderbook sent USD
+        // eth_user received USD
+        assert_eq!(balance_count, 4);
 
         // Assert orderbook is empty
         assert_eq!(orderbook.orders.len(), 0);
@@ -833,6 +922,17 @@ mod orderbook_tests {
             remaining_quantity,
             pair: _
         } if order_id == "sell1" && *remaining_quantity == 1)));
+
+        // Check balance updates
+        let balance_updated_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
+        // eth_user received USD
+        // usd_user sent USD
+        // usd_user received ETH
+        // orderbook sent ETH
+        assert_eq!(balance_updated_count, 4);
 
         // Check balances were updated correctly
         let eth_user_usd = orderbook
@@ -898,6 +998,17 @@ mod orderbook_tests {
             2
         );
 
+        // Check balance updates
+        let balance_updated_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
+        // eth_user sent ETH
+        // usd_user received ETH
+        // usd_user sent USD
+        // eth_user received USD
+        assert_eq!(balance_updated_count, 4);
+
         // Check balances
         let eth_user_usd = orderbook
             .balances
@@ -953,12 +1064,21 @@ mod orderbook_tests {
             )
             .unwrap();
 
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 5);
         let executed_count = events
             .iter()
             .filter(|e| matches!(e, OrderbookEvent::OrderExecuted { .. }))
             .count();
+        let balance_count = events
+            .iter()
+            .filter(|e| matches!(e, OrderbookEvent::BalanceUpdated { .. }))
+            .count();
         assert_eq!(executed_count, 1);
+        // eth_user sent ETH
+        // usd_user received ETH
+        // orderbook sent USD
+        // eth_user received USD
+        assert_eq!(balance_count, 4);
 
         // Assert orderbook is empty
         assert_eq!(orderbook.orders.len(), 0);

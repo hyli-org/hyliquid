@@ -81,6 +81,167 @@ async function checkServerHealth() {
   }
 }
 
+/**
+ * Helper function to get all balances from the server
+ */
+async function getAllBalances() {
+  try {
+    const response = await fetch(`${SERVER_URL}/temp/balances`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to get balances:', error);
+    throw error;
+  }
+}
+
+/**
+ * Helper function to get balance for a specific account
+ */
+async function getBalanceForAccount(user) {
+  try {
+    const response = await fetch(`${SERVER_URL}/temp/balance/${encodeURIComponent(user)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error(`Failed to get balance for ${user}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Helper function to get all orders from the server
+ */
+async function getAllOrders() {
+  try {
+    const response = await fetch(`${SERVER_URL}/temp/orders`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to get orders:', error);
+    throw error;
+  }
+}
+
+/**
+ * Helper function to get orders by token pair
+ */
+async function getOrdersByPair(token1, token2) {
+  try {
+    const response = await fetch(`${SERVER_URL}/temp/orders/${encodeURIComponent(token1)}/${encodeURIComponent(token2)}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error(`Failed to get orders for pair ${token1}/${token2}:`, error);
+    throw error;
+  }
+}
+
+/**
+ * Helper function to verify balance expectations
+ */
+function verifyBalance(balances, user, token, expectedAmount, description = '') {
+  const userBalances = balances[token];
+  if (!userBalances) {
+    throw new Error(`Token ${token} not found in balances ${description}`);
+  }
+  
+  const userBalance = userBalances[user];
+  if (!userBalance) {
+    throw new Error(`User ${user} not found in ${token} balances ${description}`);
+  }
+  
+  if (userBalance.balance !== expectedAmount) {
+    throw new Error(`Expected ${user} to have ${expectedAmount} ${token} but found ${userBalance.balance} ${description}`);
+  }
+  
+  console.log(`✓ Verified: ${user} has ${userBalance.balance} ${token} ${description}`);
+}
+
+/**
+ * Helper function to verify order expectations
+ */
+function verifyOrderExists(orders, orderId, description = '') {
+  const order = orders[orderId];
+  if (!order) {
+    throw new Error(`Order ${orderId} not found in orders ${description}`);
+  }
+  
+  console.log(`✓ Verified: Order ${orderId} exists ${description}:`, {
+    side: order.order_side,
+    type: order.order_type,
+    quantity: order.quantity,
+    price: order.price
+  });
+  
+  return order;
+}
+
+/**
+ * Helper function to reset the orderbook state
+ */
+async function resetOrderbookState() {
+  try {
+    const response = await fetch(`${SERVER_URL}/temp/reset_state`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    console.log('🧹 Orderbook state reset successfully');
+    return true;
+  } catch (error) {
+    console.error('Failed to reset orderbook state:', error);
+    throw error;
+  }
+}
+
 describe('TX Sender Integration Tests', () => {
   let sessionKeyAdded = false;
   let orderCounter = 1;
@@ -116,6 +277,18 @@ describe('TX Sender Integration Tests', () => {
     }
   }, 120000); // 2 minute timeout for setup
 
+  // Global cleanup - reset orderbook state after all tests
+  afterAll(async () => {
+    try {
+      console.log('🧹 Cleaning up: Resetting orderbook state...');
+      await resetOrderbookState();
+      console.log('✓ Cleanup completed successfully');
+    } catch (error) {
+      console.warn('⚠️ Failed to reset orderbook state during cleanup:', error.message);
+      // Don't fail the tests if reset fails, just warn
+    }
+  }, 30000); // 30 second timeout for cleanup
+
   describe('Complete Orderbook Workflow', () => {
     test('should execute full trading workflow successfully', async () => {
       // Verify session key was added
@@ -130,6 +303,11 @@ describe('TX Sender Integration Tests', () => {
       expect(depositHyllarResult.success).toBe(true);
       console.log(`✓ Deposited ${DEPOSIT_AMOUNT} ${TOKENS.HYLLAR} tokens`);
 
+      // Verify HYLLAR balance after deposit
+      console.log('Verifying HYLLAR balance after deposit...');
+      const balancesAfterHyllar = await getAllBalances();
+      verifyBalance(balancesAfterHyllar, IDENTITY, TOKENS.HYLLAR, DEPOSIT_AMOUNT, 'after HYLLAR deposit');
+
       // Step 2: Deposit ORANJ tokens
       console.log('Step 2: Depositing ORANJ tokens...');
       const depositOranjResult = await runTxSenderCommand('deposit', [
@@ -138,6 +316,12 @@ describe('TX Sender Integration Tests', () => {
       ]);
       expect(depositOranjResult.success).toBe(true);
       console.log(`✓ Deposited ${DEPOSIT_AMOUNT} ${TOKENS.ORANJ} tokens`);
+
+      // Verify both balances after ORANJ deposit
+      console.log('Verifying balances after both deposits...');
+      const balancesAfterBoth = await getAllBalances();
+      verifyBalance(balancesAfterBoth, IDENTITY, TOKENS.HYLLAR, DEPOSIT_AMOUNT, 'after both deposits');
+      verifyBalance(balancesAfterBoth, IDENTITY, TOKENS.ORANJ, DEPOSIT_AMOUNT, 'after both deposits');
 
       // Step 3: Create sell order
       console.log('Step 3: Creating sell order...');
@@ -154,6 +338,16 @@ describe('TX Sender Integration Tests', () => {
       expect(sellOrderResult.success).toBe(true);
       console.log(`✓ Created sell order ${sellOrderId}: ${ORDER_QUANTITY} ${TOKENS.HYLLAR} at ${SELL_PRICE} ${TOKENS.ORANJ}`);
 
+      // Verify sell order exists and balances updated (tokens should be reserved)
+      console.log('Verifying sell order creation...');
+      const ordersAfterSell = await getAllOrders();
+      verifyOrderExists(ordersAfterSell, sellOrderId, 'after sell order creation');
+      
+      const balancesAfterSell = await getAllBalances();
+      // HYLLAR should be reduced by order quantity (reserved for sell order)
+      verifyBalance(balancesAfterSell, IDENTITY, TOKENS.HYLLAR, DEPOSIT_AMOUNT - ORDER_QUANTITY, 'after sell order (tokens reserved)');
+      verifyBalance(balancesAfterSell, IDENTITY, TOKENS.ORANJ, DEPOSIT_AMOUNT, 'after sell order (unchanged)');
+
       // Step 4: Create buy order
       console.log('Step 4: Creating buy order...');
       const buyOrderId = `buy_${orderCounter++}`;
@@ -169,6 +363,29 @@ describe('TX Sender Integration Tests', () => {
       expect(buyOrderResult.success).toBe(true);
       console.log(`✓ Created buy order ${buyOrderId}: ${ORDER_QUANTITY} ${TOKENS.HYLLAR} at ${BUY_PRICE} ${TOKENS.ORANJ}`);
 
+      // Verify buy order exists and final balances
+      console.log('Verifying buy order creation and final state...');
+      const finalOrders = await getAllOrders();
+      const finalBalances = await getAllBalances();
+      
+      // Check if orders matched (buy price higher than sell price should execute)
+      if (BUY_PRICE >= SELL_PRICE) {
+        console.log('Orders should have matched (buy price >= sell price)');
+        // Orders should be executed, check final balances reflect the trade
+        // Note: Exact final balances depend on matching logic, but we can verify the trade happened
+        console.log('Final balances:', finalBalances);
+        console.log('Final orders:', finalOrders);
+      } else {
+        console.log('Orders should not match (buy price < sell price)');
+        // Both orders should still exist
+        verifyOrderExists(finalOrders, sellOrderId, 'final state (no match)');
+        verifyOrderExists(finalOrders, buyOrderId, 'final state (no match)');
+        
+        // Verify ORANJ tokens are reserved for buy order
+        const expectedOranjBalance = DEPOSIT_AMOUNT - (ORDER_QUANTITY * BUY_PRICE);
+        verifyBalance(finalBalances, IDENTITY, TOKENS.ORANJ, expectedOranjBalance, 'final state (ORANJ reserved for buy)');
+      }
+
       console.log('🎉 Complete trading workflow executed successfully!');
     }, 60000); // 1 minute timeout per test
 
@@ -176,6 +393,10 @@ describe('TX Sender Integration Tests', () => {
       console.log('Testing additional deposits...');
       
       const smallAmount = 100;
+      
+      // Get initial balance
+      const initialBalances = await getAllBalances();
+      const initialHyllarBalance = initialBalances[TOKENS.HYLLAR]?.[IDENTITY]?.balance || 0;
       
       // Make small deposits to test system robustness
       const depositResult = await runTxSenderCommand('deposit', [
@@ -185,10 +406,19 @@ describe('TX Sender Integration Tests', () => {
       
       expect(depositResult.success).toBe(true);
       console.log(`✓ Additional deposit of ${smallAmount} ${TOKENS.HYLLAR} successful`);
+      
+      // Verify balance increased correctly
+      const updatedBalances = await getAllBalances();
+      const expectedBalance = initialHyllarBalance + smallAmount;
+      verifyBalance(updatedBalances, IDENTITY, TOKENS.HYLLAR, expectedBalance, 'after additional deposit');
     }, 30000);
 
     test('should create additional orders with different parameters', async () => {
       console.log('Testing additional order creation...');
+      
+      // Get initial orders count
+      const initialOrders = await getAllOrders();
+      const initialOrderCount = Object.keys(initialOrders).length;
       
       // Create market order (without price)
       const marketOrderId = `market_${orderCounter++}`;
@@ -217,6 +447,24 @@ describe('TX Sender Integration Tests', () => {
       expect(marketOrderResult.success).toBe(true);
       expect(limitOrderResult.success).toBe(true);
       console.log(`✓ Created market order ${marketOrderId} and limit order ${limitOrderId}`);
+      
+      // Verify orders were created (note: market orders might get executed immediately)
+      const updatedOrders = await getAllOrders();
+      console.log('Orders after creation:', Object.keys(updatedOrders));
+      
+      // For limit order, it should exist unless it was matched
+      if (updatedOrders[limitOrderId]) {
+        verifyOrderExists(updatedOrders, limitOrderId, 'after limit order creation');
+      } else {
+        console.log(`ℹ Limit order ${limitOrderId} was immediately executed/matched`);
+      }
+      
+      // Market order might be executed immediately, so we just verify the command succeeded
+      console.log(`ℹ Market order ${marketOrderId} command executed (might be filled immediately)`);
+      
+      // Verify pair-specific orders
+      const pairOrders = await getOrdersByPair(TOKENS.HYLLAR, TOKENS.ORANJ);
+      console.log(`Orders for ${TOKENS.HYLLAR}/${TOKENS.ORANJ} pair:`, Object.keys(pairOrders.buy_orders || {}), Object.keys(pairOrders.sell_orders || {}));
     }, 30000);
   });
 
@@ -282,7 +530,60 @@ describe('TX Sender Integration Tests', () => {
         console.log(`✓ Sequential order ${orderId} created successfully`);
       }
       
-      console.log('✓ All sequential commands completed successfully');
+      // Verify all orders after creation
+      const finalOrders = await getAllOrders();
+      let foundOrders = 0;
+      
+      for (const orderId of orderIds) {
+        if (finalOrders[orderId]) {
+          verifyOrderExists(finalOrders, orderId, 'in sequential test');
+          foundOrders++;
+        } else {
+          console.log(`ℹ Order ${orderId} not found (might have been executed)`);
+        }
+      }
+      
+      console.log(`✓ All sequential commands completed successfully (${foundOrders}/${orderIds.length} orders still active)`);
     }, 45000);
+
+    test('should verify orderbook state consistency', async () => {
+      console.log('Testing orderbook state verification...');
+      
+      // Get all current data
+      const allBalances = await getAllBalances();
+      const userBalance = await getBalanceForAccount(IDENTITY);
+      const allOrders = await getAllOrders();
+      const pairOrders = await getOrdersByPair(TOKENS.HYLLAR, TOKENS.ORANJ);
+      
+      console.log('📊 Current Orderbook State:');
+      console.log('All balances:', allBalances);
+      console.log(`User ${IDENTITY} balance:`, userBalance);
+      console.log('All orders:', Object.keys(allOrders));
+      console.log(`${TOKENS.HYLLAR}/${TOKENS.ORANJ} pair orders:`, {
+        buyOrders: Object.keys(pairOrders.buy_orders || {}),
+        sellOrders: Object.keys(pairOrders.sell_orders || {})
+      });
+      
+      // Verify user balance consistency between endpoints
+      if (allBalances[TOKENS.HYLLAR] && allBalances[TOKENS.HYLLAR][IDENTITY]) {
+        expect(allBalances[TOKENS.HYLLAR][IDENTITY].balance).toBe(userBalance[TOKENS.HYLLAR]?.balance || 0);
+        console.log('✓ HYLLAR balance consistent between endpoints');
+      }
+      
+      if (allBalances[TOKENS.ORANJ] && allBalances[TOKENS.ORANJ][IDENTITY]) {
+        expect(allBalances[TOKENS.ORANJ][IDENTITY].balance).toBe(userBalance[TOKENS.ORANJ]?.balance || 0);
+        console.log('✓ ORANJ balance consistent between endpoints');
+      }
+      
+      // Verify order consistency
+      const pairBuyOrderCount = Object.keys(pairOrders.buy_orders || {}).length;
+      const pairSellOrderCount = Object.keys(pairOrders.sell_orders || {}).length;
+      console.log(`✓ Found ${pairBuyOrderCount} buy orders and ${pairSellOrderCount} sell orders for ${TOKENS.HYLLAR}/${TOKENS.ORANJ}`);
+      
+      console.log('✓ Orderbook state verification completed successfully');
+    }, 30000);
+  });
+
+  describe('Performance and Reliability', () => {
   });
 });

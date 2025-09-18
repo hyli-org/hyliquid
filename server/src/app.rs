@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Path, State},
     http::{HeaderMap, Method},
     response::IntoResponse,
     routing::post,
@@ -83,6 +83,12 @@ impl Module for OrderbookModule {
             .route("/create_order", post(create_order))
             .route("/add_session_key", post(add_session_key))
             .route("/deposit", post(deposit))
+            // To be removed later, temporary endpoint for testing
+            .route("/temp/balances", post(get_balances))
+            .route("/temp/balance/{user}", post(get_balance_for_account))
+            .route("/temp/orders", post(get_orders))
+            .route("/temp/orders/{token1}/{token2}", post(get_orders_by_pair))
+            .route("/temp/reset_state", post(reset_state))
             .with_state(state)
             .layer(cors);
 
@@ -184,6 +190,42 @@ struct DepositRequest {
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
+async fn get_balances(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
+    let orderbook = ctx.orderbook.lock().await;
+    let balances = orderbook.get_balances();
+
+    Ok(Json(balances))
+}
+async fn get_balance_for_account(
+    State(ctx): State<RouterCtx>,
+    Path(user): Path<String>,
+) -> Result<impl IntoResponse, AppError> {
+    let orderbook = ctx.orderbook.lock().await;
+    let balances = orderbook.get_balance_for_account(&user);
+
+    Ok(Json(balances))
+}
+async fn get_orders(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
+    let orderbook = ctx.orderbook.lock().await;
+    let orders = orderbook.get_orders();
+
+    Ok(Json(orders))
+}
+async fn get_orders_by_pair(
+    State(ctx): State<RouterCtx>,
+    Path((token1, token2)): Path<(String, String)>,
+) -> Result<impl IntoResponse, AppError> {
+    let orderbook = ctx.orderbook.lock().await;
+    let orders = orderbook.get_orders_by_pair(&token1, &token2);
+
+    Ok(Json(orders))
+}
+async fn reset_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
+    let mut orderbook = ctx.orderbook.lock().await;
+    *orderbook = Orderbook::init(ctx.lane_id.clone(), true);
+
+    Ok(Json("Orderbook state has been reset"))
+}
 
 async fn create_order(
     State(ctx): State<RouterCtx>,

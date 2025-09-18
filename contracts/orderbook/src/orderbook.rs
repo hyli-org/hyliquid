@@ -26,7 +26,10 @@ pub struct Orderbook {
 
     /// These fields are not committed on-chain
     // History of orders executed, indexed by token pair and timestamp
+    #[borsh(skip)]
     pub orders_history: BTreeMap<TokenPair, BTreeMap<TimestampMs, u32>>,
+    #[borsh(skip)]
+    pub server_execution: bool,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
@@ -82,6 +85,11 @@ pub enum OrderbookEvent {
         remaining_quantity: u32,
         pair: TokenPair,
     },
+    BalanceUpdated {
+        user: String,
+        token: String,
+        amount: u32,
+    },
     SessionKeyAdded {
         user: String,
     },
@@ -125,7 +133,15 @@ impl Orderbook {
             user_info.secret.clone_from(secret);
         }
 
-        Ok(vec![])
+        if self.server_execution {
+            Ok(vec![OrderbookEvent::BalanceUpdated {
+                user,
+                token,
+                amount,
+            }])
+        } else {
+            Ok(vec![])
+        }
     }
 
     pub fn withdraw(
@@ -185,6 +201,19 @@ impl Orderbook {
                     });
 
                     // Remove liquitidy from the user balance
+                    if self.server_execution {
+                        events.push(OrderbookEvent::BalanceUpdated {
+                            user: user.clone(),
+                            token: required_token.clone(),
+                            amount: user_balance - order.quantity * order.price.unwrap(),
+                        });
+                        let orderbook_balance = self.get_balance("orderbook", &required_token);
+                        events.push(OrderbookEvent::BalanceUpdated {
+                            user: "orderbook".into(),
+                            token: required_token.clone(),
+                            amount: orderbook_balance + order.quantity * order.price.unwrap(),
+                        });
+                    }
                     self.transfer_tokens(
                         user,
                         "orderbook",
@@ -230,11 +259,12 @@ impl Orderbook {
                     }
 
                     // Update history
-                    self.orders_history
-                        .entry(order.pair.clone())
-                        .or_default()
-                        .insert(order.timestamp.clone(), existing_order.price.unwrap());
-
+                    if self.server_execution {
+                        self.orders_history
+                            .entry(order.pair.clone())
+                            .or_default()
+                            .insert(order.timestamp.clone(), existing_order.price.unwrap());
+                    }
                     // There is an order that can be filled
                     match existing_order.quantity.cmp(&order.quantity) {
                         std::cmp::Ordering::Greater => {
@@ -335,6 +365,19 @@ impl Orderbook {
                     });
 
                     // Remove liquitidy from the user balance
+                    if self.server_execution {
+                        events.push(OrderbookEvent::BalanceUpdated {
+                            user: user.clone(),
+                            token: required_token.clone(),
+                            amount: user_balance - order.quantity,
+                        });
+                        let orderbook_balance = self.get_balance("orderbook", &required_token);
+                        events.push(OrderbookEvent::BalanceUpdated {
+                            user: "orderbook".into(),
+                            token: required_token.clone(),
+                            amount: orderbook_balance + order.quantity,
+                        });
+                    }
                     self.transfer_tokens(user, "orderbook", &required_token, order.quantity)?;
 
                     return Ok(events);
@@ -374,10 +417,12 @@ impl Orderbook {
                     }
 
                     // Update history
-                    self.orders_history
-                        .entry(order.pair.clone())
-                        .or_default()
-                        .insert(order.timestamp.clone(), existing_order.price.unwrap());
+                    if self.server_execution {
+                        self.orders_history
+                            .entry(order.pair.clone())
+                            .or_default()
+                            .insert(order.timestamp.clone(), existing_order.price.unwrap());
+                    }
 
                     match existing_order.quantity.cmp(&order.quantity) {
                         std::cmp::Ordering::Greater => {
@@ -492,13 +537,25 @@ impl Orderbook {
             t.insert(from.clone());
             t.insert(to.clone());
         }
+        if self.server_execution {
+            for (token, users) in ids {
+                for user in users {
+                    let user_balance = self.get_balance(&user, &token);
+                    events.push(OrderbookEvent::BalanceUpdated {
+                        user: user.clone(),
+                        token: token.clone(),
+                        amount: user_balance,
+                    });
+                }
+            }
+        }
 
         Ok(events)
     }
 }
 
 impl Orderbook {
-    pub fn init(lane_id: LaneId) -> Self {
+    pub fn init(lane_id: LaneId, server_execution: bool) -> Self {
         let accepted_tokens = BTreeSet::from(["ORANJ".into(), "HYLLAR".into()]);
 
         Orderbook {
@@ -511,21 +568,8 @@ impl Orderbook {
             orders_owner: BTreeMap::new(),
             accepted_tokens,
             orders_history: BTreeMap::new(),
+            server_execution,
         }
-    }
-
-    pub fn partial_commit(&self) -> sdk::StateCommitment {
-        let mut partial_state = self.clone();
-        partial_state.orders_history = Default::default();
-
-        // Reset all order timestamps to 0
-        for (_, order) in partial_state.orders.iter_mut() {
-            order.timestamp = TimestampMs(0);
-        }
-
-        sdk::StateCommitment(
-            borsh::to_vec(&partial_state).expect("Failed to encode Orderbook partial state"),
-        )
     }
 
     fn transfer_tokens(

@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
         return Ok(());
     };
 
-    let default_state = Orderbook::init(validator_lane_id.clone());
+    let default_state = Orderbook::init(validator_lane_id.clone(), true);
 
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),

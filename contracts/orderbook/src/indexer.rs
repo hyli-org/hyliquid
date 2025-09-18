@@ -11,7 +11,10 @@ use client_sdk::contract_indexer::{
 use sdk::hyli_model_utils::TimestampMs;
 use serde::Serialize;
 
-use crate::{orderbook::OrderId, *};
+use crate::{
+    orderbook::{OrderId, TokenName, UserInfo},
+    *,
+};
 use client_sdk::contract_indexer::axum;
 use client_sdk::contract_indexer::utoipa;
 
@@ -52,8 +55,8 @@ pub async fn get_orders(
 
 #[derive(Serialize)]
 pub struct PairOrders {
-    buy_orders: Vec<Order>,
-    sell_orders: Vec<Order>,
+    pub buy_orders: Vec<Order>,
+    pub sell_orders: Vec<Order>,
 }
 
 #[utoipa::path(
@@ -198,6 +201,17 @@ pub async fn get_pair_candles(
 impl Orderbook {
     pub fn get_state(&self) -> Self {
         self.clone()
+    }
+
+    pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, UserInfo>> {
+        self.balances.clone()
+    }
+
+    pub fn get_balance_for_account(&self, user: &str) -> BTreeMap<TokenName, UserInfo> {
+        self.balances
+            .iter()
+            .filter_map(|(token, users)| users.get(user).map(|info| (token.clone(), info.clone())))
+            .collect()
     }
 
     pub fn get_orders(&self) -> BTreeMap<String, Order> {
