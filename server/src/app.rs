@@ -32,6 +32,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
+use crate::services::book_service::BookWriterService;
+
 pub struct OrderbookModule {
     bus: OrderbookModuleBusClient,
 }
@@ -42,6 +44,7 @@ pub struct OrderbookModuleCtx {
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
     pub default_state: Orderbook,
+    pub book_service: Arc<Mutex<BookWriterService>>,
 }
 
 /// Messages received from WebSocket clients that will be processed by the system
@@ -68,6 +71,7 @@ impl Module for OrderbookModule {
             orderbook_cn: ctx.orderbook_cn.clone(),
             orderbook: orderbook.clone(),
             lane_id: ctx.lane_id.clone(),
+            book_service: ctx.book_service.clone(),
         };
 
         let cors = CorsLayer::new()
@@ -107,6 +111,7 @@ struct RouterCtx {
     pub orderbook_cn: ContractName,
     pub orderbook: Arc<Mutex<Orderbook>>,
     pub lane_id: LaneId,
+    pub book_service: Arc<Mutex<BookWriterService>>,
 }
 
 // --------------------------------------------------------
@@ -187,6 +192,7 @@ async fn create_order(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let identity = Identity(auth.identity);
+
     let tx_ctx = TxContext {
         lane_id: ctx.lane_id.clone(),
         ..Default::default()
@@ -301,12 +307,14 @@ async fn execute_orderbook_action(
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
     let mut orderbook = ctx.orderbook.lock().await;
+    let book_service = ctx.book_service.lock().await;
     let res = orderbook.execute(calldata);
 
     match &res {
         Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
             Ok(events) => {
                 tracing::info!("orderbook execute results: {:?}", events);
+                book_service.write_events(events).await?;
                 let tx_hash = ctx
                     .client
                     .send_tx_blob(BlobTransaction::new(

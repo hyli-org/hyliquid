@@ -1,5 +1,20 @@
 use client_sdk::contract_indexer::AppError;
+use orderbook::orderbook::OrderbookEvent;
 use sqlx::PgPool;
+
+pub struct BookWriterService {
+    pool: PgPool,
+}
+
+impl BookWriterService {
+    pub fn new(pool: PgPool) -> Self {
+        BookWriterService { pool }
+    }
+
+    pub async fn write_events(&self, events: Vec<OrderbookEvent>) -> Result<(), AppError> {
+        Ok(())
+    }
+}
 
 pub struct BookService {
     pool: PgPool,

@@ -25,8 +25,8 @@ use server::{
 };
 use sp1_sdk::{Prover, ProverClient};
 use sqlx::postgres::{PgPool, PgPoolOptions};
-use std::sync::{Arc, Mutex};
-use tokio::sync::RwLock;
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
 use tracing::error;
 
 #[derive(Parser, Debug)]
@@ -191,7 +191,7 @@ async fn main() -> Result<()> {
     let mut handler = ModulesHandler::new(&bus).await;
 
     let api_ctx = Arc::new(BuildApiContextInner {
-        router: Mutex::new(Some(Router::new())),
+        router: std::sync::Mutex::new(Some(Router::new())),
         openapi: Default::default(),
     });
 
@@ -201,6 +201,9 @@ async fn main() -> Result<()> {
         orderbook_cn: args.orderbook_cn.clone().into(),
         lane_id: validator_lane_id,
         default_state: default_state.clone(),
+        book_service: Arc::new(Mutex::new(
+            server::services::book_service::BookWriterService::new(pool.clone()),
+        )),
     });
 
     let api_module_ctx = Arc::new(ApiModuleCtx {
