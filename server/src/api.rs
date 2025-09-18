@@ -57,7 +57,7 @@ impl Module for ApiModule {
             .route("/_health", get(health))
             .route("/api/config", get(get_config))
             .route("/api/info", get(get_info))
-            .route("/api/book/{symbol}", get(get_book))
+            .route("/api/book/{base_asset_symbol}/{quote_asset_symbol}", get(get_book))
             .route("/api/balances", get(get_balance))
             .with_state(state)
             .layer(cors); // Appliquer le middleware CORS
@@ -146,11 +146,11 @@ async fn get_info(State(_ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
 
 async fn get_book(
     State(ctx): State<RouterCtx>,
-    axum::extract::Path(symbol): axum::extract::Path<String>,
+    axum::extract::Path((base_asset_symbol, quote_asset_symbol)): axum::extract::Path<(String, String)>,
 ) -> Result<impl IntoResponse, AppError> {
     let book_service = ctx.book_service.read().await;
 
-    let book = book_service.get_order_book(&symbol).await?;
+    let book = book_service.get_order_book(&base_asset_symbol, &quote_asset_symbol).await?;
 
     Ok(Json(book))
 }

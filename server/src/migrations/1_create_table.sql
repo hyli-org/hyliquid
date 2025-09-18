@@ -104,6 +104,7 @@ CREATE TABLE orders (
     price bigint, -- fixed-point (nullable for market)
     qty bigint NOT NULL,
     qty_filled bigint NOT NULL DEFAULT 0,
+    qty_remaining bigint GENERATED ALWAYS AS (qty - qty_filled) STORED,
     status order_status NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
@@ -127,7 +128,7 @@ CREATE TYPE order_event_type AS ENUM (
 
 CREATE TABLE order_events (
     event_id bigserial NOT NULL,
-    order_id bigserial NOT NULL REFERENCES orders (order_id),
+    order_id bigserial NOT NULL,
     instrument_id bigserial NOT NULL REFERENCES instruments (instrument_id),
     event_type order_event_type NOT NULL,
     event_time timestamptz NOT NULL DEFAULT now(),
