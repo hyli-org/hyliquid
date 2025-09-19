@@ -169,7 +169,9 @@ async fn main() -> Result<()> {
         return Ok(());
     };
 
-    let default_state = Orderbook::init(validator_lane_id.clone());
+    // TODO: make a proper secret management
+    let secret = vec![1, 2, 3];
+    let default_state = Orderbook::init(validator_lane_id.clone(), true, secret);
 
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
