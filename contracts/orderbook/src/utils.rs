@@ -3,7 +3,6 @@ use k256::{
     EncodedPoint,
 };
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
 
 /// Verifies that the signature provided in private_input was made with the private key
 /// of the specified user by validating:
@@ -12,16 +11,12 @@ use std::collections::BTreeMap;
 pub fn verify_user_signature_authorization(
     user: &str,
     pubkey: &Vec<u8>,
-    signature: &Vec<u8>,
+    user_session_keys: &[Vec<u8>],
     msg: &str,
-    user_session_keys: &BTreeMap<String, Vec<Vec<u8>>>,
+    signature: &Vec<u8>,
 ) -> Result<(), String> {
     // Verify that the public key exists for this user
-    let user_keys = user_session_keys
-        .get(user)
-        .ok_or_else(|| format!("No session keys found for user {user}"))?;
-
-    if !user_keys.contains(pubkey) {
+    if !user_session_keys.contains(pubkey) {
         return Err(format!("Public key not found for user {user}"));
     }
 

@@ -5,10 +5,12 @@ use k256::{
     ecdsa::{signature::Signer, Signature, SigningKey},
     SecretKey,
 };
-use orderbook::orderbook::{OrderSide, OrderType, TokenPair};
+use orderbook::orderbook::{OrderSide, OrderType};
 use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use server::conf::Conf;
+use server::{
+    app::{CancelOrderRequest, CreateOrderRequest, DepositRequest},
+    conf::Conf,
+};
 use sha2::{Digest, Sha256};
 
 #[derive(Parser, Debug)]
@@ -20,7 +22,7 @@ pub struct Args {
     #[arg(long, default_value = "http://localhost:9002")]
     pub server_url: String,
 
-    #[arg(long, default_value = "txsender@orderbook")]
+    #[arg(long, default_value = "tx_sender")]
     pub identity: String,
 
     #[command(subcommand)]
@@ -69,27 +71,6 @@ enum Commands {
     },
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct CreateOrderRequest {
-    order_id: String,
-    order_side: OrderSide,
-    order_type: OrderType,
-    price: Option<u32>,
-    pair: TokenPair,
-    quantity: u32,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct AddSessionKeyRequest {
-    public_key: String,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-struct DepositRequest {
-    token: String,
-    amount: u32,
-}
-
 // Helper function to create a signature for the given data
 fn create_signature(signing_key: &SigningKey, data: &str) -> Result<String> {
     let mut hasher = Sha256::new();
@@ -104,14 +85,15 @@ fn create_signature(signing_key: &SigningKey, data: &str) -> Result<String> {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
-    const HARDCODED_PRIVATE_KEY: &str =
-        "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef";
 
     setup_tracing(&config.log_format, "tx_sender".to_string()).context("setting up tracing")?;
 
     // Generate the key pair once for all operations
-    let private_key_bytes =
-        hex::decode(HARDCODED_PRIVATE_KEY).context("Impossible to decode private key")?;
+    let mut hasher = Sha256::new();
+    hasher.update(args.identity.as_bytes());
+    let derived_key = hasher.finalize();
+    let private_key_bytes = derived_key.to_vec();
+
     let secret_key = SecretKey::from_slice(&private_key_bytes).context("Invalid private key")?;
     let signing_key = SigningKey::from(secret_key);
     let public_key = signing_key.verifying_key();
@@ -119,6 +101,26 @@ async fn main() -> Result<()> {
     let public_key_hex = hex::encode(public_key_bytes);
 
     let client = Client::new();
+
+    let nonce = {
+        let response = client
+            .get(format!("{}/nonce", args.server_url))
+            // TODO: add correct headers for authentication
+            .header("x-identity", args.identity.clone())
+            // .header("x-public-key", &public_key_hex)
+            // .header("x-signature", &signature)
+            .send()
+            .await
+            .context("Failed to send request to server")?;
+
+        if response.status().is_success() {
+            response.text().await?
+        } else {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            anyhow::bail!("Server returned error {status}: {error_text}");
+        }
+    };
 
     match args.command {
         Commands::CreateOrder {
@@ -153,8 +155,9 @@ async fn main() -> Result<()> {
 
             tracing::info!("Sending create order request: {:?}", request);
 
-            // Create signature for the order_id (as expected by the validation logic)
-            let signature = create_signature(&signing_key, &order_id)?;
+            // Create signature using the format: {user}:{nonce}:create_order:{order_id}
+            let data_to_sign = format!("{}:{}:create_order:{}", args.identity, nonce, order_id);
+            let signature = create_signature(&signing_key, &data_to_sign)?;
 
             let response = client
                 .post(format!("{}/create_order", args.server_url))
@@ -186,7 +189,6 @@ async fn main() -> Result<()> {
                 .post(format!("{}/add_session_key", args.server_url))
                 .header("x-identity", args.identity)
                 .header("x-public-key", &public_key_hex)
-                .header("Content-Type", "application/json")
                 .send()
                 .await
                 .context("Failed to send request to server")?;
@@ -227,10 +229,13 @@ async fn main() -> Result<()> {
             }
         }
         Commands::Cancel { order_id } => {
+            let request = CancelOrderRequest {
+                order_id: order_id.clone(),
+            };
             tracing::info!("Sending cancel order request for order_id: {}", order_id);
 
-            // Create signature for the order cancellation
-            let data_to_sign = format!("cancel:{order_id}");
+            // Create signature using the format: {user}:{nonce}:cancel:{order_id}
+            let data_to_sign = format!("{}:{}:cancel:{}", args.identity, nonce, order_id);
             let signature = create_signature(&signing_key, &data_to_sign)?;
 
             let response = client
@@ -239,7 +244,7 @@ async fn main() -> Result<()> {
                 .header("x-public-key", &public_key_hex)
                 .header("x-signature", &signature)
                 .header("Content-Type", "application/json")
-                .json(&serde_json::json!({ "order_id": order_id }))
+                .json(&request)
                 .send()
                 .await
                 .context("Failed to send request to server")?;
@@ -260,9 +265,8 @@ async fn main() -> Result<()> {
                 amount
             );
 
-            // Create signature for the withdraw
-            let nonce = 0; // TODO: fix
-            let data_to_sign = format!("{}:{}:{token}:{amount}", args.identity, nonce);
+            // Create signature using the format: {user}:{nonce}:withdraw:{token}:{amount}
+            let data_to_sign = format!("{}:{}:withdraw:{}:{}", args.identity, nonce, token, amount);
             let signature = create_signature(&signing_key, &data_to_sign)?;
 
             let response = client

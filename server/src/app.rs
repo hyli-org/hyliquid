@@ -86,6 +86,7 @@ impl Module for OrderbookModule {
             .route("/deposit", post(deposit))
             .route("/cancel_order", post(cancel_order))
             .route("/withdraw", post(withdraw))
+            .route("/nonce", get(get_nonce))
             // To be removed later, temporary endpoint for testing
             .route("/temp/balances", get(get_balances))
             .route("/temp/balance/{user}", get(get_balance_for_account))
@@ -171,31 +172,31 @@ impl AuthHeaders {
     }
 }
 
-#[derive(serde::Deserialize)]
-struct CreateOrderRequest {
-    order_id: String,
-    order_side: OrderSide,
-    order_type: OrderType,
-    price: Option<u32>,
-    pair: TokenPair,
-    quantity: u32,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateOrderRequest {
+    pub order_id: String,
+    pub order_side: OrderSide,
+    pub order_type: OrderType,
+    pub price: Option<u32>,
+    pub pair: TokenPair,
+    pub quantity: u32,
 }
 
-#[derive(serde::Deserialize)]
-struct DepositRequest {
-    token: String,
-    amount: u32,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct DepositRequest {
+    pub token: String,
+    pub amount: u32,
 }
 
-#[derive(serde::Deserialize)]
-struct CancelRequest {
-    order_id: String,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CancelOrderRequest {
+    pub order_id: String,
 }
 
-#[derive(serde::Deserialize)]
-struct WithdrawRequest {
-    token: String,
-    amount: u32,
+#[derive(Serialize, Deserialize, Debug)]
+pub struct WithdrawRequest {
+    pub token: String,
+    pub amount: u32,
 }
 
 // --------------------------------------------------------
@@ -242,6 +243,21 @@ async fn reset_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, 
     *orderbook = ctx.default_state.clone();
 
     Ok(Json("Orderbook state has been reset"))
+}
+
+async fn get_nonce(
+    State(ctx): State<RouterCtx>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    let auth = AuthHeaders::from_headers(&headers)?;
+    let user = auth.identity;
+
+    // TODO: do some checks on headers to verify identify the user
+
+    let orderbook = ctx.orderbook.lock().await;
+    let nonce = orderbook.get_nonce(&user);
+
+    Ok(Json(nonce))
 }
 
 async fn create_order(
@@ -371,7 +387,7 @@ async fn deposit(
 async fn cancel_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
-    Json(request): Json<CancelRequest>,
+    Json(request): Json<CancelOrderRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
@@ -430,7 +446,7 @@ async fn withdraw(
     // FIXME: locking here makes locking another time in execute_orderbook_action ...
     let user_nonce = {
         let orderbook = ctx.orderbook.lock().await;
-        orderbook.get_user_nonce(&user)
+        orderbook.get_nonce(&user)
     };
 
     let private_input = create_permissioned_private_input(

@@ -11,10 +11,7 @@ use client_sdk::contract_indexer::{
 use sdk::hyli_model_utils::TimestampMs;
 use serde::Serialize;
 
-use crate::{
-    orderbook::{OrderId, TokenName, UserInfo},
-    *,
-};
+use crate::{orderbook::TokenName, *};
 use client_sdk::contract_indexer::axum;
 use client_sdk::contract_indexer::utoipa;
 
@@ -203,14 +200,16 @@ impl Orderbook {
         self.clone()
     }
 
-    pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, UserInfo>> {
+    pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, u32>> {
         self.balances.clone()
     }
 
-    pub fn get_balance_for_account(&self, user: &str) -> BTreeMap<TokenName, UserInfo> {
+    pub fn get_balance_for_account(&self, user: &str) -> BTreeMap<TokenName, u32> {
         self.balances
             .iter()
-            .filter_map(|(token, users)| users.get(user).map(|info| (token.clone(), info.clone())))
+            .filter_map(|(token, balances)| {
+                balances.get(user).map(|balance| (token.clone(), *balance))
+            })
             .collect()
     }
 
@@ -300,36 +299,5 @@ impl Orderbook {
         }
 
         candles
-    }
-
-    /// Returns a mapping from order IDs to user names
-    pub fn get_order_user_map(
-        &self,
-        order_side: &OrderSide,
-        pair: &TokenPair,
-    ) -> BTreeMap<OrderId, String> {
-        let mut map = BTreeMap::new();
-        let (base_token, quote_token) = pair.clone();
-        let pair_key = (base_token.clone(), quote_token.clone());
-
-        let relevant_orders = match order_side {
-            OrderSide::Bid => self.sell_orders.get(&pair_key),
-            OrderSide::Ask => self.buy_orders.get(&pair_key),
-        };
-
-        if let Some(order_ids) = relevant_orders {
-            for order_id in order_ids {
-                if let Some(user) = self.orders_owner.get(order_id) {
-                    map.insert(order_id.clone(), user.clone());
-                }
-            }
-        }
-        map
-    }
-
-    /// Returns user nonce
-    pub fn get_user_nonce(&self, _user: &str) -> u32 {
-        // TODO: implement
-        0
     }
 }

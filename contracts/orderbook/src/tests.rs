@@ -1,9 +1,10 @@
 #[cfg(test)]
 mod orderbook_tests {
+
     use sdk::{hyli_model_utils::TimestampMs, LaneId};
 
     use crate::{
-        orderbook::{OrderSide, OrderbookEvent},
+        orderbook::{OrderSide, OrderbookEvent, UserInfo},
         *,
     };
 
@@ -13,24 +14,27 @@ mod orderbook_tests {
         let usd_user = "usd_user".to_string();
 
         let mut eth_token = BTreeMap::new();
-        eth_token.insert(
-            eth_user.clone(),
-            orderbook::UserInfo {
-                balance: 10,
-                secret: Vec::new(),
-            },
-        );
+        eth_token.insert(eth_user.clone(), 10);
         orderbook.balances.insert("ETH".to_string(), eth_token);
 
         let mut usd_token = BTreeMap::new();
-        usd_token.insert(
-            usd_user.clone(),
-            orderbook::UserInfo {
-                balance: 3000,
-                secret: Vec::new(),
+        usd_token.insert(usd_user.clone(), 3000);
+        orderbook.balances.insert("USD".to_string(), usd_token);
+
+        orderbook.users_info.insert(
+            eth_user.clone(),
+            UserInfo {
+                nonce: 0,
+                session_keys: vec![],
             },
         );
-        orderbook.balances.insert("USD".to_string(), usd_token);
+        orderbook.users_info.insert(
+            usd_user.clone(),
+            UserInfo {
+                nonce: 0,
+                session_keys: vec![],
+            },
+        );
 
         (eth_user, usd_user, orderbook)
     }
@@ -176,21 +180,11 @@ mod orderbook_tests {
         // eth_user received USD
 
         // Check balances were updated correctly
-        let eth_user_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap();
-        let usd_user_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&usd_user)
-            .unwrap();
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_user_usd.balance, 2000); // Seller received USD
-        assert_eq!(usd_user_eth.balance, 1); // Buyer received ETH
+        assert_eq!(eth_user_usd, 2000); // Seller received USD
+        assert_eq!(usd_user_eth, 1); // Buyer received ETH
     }
 
     #[test_log::test]
@@ -257,25 +251,15 @@ mod orderbook_tests {
             .cloned()
             .unwrap_or_default();
 
-        assert_eq!(eth_user_usd.balance, 0); // Seller did not received USD
-        assert_eq!(usd_user_eth.balance, 0); // Buyer did not received ETH
+        assert_eq!(eth_user_usd, 0); // Seller did not received USD
+        assert_eq!(usd_user_eth, 0); // Buyer did not received ETH
 
         // Check user correctly desposited the amount
-        let eth_user_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap();
-        let usd_user_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&usd_user)
-            .unwrap();
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
 
-        assert_eq!(eth_user_eth.balance, 10 - 1); // Seller did not received USD
-        assert_eq!(usd_user_usd.balance, 3000 - 1900); // Buyer did not received ETH
+        assert_eq!(eth_user_eth, 10 - 1); // Seller did not received USD
+        assert_eq!(usd_user_usd, 3000 - 1900); // Buyer did not received ETH
     }
 
     #[test_log::test]
@@ -343,27 +327,15 @@ mod orderbook_tests {
             .cloned()
             .unwrap_or_default();
 
-        assert_eq!(eth_user_usd.balance, 0); // Seller did not received USD
-        assert_eq!(usd_user_eth.balance, 0); // Buyer did not received ETH
+        assert_eq!(eth_user_usd, 0); // Seller did not received USD
+        assert_eq!(usd_user_eth, 0); // Buyer did not received ETH
 
         // Check user correctly desposited the amount
-        let eth_user_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&eth_user)
-            .cloned()
-            .unwrap_or_default();
-        let usd_user_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&usd_user)
-            .cloned()
-            .unwrap_or_default();
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
 
-        assert_eq!(eth_user_eth.balance, 10 - 1); // Seller did not received USD
-        assert_eq!(usd_user_usd.balance, 3000 - 1900); // Buyer did not received ETH
+        assert_eq!(eth_user_eth, 10 - 1); // Seller did not received USD
+        assert_eq!(usd_user_usd, 3000 - 1900); // Buyer did not received ETH
     }
 
     #[test_log::test]
@@ -421,14 +393,17 @@ mod orderbook_tests {
         assert_eq!(balance_count, 4);
 
         // Check balances were updated correctly
-        let usd_balances = orderbook.balances.get("USD").unwrap();
-        let eth_balances = orderbook.balances.get("ETH").unwrap();
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
 
-        assert_eq!(usd_balances.get(&eth_user).unwrap().balance, 2000);
-        assert_eq!(usd_balances.get(&usd_user).unwrap().balance, 1000);
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_balances.get(&eth_user).unwrap().balance, 9);
-        assert_eq!(eth_balances.get(&usd_user).unwrap().balance, 1);
+        assert_eq!(eth_user_usd, 2000);
+        assert_eq!(usd_user_usd, 1000);
+
+        assert_eq!(eth_user_eth, 9);
+        assert_eq!(usd_user_eth, 1);
     }
 
     #[test_log::test]
@@ -496,16 +471,22 @@ mod orderbook_tests {
         assert!(matches!(only_order.order_side, OrderSide::Bid));
 
         // Check balances were updated correctly
-        let usd_balances = orderbook.balances.get("USD").unwrap();
-        let eth_balances = orderbook.balances.get("ETH").unwrap();
+        let orderbook_eth = orderbook.get_balance("orderbook", "ETH");
+        let orderbook_usd = orderbook.get_balance("orderbook", "USD");
 
-        assert_eq!(usd_balances.get(&eth_user).unwrap().balance, 1000);
-        assert_eq!(usd_balances.get(&usd_user).unwrap().balance, 1000);
-        assert_eq!(usd_balances.get("orderbook").unwrap().balance, 1000);
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
 
-        assert_eq!(eth_balances.get(&eth_user).unwrap().balance, 9);
-        assert_eq!(eth_balances.get(&usd_user).unwrap().balance, 1);
-        assert_eq!(eth_balances.get("orderbook").unwrap().balance, 0);
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
+
+        assert_eq!(eth_user_usd, 1000);
+        assert_eq!(usd_user_usd, 1000);
+        assert_eq!(orderbook_usd, 1000);
+
+        assert_eq!(eth_user_eth, 9);
+        assert_eq!(usd_user_eth, 1);
+        assert_eq!(orderbook_eth, 0);
     }
 
     #[test_log::test]
@@ -566,21 +547,21 @@ mod orderbook_tests {
         assert_eq!(balance_updated_count, 4);
 
         // Check balances were updated correctly
-        let seller_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap();
-        let buyer_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&usd_user)
-            .unwrap();
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
 
-        assert_eq!(seller_usd.balance, 2000); // Seller received USD for 1 ETH
-        assert_eq!(buyer_eth.balance, 1); // Buyer received 1 ETH
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
+
+        let orderbook_user_eth = orderbook.get_balance("orderbook", "ETH");
+
+        assert_eq!(eth_user_usd, 2000); // Seller received USD for 1 ETH
+        assert_eq!(usd_user_usd, 1000);
+
+        assert_eq!(eth_user_eth, 8);
+        assert_eq!(usd_user_eth, 1); // Buyer received 1 ETH
+
+        assert_eq!(orderbook_user_eth, 1); // Orderbook still holds 1 ETH from the sell order
 
         // Check that the sell order is still in the orderbook with updated quantity
         let remaining_order = orderbook.orders.get("sell1").unwrap();
@@ -645,21 +626,21 @@ mod orderbook_tests {
         assert_eq!(balance_updated_count, 4);
 
         // Check balances were updated correctly
-        let seller_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap();
-        let buyer_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&usd_user)
-            .unwrap();
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
 
-        assert_eq!(seller_usd.balance, 2000); // Seller received USD for 1 ETH (at sell price)
-        assert_eq!(buyer_eth.balance, 1); // Buyer received 1 ETH
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
+
+        let orderbook_user_eth = orderbook.get_balance("orderbook", "ETH");
+
+        assert_eq!(eth_user_usd, 2000); // Seller received USD for 1 ETH (at sell price)
+        assert_eq!(usd_user_usd, 1000);
+
+        assert_eq!(eth_user_eth, 8);
+        assert_eq!(usd_user_eth, 1); // Buyer received 1 ETH
+
+        assert_eq!(orderbook_user_eth, 1); // Orderbook still holds 1 ETH from the sell order
 
         // Check that the sell order is still in the orderbook with updated quantity
         let remaining_order = orderbook.orders.get("sell1").unwrap();
@@ -724,21 +705,11 @@ mod orderbook_tests {
         assert_eq!(balance_updated_count, 4);
 
         // Check balances were updated correctly
-        let eth_user_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap();
-        let usd_user_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&usd_user)
-            .unwrap();
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_user_usd.balance, 1000); // Seller got the buy order's price
-        assert_eq!(usd_user_eth.balance, 1); // Buyer got their ETH
+        assert_eq!(eth_user_usd, 1000); // Seller got the buy order's price
+        assert_eq!(usd_user_eth, 1); // Buyer got their ETH
     }
 
     #[test_log::test]
@@ -797,15 +768,18 @@ mod orderbook_tests {
         // Assert orderbook is empty
         assert_eq!(orderbook.orders.len(), 0);
 
-        // Check that balances have been updated correctly
-        let eth_balances = orderbook.balances.get("ETH").unwrap();
-        let usd_balances = orderbook.balances.get("USD").unwrap();
+        // Check balances were updated correctly
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
 
-        assert_eq!(eth_balances.get(&eth_user).unwrap().balance, 9); // eth_user sold 1 ETH ...
-        assert_eq!(usd_balances.get(&eth_user).unwrap().balance, 2000); // .. for 2000 USD
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_balances.get(&usd_user).unwrap().balance, 1); // usd_user bought 1 ETH ...
-        assert_eq!(usd_balances.get(&usd_user).unwrap().balance, 1000); // .. for 2000 USD
+        assert_eq!(eth_user_eth, 9); // eth_user sold 1 ETH ...
+        assert_eq!(eth_user_usd, 2000); // .. for 2000 USD
+
+        assert_eq!(usd_user_eth, 1); // usd_user bought 1 ETH ...
+        assert_eq!(usd_user_usd, 1000); // .. for 2000 USD
     }
 
     #[test_log::test]
@@ -865,15 +839,18 @@ mod orderbook_tests {
         // Assert orderbook is empty
         assert_eq!(orderbook.orders.len(), 0);
 
-        // Check that balances have been updated correctly
-        let eth_balances = orderbook.balances.get("ETH").unwrap();
-        let usd_balances = orderbook.balances.get("USD").unwrap();
+        // Check balances were updated correctly
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
 
-        assert_eq!(eth_balances.get(&eth_user).unwrap().balance, 9); // eth_user sold 1 ETH ...
-        assert_eq!(usd_balances.get(&eth_user).unwrap().balance, 2000); // .. for 2000 USD
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_balances.get(&usd_user).unwrap().balance, 1); // usd_user bought 1 ETH ...
-        assert_eq!(usd_balances.get(&usd_user).unwrap().balance, 1000); // .. for 2000 USD
+        assert_eq!(eth_user_eth, 9); // eth_user sold 1 ETH ...
+        assert_eq!(eth_user_usd, 2000); // .. for 2000 USD
+
+        assert_eq!(usd_user_eth, 1); // usd_user bought 1 ETH ...
+        assert_eq!(usd_user_usd, 1000); // .. for 2000 USD
     }
 
     // Tests with existing sell orders
@@ -935,21 +912,11 @@ mod orderbook_tests {
         assert_eq!(balance_updated_count, 4);
 
         // Check balances were updated correctly
-        let eth_user_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap();
-        let usd_user_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&usd_user)
-            .unwrap();
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_user_usd.balance, 2000); // Seller got their asking price
-        assert_eq!(usd_user_eth.balance, 1); // Buyer got their ETH
+        assert_eq!(eth_user_usd, 2000); // Seller got their asking price
+        assert_eq!(usd_user_eth, 1); // Buyer got their ETH
     }
 
     #[test_log::test]
@@ -1010,21 +977,11 @@ mod orderbook_tests {
         assert_eq!(balance_updated_count, 4);
 
         // Check balances
-        let eth_user_usd = orderbook
-            .balances
-            .get("USD")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap();
-        let usd_user_eth = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&usd_user)
-            .unwrap();
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_user_usd.balance, 2000);
-        assert_eq!(usd_user_eth.balance, 1);
+        assert_eq!(eth_user_usd, 2000);
+        assert_eq!(usd_user_eth, 1);
     }
 
     #[test_log::test]
@@ -1083,15 +1040,18 @@ mod orderbook_tests {
         // Assert orderbook is empty
         assert_eq!(orderbook.orders.len(), 0);
 
-        // Check that balances have been updated correctly
-        let eth_balances = orderbook.balances.get("ETH").unwrap();
-        let usd_balances = orderbook.balances.get("USD").unwrap();
+        // Check balances were updated correctly
+        let eth_user_usd = orderbook.get_balance(&eth_user, "USD");
+        let eth_user_eth = orderbook.get_balance(&eth_user, "ETH");
 
-        assert_eq!(eth_balances.get(&eth_user).unwrap().balance, 9); // eth_user sold 1 ETH ...
-        assert_eq!(usd_balances.get(&eth_user).unwrap().balance, 2000); // .. for 2000 USD
+        let usd_user_usd = orderbook.get_balance(&usd_user, "USD");
+        let usd_user_eth = orderbook.get_balance(&usd_user, "ETH");
 
-        assert_eq!(eth_balances.get(&usd_user).unwrap().balance, 1); // usd_user bought 1 ETH ...
-        assert_eq!(usd_balances.get(&usd_user).unwrap().balance, 1000); // .. for 2000 USD
+        assert_eq!(eth_user_eth, 9); // eth_user sold 1 ETH ...
+        assert_eq!(eth_user_usd, 2000); // .. for 2000 USD
+
+        assert_eq!(usd_user_eth, 1); // usd_user bought 1 ETH ...
+        assert_eq!(usd_user_usd, 1000); // .. for 2000 USD
     }
 
     #[test_log::test]
@@ -1119,20 +1079,8 @@ mod orderbook_tests {
         assert_eq!(orderbook.orders.len(), 1);
 
         // Check initial balances after order creation
-        let eth_user_balance_before = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap()
-            .balance;
-        let orderbook_balance_before = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get("orderbook")
-            .unwrap()
-            .balance;
+        let eth_user_balance_before = orderbook.get_balance(&eth_user, "ETH");
+        let orderbook_balance_before = orderbook.get_balance("orderbook", "ETH");
 
         assert_eq!(eth_user_balance_before, 9); // 10 - 1 (reserved for order)
         assert_eq!(orderbook_balance_before, 1); // 1 reserved for the order
@@ -1160,20 +1108,8 @@ mod orderbook_tests {
         assert_eq!(orderbook.orders.len(), 0);
 
         // Check balances were restored
-        let eth_user_balance_after = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap()
-            .balance;
-        let orderbook_balance_after = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get("orderbook")
-            .unwrap()
-            .balance;
+        let eth_user_balance_after = orderbook.get_balance(&eth_user, "ETH");
+        let orderbook_balance_after = orderbook.get_balance("orderbook", "ETH");
 
         assert_eq!(eth_user_balance_after, 10); // Balance restored
         assert_eq!(orderbook_balance_after, 0); // Orderbook balance back to 0
@@ -1184,13 +1120,7 @@ mod orderbook_tests {
         let (eth_user, _, mut orderbook) = setup();
 
         // Check initial balance
-        let initial_balance = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap()
-            .balance;
+        let initial_balance = orderbook.get_balance(&eth_user, "ETH");
         assert_eq!(initial_balance, 10);
 
         // Test successful withdrawal
@@ -1201,13 +1131,7 @@ mod orderbook_tests {
         assert!(matches!(events[0], OrderbookEvent::BalanceUpdated { .. }));
 
         // Check balance was updated
-        let new_balance = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap()
-            .balance;
+        let new_balance = orderbook.get_balance(&eth_user, "ETH");
         assert_eq!(new_balance, 7); // 10 - 3
 
         // Test withdrawal with insufficient balance
@@ -1220,13 +1144,7 @@ mod orderbook_tests {
         assert!(err.contains("trying to withdraw 10"));
 
         // Verify balance unchanged after failed withdrawal
-        let balance_after_fail = orderbook
-            .balances
-            .get("ETH")
-            .unwrap()
-            .get(&eth_user)
-            .unwrap()
-            .balance;
+        let balance_after_fail = orderbook.get_balance(&eth_user, "ETH");
         assert_eq!(balance_after_fail, 7);
     }
 

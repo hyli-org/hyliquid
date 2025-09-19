@@ -11,10 +11,10 @@ pub struct Orderbook {
     pub secret: Vec<u8>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
-    // User balances per token: token -> (user -> (balance, secret))
-    pub balances: BTreeMap<TokenName, BTreeMap<String, UserInfo>>,
-    // User public keys for session management
-    pub session_keys: BTreeMap<String, Vec<Vec<u8>>>,
+    // User balances per token: token -> (user -> balance))
+    pub balances: BTreeMap<TokenName, BTreeMap<String, u32>>,
+    // Users info
+    pub users_info: BTreeMap<String, UserInfo>,
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,
     // Buy orders sorted by price (highest first) for each token pair
@@ -36,8 +36,8 @@ pub struct Orderbook {
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
 pub struct UserInfo {
-    pub balance: u32,
-    pub secret: Vec<u8>,
+    pub nonce: u32,
+    pub session_keys: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
@@ -104,7 +104,11 @@ impl Orderbook {
         pubkey: &Vec<u8>,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Add the session key to the user's list of session keys
-        let keys = self.session_keys.entry(user.to_string()).or_default();
+        let keys = &mut self
+            .users_info
+            .entry(user.to_string())
+            .or_default()
+            .session_keys;
         if keys.contains(pubkey) {
             return Err("Session key already exists".to_string());
         }
@@ -124,22 +128,9 @@ impl Orderbook {
         token: String,
         amount: u32,
         user: &String,
-        secret: &Vec<u8>,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        // Check if user already exists for this token
-        let user_exists = self
-            .balances
-            .get(&token)
-            .and_then(|token_balances| token_balances.get(user))
-            .is_some();
-
-        let user_info = self.get_user_info_mut(user, &token);
-        user_info.balance += amount;
-
-        // Only write the secret if the user doesn't exist yet (empty secret means new user)
-        if !user_exists || user_info.secret.is_empty() {
-            user_info.secret.clone_from(secret);
-        }
+        let user_balance = self.get_balance_mut(user, &token);
+        *user_balance += amount;
 
         if self.server_execution {
             Ok(vec![OrderbookEvent::BalanceUpdated {
@@ -655,7 +646,7 @@ impl Orderbook {
             lane_id,
             orders: BTreeMap::new(),
             balances: BTreeMap::new(),
-            session_keys: BTreeMap::new(),
+            users_info: BTreeMap::new(),
             buy_orders: BTreeMap::new(),
             sell_orders: BTreeMap::new(),
             orders_owner: BTreeMap::new(),
@@ -673,47 +664,54 @@ impl Orderbook {
         amount: u32,
     ) -> Result<(), String> {
         // Deduct from sender
-        let from_user_info = self
-            .balances
-            .get_mut(token)
-            .ok_or(format!("Token {token} not found"))?
-            .get_mut(from)
-            .ok_or(format!("Token {token} not found for user {from}"))?;
+        let from_user_balance = self.get_balance_mut(from, token);
 
-        if from_user_info.balance < amount {
+        if *from_user_balance < amount {
             return Err(format!(
-                "Could not transfer: Insufficient balance: user {} has {} {} tokens, trying to transfer {}",
-                from, from_user_info.balance, token, amount
+                "Could not transfer: Insufficient balance: user {from} has {from_user_balance} {token} tokens, trying to transfer {amount}"
             ));
         }
-        from_user_info.balance -= amount;
+        *from_user_balance -= amount;
 
         // Add to receiver
-        let to_user_info = self
-            .balances
-            .get_mut(token)
-            .ok_or(format!("Token {token} not found"))?
-            .entry(to.to_string())
-            .or_default();
-        to_user_info.balance += amount;
+        let to_user_balance = self.get_balance_mut(to, token);
+        *to_user_balance += amount;
 
         Ok(())
     }
 
-    pub fn get_user_info_mut(&mut self, user: &str, token: &str) -> &mut UserInfo {
+    pub fn get_user_info_mut(&mut self, user: &str) -> &mut UserInfo {
+        self.users_info.entry(user.to_string()).or_default()
+    }
+
+    pub fn get_balance(&mut self, user: &str, token: &str) -> u32 {
+        *self.get_balance_mut(user, token)
+    }
+
+    pub fn get_balance_mut(&mut self, user: &str, token: &str) -> &mut u32 {
         self.balances
-            .entry(token.to_owned())
+            .entry(token.to_string())
             .or_default()
             .entry(user.to_string())
             .or_default()
     }
 
-    pub fn get_balance(&mut self, user: &str, token: &str) -> u32 {
-        self.get_user_info_mut(user, token).balance
+    pub fn get_nonce(&self, user: &str) -> u32 {
+        self.users_info
+            .get(user)
+            .map(|info| info.nonce)
+            .unwrap_or(0)
     }
 
-    pub fn get_balance_mut(&mut self, user: &str, token: &str) -> &mut u32 {
-        &mut self.get_user_info_mut(user, token).balance
+    pub fn get_session_keys(&self, user: &str) -> Vec<Vec<u8>> {
+        self.users_info
+            .get(user)
+            .map(|info| info.session_keys.clone())
+            .unwrap_or_default()
+    }
+
+    pub fn increment_nonce(&mut self, user: &str) {
+        self.get_user_info_mut(user).nonce += 1;
     }
 
     fn insert_order(&mut self, order: Order, user: String) -> Result<(), String> {
@@ -745,6 +743,31 @@ impl Orderbook {
         self.orders_owner
             .insert(order.order_id.clone(), user.clone());
         Ok(())
+    }
+
+    /// Returns a mapping from order IDs to user names
+    pub fn get_order_user_map(
+        &self,
+        order_side: &OrderSide,
+        pair: &TokenPair,
+    ) -> BTreeMap<OrderId, String> {
+        let mut map = BTreeMap::new();
+        let (base_token, quote_token) = pair.clone();
+        let pair_key = (base_token.clone(), quote_token.clone());
+
+        let relevant_orders = match order_side {
+            OrderSide::Bid => self.sell_orders.get(&pair_key),
+            OrderSide::Ask => self.buy_orders.get(&pair_key),
+        };
+
+        if let Some(order_ids) = relevant_orders {
+            for order_id in order_ids {
+                if let Some(user) = self.orders_owner.get(order_id) {
+                    map.insert(order_id.clone(), user.clone());
+                }
+            }
+        }
+        map
     }
 
     pub fn is_blob_whitelisted(&self, contract_name: &ContractName) -> bool {

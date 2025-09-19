@@ -85,16 +85,13 @@ impl sdk::ZkContract for Orderbook {
                                 panic!("Failed to deserialize CreateOrderPrivateInput")
                             }
                         })?;
+
                         self.add_session_key(user, &private_input.public_key)?
                     }
                     PermissionnedOrderbookAction::Deposit { token, amount } => {
                         // TODO: assert there is a transfer blob for that token
-                        self.deposit(
-                            token,
-                            amount,
-                            user,
-                            &permissionned_private_input.private_input,
-                        )?
+                        // TODO: create user account if
+                        self.deposit(token, amount, user)?
                     }
                     PermissionnedOrderbookAction::CreateOrder {
                         order_id,
@@ -120,13 +117,16 @@ impl sdk::ZkContract for Orderbook {
                         // On this step, signature is provided in private_input and hence is never public.
                         // The orderbook server knows the signature as user informed it offchain.
                         // As the public key has been registered, only the user can create that signature and hence allow this order creation
+                        let user_nonce = self.get_nonce(user);
                         utils::verify_user_signature_authorization(
                             user,
                             &create_order_private_data.public_key,
+                            &self.get_session_keys(user),
+                            &format!("{user}:{user_nonce}:create_order:{order_id}"),
                             &create_order_private_data.signature,
-                            &order_id,
-                            &self.session_keys,
                         )?;
+                        // User's action has been validated, increment user's nonce
+                        self.increment_nonce(user);
 
                         let order = Order {
                             order_id,
@@ -156,13 +156,16 @@ impl sdk::ZkContract for Orderbook {
                             })?;
 
                         // Verify user signature authorization
+                        let user_nonce = self.get_nonce(user);
                         utils::verify_user_signature_authorization(
                             user,
                             &cancel_order_private_data.public_key,
+                            &self.get_session_keys(user),
+                            &format!("{user}:{user_nonce}:cancel:{order_id}"),
                             &cancel_order_private_data.signature,
-                            &format!("cancel:{order_id}"),
-                            &self.session_keys,
                         )?;
+                        // User's action has been validated, increment user's nonce
+                        self.increment_nonce(user);
 
                         self.cancel_order(order_id, user)?
                     }
@@ -181,13 +184,17 @@ impl sdk::ZkContract for Orderbook {
                         })?;
 
                         // Verify user signature authorization
+                        let user_nonce = self.get_nonce(user);
                         utils::verify_user_signature_authorization(
                             user,
                             &withdraw_private_data.public_key,
+                            &self.get_session_keys(user),
+                            &format!("{user}:{user_nonce}:withdraw:{token}:{amount}"),
                             &withdraw_private_data.signature,
-                            &format!("{}:{}:{token}:{amount}", user, withdraw_private_data.nonce),
-                            &self.session_keys,
                         )?;
+                        // User's action has been validated, increment user's nonce
+                        self.increment_nonce(user);
+
                         self.withdraw(token, amount, user)?
                     }
                 };
