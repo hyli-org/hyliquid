@@ -97,6 +97,7 @@ CREATE TYPE order_status AS ENUM (
 
 CREATE TABLE orders (
     order_id bigserial PRIMARY KEY,
+    order_user_signed_id text NOT NULL,
     instrument_id bigserial NOT NULL REFERENCES instruments (instrument_id),
     user_id bigserial NOT NULL REFERENCES users (user_id),
     side order_side NOT NULL,

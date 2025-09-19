@@ -38,7 +38,7 @@ pub struct Args {
     #[arg(long, default_value = "orderbook")]
     pub orderbook_cn: String,
 
-    #[arg(long, default_value = "false")]
+    #[arg(long, default_value = "true")]
     pub clean_db: bool,
 
     /// Clean the data directory before starting the server

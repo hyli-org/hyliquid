@@ -74,10 +74,10 @@ impl UserService {
             assets.symbol, balances.total, balances.reserved, balances.available 
         FROM 
             balances
-        WHERE 
-            balances.user_id = $1
         JOIN 
             assets ON balances.asset_id = assets.asset_id
+        WHERE 
+            balances.user_id = $1
         ;
         ",
         )

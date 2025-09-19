@@ -64,6 +64,8 @@ BEGIN
       p.p_ins_id AS ord_instrument_id,
       -- user aléatoire
       (SELECT v_user_ids[1 + floor(random()*array_length(v_user_ids,1))::int])::bigint AS ord_user_id,
+      -- incrementing order id
+      md5(g::text)::text AS ord_user_signed_id,
       -- bid/ask biaisé
       (CASE WHEN random() < p.p_side_bias THEN 'bid' ELSE 'ask' END)::order_side AS ord_side,
       'limit'::order_type AS ord_type,
@@ -81,6 +83,7 @@ BEGIN
     SELECT
       g.ord_instrument_id,
       g.ord_user_id,
+      g.ord_user_signed_id,
       g.ord_side,
       g.ord_type,
       g.ord_price,
@@ -97,6 +100,7 @@ BEGIN
     SELECT
       s.ord_instrument_id,
       s.ord_user_id,
+      s.ord_user_signed_id,
       s.ord_side,
       s.ord_type,
       s.ord_price,
@@ -113,6 +117,7 @@ BEGIN
     SELECT
       l.ord_instrument_id,
       l.ord_user_id,
+      l.ord_user_signed_id,
       l.ord_side,
       l.ord_type,
       l.ord_price,
@@ -137,11 +142,12 @@ BEGIN
   ),
   ins_orders AS (
     INSERT INTO orders(
-      instrument_id, user_id, side, type, price, qty, qty_filled, status
+      instrument_id, user_id, order_user_signed_id, side, type, price, qty, qty_filled, status
     )
     SELECT
       wf.ord_instrument_id,
       wf.ord_user_id,
+      wf.ord_user_signed_id,
       wf.ord_side,
       wf.ord_type,
       wf.ord_price,
@@ -197,12 +203,12 @@ BEGIN
   );
 END$$;
 
-SELECT seed_limit_orders_v2(
-  'BTC/USDT',
-  30_000,         -- qty orders
-  27649.00,       -- mid price
-  249,            -- ± ticks
-  0, 2000,        -- steps min/max
-  0.6,            -- bias bid
-  0.4, 0.3, 0.3   -- open / partial / filled
-);
+-- SELECT seed_limit_orders_v2(
+--   'BTC/USDT',
+--   30_000,         -- qty orders
+--   27649.00,       -- mid price
+--   249,            -- ± ticks
+--   0, 2000,        -- steps min/max
+--   0.6,            -- bias bid
+--   0.4, 0.3, 0.3   -- open / partial / filled
+-- );

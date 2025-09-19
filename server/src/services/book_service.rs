@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client_sdk::contract_indexer::AppError;
+use hyli_modules::log_error;
 use orderbook::orderbook::OrderbookEvent;
 use reqwest::StatusCode;
 use serde::Serialize;
@@ -60,19 +61,22 @@ impl BookWriterService {
                         user, asset, amount
                     );
 
-                    sqlx::query(
-                        "
+                    log_error!(
+                        sqlx::query(
+                            "
                         INSERT INTO balances (user_id, asset_id, total)
                         VALUES ($1, $2, $3)
                         ON CONFLICT (user_id, asset_id) DO UPDATE SET
                             total = $3
                         ",
-                    )
-                    .bind(user_id)
-                    .bind(asset.asset_id)
-                    .bind(amount as i64)
-                    .execute(&mut *tx)
-                    .await?;
+                        )
+                        .bind(user_id)
+                        .bind(asset.asset_id)
+                        .bind(amount as i64)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to update balance"
+                    )?;
                 }
                 OrderbookEvent::OrderCreated { order } => {
                     let user_id = self.user_service.read().await.get_user_id(&user).await?;
@@ -84,9 +88,16 @@ impl BookWriterService {
                             anyhow::anyhow!("Instrument not found: {}", symbol),
                         ))?;
 
-                    sqlx::query(
-                        "
+                    info!(
+                        "Creating order for user {} with instrument {:?} and order {:?}",
+                        user, instrument, order
+                    );
+
+                    log_error!(
+                        sqlx::query(
+                            "
                         INSERT INTO orders (
+                            order_user_signed_id,
                             instrument_id, 
                             user_id, 
                             side, 
@@ -100,53 +111,81 @@ impl BookWriterService {
                             $3, 
                             $4, 
                             $5, 
-                            $6
+                            $6, 
+                            $7
                         )
                         ",
-                    )
-                    .bind(instrument.instrument_id)
-                    .bind(user_id)
-                    .bind(order.order_side)
-                    .bind(order.order_type)
-                    .bind(order.price.map(|p| p as i64))
-                    .bind(order.quantity as i64)
-                    .execute(&mut *tx)
-                    .await?;
+                        )
+                        .bind(order.order_id)
+                        .bind(instrument.instrument_id)
+                        .bind(user_id)
+                        .bind(order.order_side)
+                        .bind(order.order_type)
+                        .bind(order.price.map(|p| p as i64))
+                        .bind(order.quantity as i64)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to create order"
+                    )?;
                 }
                 OrderbookEvent::OrderCancelled { order_id, pair } => {
-                    sqlx::query(
-                        "
-                        UPDATE orders SET status = 'cancelled' WHERE order_id = $1
+                    info!(
+                        "Cancelling order for user {} with order id {:?} and pair {:?}",
+                        user, order_id, pair
+                    );
+
+                    log_error!(
+                        sqlx::query(
+                            "
+                        UPDATE orders SET status = 'cancelled' WHERE order_user_signed_id = $1
                         ",
-                    )
-                    .bind(order_id)
-                    .execute(&mut *tx)
-                    .await?;
+                        )
+                        .bind(order_id)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to cancel order"
+                    )?;
                 }
                 OrderbookEvent::OrderExecuted { order_id, pair } => {
-                    sqlx::query(
-                        "
-                        UPDATE orders SET status = 'executed' WHERE order_id = $1
+                    info!(
+                        "Executing order for user {} with order id {:?} and pair {:?}",
+                        user, order_id, pair
+                    );
+
+                    log_error!(
+                        sqlx::query(
+                            "
+                        UPDATE orders SET status = 'filled' WHERE order_user_signed_id = $1
                         ",
-                    )
-                    .bind(order_id)
-                    .execute(&mut *tx)
-                    .await?;
+                        )
+                        .bind(order_id)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to execute order"
+                    )?;
                 }
                 OrderbookEvent::OrderUpdate {
                     order_id,
                     remaining_quantity,
                     pair,
                 } => {
-                    sqlx::query(
-                        "
-                        UPDATE orders SET qty_remaining = $1 WHERE order_id = $2
+                    info!(
+                        "Updating order for user {} with order id {:?} and pair {:?}",
+                        user, order_id, pair
+                    );
+
+                    log_error!(
+                        sqlx::query(
+                            "
+                        UPDATE orders SET qty_filled = qty - $1 WHERE order_user_signed_id = $2
                         ",
-                    )
-                    .bind(remaining_quantity as i64)
-                    .bind(order_id)
-                    .execute(&mut *tx)
-                    .await?;
+                        )
+                        .bind(remaining_quantity as i64)
+                        .bind(order_id)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to update order"
+                    )?;
                 }
                 OrderbookEvent::SessionKeyAdded { user: _user } => {}
             }

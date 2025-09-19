@@ -1,7 +1,9 @@
 -- Assets : BTC et USDT
 INSERT INTO assets (symbol, scale, step)
     VALUES ('BTC', 8, 1), -- 1 sat
-    ('USDT', 6, 1);
+    ('USDT', 6, 1),
+    ('ORANJ', 0, 1),
+    ('HYLLAR', 0, 1);
 
 -- 1 micro-USDT
 -- Instrument BTC/USDT
@@ -17,13 +19,39 @@ VALUES
                 asset_id
             FROM assets
             WHERE
-                symbol = 'BTC'), (
+                symbol = 'BTC'
+        ),
+        (
             SELECT
                 asset_id
             FROM
                 assets
             WHERE
-                symbol = 'USDT'), 'active');
+                symbol = 'USDT'
+        ), 
+        'active'
+    ),
+    ('HYLLAR/ORANJ', 1,
+        1, 
+        0, 
+        (
+            SELECT
+                asset_id
+            FROM
+                assets
+            WHERE
+                symbol = 'HYLLAR'
+        ),
+        (
+            SELECT
+                asset_id
+            FROM
+                assets
+            WHERE
+                symbol = 'ORANJ'
+        ),
+        'active'
+    );
 
 -- TODO: REMOVE
 -- Deux users
