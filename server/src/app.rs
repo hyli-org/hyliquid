@@ -1,4 +1,8 @@
-use std::{sync::Arc, vec};
+use std::{
+    collections::{BTreeMap, BTreeSet, VecDeque},
+    sync::Arc,
+    vec,
+};
 
 use anyhow::Result;
 use axum::{
@@ -22,7 +26,7 @@ use hyli_modules::{
     },
 };
 use orderbook::{
-    orderbook::{OrderSide, OrderType, Orderbook, OrderbookEvent, TokenPair},
+    orderbook::{Order, OrderSide, OrderType, Orderbook, OrderbookEvent, TokenPair, UserInfo},
     AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, PermissionnedPrivateInput, WithdrawPrivateInput,
 };
@@ -234,9 +238,9 @@ async fn get_orders_by_pair(
 }
 async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let orderbook = ctx.orderbook.lock().await;
-    let state = orderbook.get_state();
+    let serializable_state = SerializableOrderbook::from(&*orderbook);
 
-    Ok(Json(state))
+    Ok(Json(serializable_state))
 }
 async fn reset_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let mut orderbook = ctx.orderbook.lock().await;
@@ -528,4 +532,42 @@ fn create_permissioned_private_input<T: BorshSerialize>(
         private_input: borsh::to_vec(&private_input)?,
     };
     Ok(borsh::to_vec(&permissioned_private_input)?)
+}
+
+// To be removed later, temporary struct for easier serialization
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct SerializableOrderbook {
+    pub secret: Vec<u8>,
+    pub lane_id: LaneId,
+    pub balances: BTreeMap<String, BTreeMap<String, u32>>,
+    pub users_info: BTreeMap<String, UserInfo>,
+    pub orders: BTreeMap<String, Order>,
+    pub buy_orders: BTreeMap<String, VecDeque<String>>, // "token1-token2" format
+    pub sell_orders: BTreeMap<String, VecDeque<String>>, // "token1-token2" format
+    pub accepted_tokens: BTreeSet<ContractName>,
+    pub orders_owner: BTreeMap<String, String>,
+}
+
+impl From<&Orderbook> for SerializableOrderbook {
+    fn from(orderbook: &Orderbook) -> Self {
+        SerializableOrderbook {
+            secret: orderbook.secret.clone(),
+            lane_id: orderbook.lane_id.clone(),
+            balances: orderbook.balances.clone(),
+            users_info: orderbook.users_info.clone(),
+            orders: orderbook.orders.clone(),
+            buy_orders: orderbook
+                .buy_orders
+                .iter()
+                .map(|(pair, orders)| (format!("{}-{}", pair.0, pair.1), orders.clone()))
+                .collect(),
+            sell_orders: orderbook
+                .sell_orders
+                .iter()
+                .map(|(pair, orders)| (format!("{}-{}", pair.0, pair.1), orders.clone()))
+                .collect(),
+            accepted_tokens: orderbook.accepted_tokens.clone(),
+            orders_owner: orderbook.orders_owner.clone(),
+        }
+    }
 }
