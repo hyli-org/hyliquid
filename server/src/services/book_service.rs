@@ -187,7 +187,17 @@ impl BookWriterService {
                         "Failed to update order"
                     )?;
                 }
-                OrderbookEvent::SessionKeyAdded { user: _user } => {}
+                OrderbookEvent::SessionKeyAdded { user } => {
+                    info!("Creating user {}", user);
+
+                    log_error!(
+                        sqlx::query("INSERT INTO users (identity) VALUES ($1) ON CONFLICT DO NOTHING")
+                            .bind(user)
+                            .execute(&mut *tx)
+                            .await,
+                        "Failed to create user"
+                    )?;
+                }
             }
         }
         tx.commit().await?;

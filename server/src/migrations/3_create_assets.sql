@@ -52,38 +52,3 @@ VALUES
         ),
         'active'
     );
-
--- TODO: REMOVE
--- Deux users
-INSERT INTO users (identity)
-VALUES
-    ('txsender@orderbook'),
-    ('alice'),
-    ('bob');
-
--- Alice a 1 000 USDT (1 000 * 10^6 = 1_000_000_000 micro-USDT)
-INSERT INTO balances (user_id, asset_id, total)
-SELECT
-    u.user_id,
-    a.asset_id,
-    1000 * 1000000
-FROM
-    users u,
-    assets a
-WHERE
-    u.identity = 'alice'
-    AND a.symbol = 'USDT';
-
--- Bob a 0.05 BTC (0.05 * 10^8 = 5_000_000 sats)
-INSERT INTO balances (user_id, asset_id, total)
-SELECT
-    u.user_id,
-    a.asset_id,
-    5000000
-FROM
-    users u,
-    assets a
-WHERE
-    u.identity = 'bob'
-    AND a.symbol = 'BTC';
-
