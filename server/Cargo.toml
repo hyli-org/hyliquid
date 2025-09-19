@@ -7,18 +7,20 @@ name = "tx_sender"
 path = "src/bin/tx_sender.rs"
 
 [dependencies]
-orderbook = { workspace = true, features = ["client"] }
+orderbook = { workspace = true, features = ["client", "sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
 client-sdk = { workspace = true, features = ["sp1", "rest"] }
 hyli-modules = { workspace = true }
 # Remove features if you want reproducible builds with docker
 contracts = { workspace = true, features = ["nonreproducible"] }
 
-sqlx = { version = "0.8.6", features = [
+sqlx = { workspace = true, features = [
   "runtime-tokio",
   "postgres",
   "migrate",
   "chrono",
+  "derive",
+  "macros"
 ] }
 
 sp1-sdk = { workspace = true, default-features = false, features = ["network"] }

@@ -469,7 +469,7 @@ async fn withdraw(
         private_input,
     };
 
-    execute_orderbook_action(&calldata, &ctx).await
+    execute_orderbook_action( &calldata, &ctx).await
 }
 
 async fn execute_orderbook_action(
@@ -484,7 +484,7 @@ async fn execute_orderbook_action(
         Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
             Ok(events) => {
                 tracing::info!("orderbook execute results: {:?}", events);
-                book_service.write_events(events).await?;
+                book_service.write_events(calldata.identity.clone(), events).await?;
                 let tx_hash = ctx
                     .client
                     .send_tx_blob(BlobTransaction::new(

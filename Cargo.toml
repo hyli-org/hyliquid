@@ -15,6 +15,9 @@ sp1-zkvm = { version = "5.0.3", default-features = false }
 contracts = { path = "contracts", default-features = false, package = "contracts" }
 orderbook = { path = "contracts/orderbook", package = "orderbook" }
 
+sqlx = { version = "0.8.6", default-features = false }
+
+
 [workspace.package]
 version = "0.4.1"
 edition = "2021"

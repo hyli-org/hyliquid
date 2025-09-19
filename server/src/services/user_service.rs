@@ -1,17 +1,22 @@
 use client_sdk::contract_indexer::AppError;
-use sqlx::PgPool;
+use serde::Serialize;
+use sqlx::{PgPool, Row};
 
 pub struct UserService {
     pool: PgPool,
 }
 
-struct Balance {
-    token: String,
-    amount: f64,
+#[derive(Debug, Serialize)]
+pub struct Balance {
+    pub token: String,
+    pub total: i64,
+    pub reserved: i64,
+    pub available: i64,
 }
 
-struct UserBalances {
-    balances: Vec<Balance>,
+#[derive(Debug, Serialize)]
+pub struct UserBalances {
+    pub balances: Vec<Balance>,
 }
 
 impl UserService {
@@ -19,8 +24,31 @@ impl UserService {
         UserService { pool }
     }
 
-    pub async fn get_balances(&self, user_id: &str) -> Result<String, AppError> {
-        // Dummy implementation for example purposes
-        Ok(format!("Balance for user: {}", user_id))
+    pub async fn get_balances(&self, user_id: &str) -> Result<UserBalances, AppError> {
+        let rows = sqlx::query("
+        SELECT 
+            assets.symbol, balances.total, balances.reserved, balances.available 
+        FROM 
+            balances
+        JOIN 
+            users ON balances.user_id = users.user_id
+        WHERE 
+            users.identity = $1
+        JOIN 
+            assets ON balances.asset_id = assets.asset_id
+        ;
+        ")
+            .bind(user_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        let balances = rows.iter().map(|row| Balance {
+            token: row.get("symbol"),
+            total: row.get("total"),
+            reserved: row.get("reserved"),
+            available: row.get("available"),
+        }).collect();
+
+        Ok(UserBalances { balances })
     }
 }

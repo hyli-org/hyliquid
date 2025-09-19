@@ -105,7 +105,7 @@ CREATE TABLE orders (
     qty bigint NOT NULL,
     qty_filled bigint NOT NULL DEFAULT 0,
     qty_remaining bigint GENERATED ALWAYS AS (qty - qty_filled) STORED,
-    status order_status NOT NULL,
+    status order_status NOT NULL DEFAULT 'open',
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now()
 )

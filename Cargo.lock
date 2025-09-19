@@ -4556,6 +4556,7 @@ dependencies = [
  "serde",
  "sha2",
  "sp1-zkvm",
+ "sqlx",
  "test-log",
  "tokio",
  "tracing-subscriber",

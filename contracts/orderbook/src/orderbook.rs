@@ -40,12 +40,16 @@ pub struct UserInfo {
     pub session_keys: Vec<Vec<u8>>,
 }
 
+#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
+#[cfg_attr(feature = "sqlx", sqlx(type_name = "order_side", rename_all = "lowercase"))]
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum OrderSide {
     Bid, // Buy
     Ask, // Sell
 }
 
+#[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
+#[cfg_attr(feature = "sqlx", sqlx(type_name = "order_type", rename_all = "lowercase"))]
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 pub enum OrderType {
     Market,

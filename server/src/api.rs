@@ -1,6 +1,6 @@
 use anyhow::Result;
 use axum::{
-    extract::{Json, State},
+    extract::{Json, Path, Query, State},
     http::{HeaderMap, Method, StatusCode},
     response::IntoResponse,
     routing::get,
@@ -57,10 +57,10 @@ impl Module for ApiModule {
             .route("/_health", get(health))
             .route("/api/config", get(get_config))
             .route("/api/info", get(get_info))
-            // .route(
-            //     "/api/book/{base_asset_symbol}/{quote_asset_symbol}",
-            //     get(get_book),
-            // )
+            .route(
+                "/api/book/{base_asset_symbol}/{quote_asset_symbol}",
+                get(get_book),
+            )
             .route("/api/balances", get(get_balance))
             .with_state(state)
             .layer(cors); // Appliquer le middleware CORS
@@ -147,33 +147,22 @@ async fn get_info(State(_ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
     Ok(Json(info))
 }
 
-// async fn get_book(
-//     State(ctx): State<RouterCtx>,
-//     axum::extract::Path((base_asset_symbol, quote_asset_symbol)): axum::extract::Path<(
-//         String,
-//         String,
-//     )>,
-//     axum::extract::Query(query): Query<HashMap<String, String>>,
-// ) -> Result<impl IntoResponse, AppError> {
-//     let book_service = ctx.book_service.read().await;
 
-//     let levels = query
-//         .get("levels")
-//         .unwrap_or("20")
-//         .parse::<u32>()
-//         .unwrap_or(20);
-//     let group_ticks = query
-//         .get("group_ticks")
-//         .unwrap_or("10")
-//         .parse::<u32>()
-//         .unwrap_or(10);
+async fn get_book(
+    State(ctx): State<RouterCtx>,
+    Path((base_asset_symbol, quote_asset_symbol)): Path<(String, String)>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, AppError> {
+    let book_service = ctx.book_service.read().await;
 
-//     let book = book_service
-//         .get_order_book(&base_asset_symbol, &quote_asset_symbol, levels, group_ticks)
-//         .await?;
+    let levels = query.get("levels").map(|v| v.parse::<u32>().unwrap_or(20)).unwrap_or(20);
+    let group_ticks = query.get("group_ticks").map(|v| v.parse::<u32>().unwrap_or(10)).unwrap_or(10);
+    let book = book_service
+        .get_order_book(&base_asset_symbol, &quote_asset_symbol, levels, group_ticks)
+        .await?;
 
-//     Ok(Json(book))
-// }
+    Ok(Json(book))
+}
 
 async fn get_balance(
     State(ctx): State<RouterCtx>,
