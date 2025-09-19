@@ -18,7 +18,7 @@ use client_sdk::{
     rest_client::{NodeApiClient, NodeApiHttpClient},
 };
 use hyli_modules::{
-    bus::SharedMessageBus,
+    bus::{BusClientSender, SharedMessageBus},
     module_bus_client, module_handle_messages,
     modules::{
         websocket::{WsInMessage, WsTopicMessage},
@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::services::book_service::BookWriterService;
+use crate::{prover::OrderbookProverRequest, services::book_service::BookWriterService};
 
 pub struct OrderbookModule {
     bus: OrderbookModuleBusClient,
@@ -60,6 +60,7 @@ module_bus_client! {
 pub struct OrderbookModuleBusClient {
     sender(WsTopicMessage<OrderbookEvent>),
     sender(WsTopicMessage<String>),
+    sender(OrderbookProverRequest),
     receiver(WsInMessage<OrderbookWsInMessage>),
 }
 }
@@ -70,10 +71,13 @@ impl Module for OrderbookModule {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let orderbook = Arc::new(Mutex::new(ctx.default_state.clone()));
 
+        let bus = OrderbookModuleBusClient::new_from_bus(bus.new_handle()).await;
+
         let state = RouterCtx {
             client: ctx.node_client.clone(),
             orderbook_cn: ctx.orderbook_cn.clone(),
             default_state: ctx.default_state.clone(),
+            bus: bus.clone(),
             orderbook: orderbook.clone(),
             lane_id: ctx.lane_id.clone(),
             book_service: ctx.book_service.clone(),
@@ -106,7 +110,6 @@ impl Module for OrderbookModule {
                 guard.replace(router.merge(api));
             }
         }
-        let bus = OrderbookModuleBusClient::new_from_bus(bus.new_handle()).await;
 
         Ok(OrderbookModule { bus })
     }
@@ -123,6 +126,7 @@ impl Module for OrderbookModule {
 #[derive(Clone)]
 struct RouterCtx {
     pub client: Arc<NodeApiHttpClient>,
+    pub bus: OrderbookModuleBusClient,
     pub orderbook_cn: ContractName,
     pub default_state: Orderbook,
     pub orderbook: Arc<Mutex<Orderbook>>,
@@ -488,7 +492,7 @@ async fn execute_orderbook_action(
     match &res {
         Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
             Ok(events) => {
-                tracing::info!("orderbook execute results: {:?}", events);
+                tracing::info!("Orderbook execution results: {:?}", events);
                 book_service.write_events(user, events).await?;
                 let tx_hash = ctx
                     .client
@@ -501,6 +505,18 @@ async fn execute_orderbook_action(
                             .collect(),
                     ))
                     .await?;
+
+                // Prove and send the transaction asynchronously
+                // FIXME: This is not optimal. We should have a way to send the orderbook commitment metadata without blocking the entire process here
+                let commitment_metadata = orderbook.as_bytes()?;
+
+                // Send tx to prover
+                let mut bus = ctx.bus.clone();
+                bus.send(OrderbookProverRequest::TxToProve {
+                    commitment_metadata,
+                    calldata: calldata.clone(),
+                    tx_hash: tx_hash.clone(),
+                })?;
 
                 Ok(Json(tx_hash))
             }

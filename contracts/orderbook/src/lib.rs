@@ -135,7 +135,7 @@ impl sdk::ZkContract for Orderbook {
                             price,
                             pair,
                             quantity,
-                            timestamp: tx_ctx.timestamp.clone(),
+                            timestamp: tx_ctx.timestamp.clone(), // FIXME: atm, timestamp is hardcoded and is not reliable.
                         };
                         if self.orders.contains_key(&order.order_id) {
                             return Err(format!("Order with id {} already exists", order.order_id));

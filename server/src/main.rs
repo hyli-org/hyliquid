@@ -22,6 +22,7 @@ use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
     conf::Conf,
+    prover::{OrderbookProverCtx, OrderbookProverModule},
 };
 use sp1_sdk::{Prover, ProverClient};
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -222,6 +223,12 @@ async fn main() -> Result<()> {
         book_service: book_writer_service,
     });
 
+    let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
+        node_client: node_client.clone(),
+        orderbook_cn: args.orderbook_cn.clone().into(),
+        prover: Arc::new(prover),
+    });
+
     let api_module_ctx = Arc::new(ApiModuleCtx {
         api: api_ctx.clone(),
         book_service,
@@ -233,6 +240,10 @@ async fn main() -> Result<()> {
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
         .await?;
     handler
+        .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
+        .await?;
+
+    handler
         .build_module::<ApiModule>(api_module_ctx.clone())
         .await?;
 
@@ -243,19 +254,6 @@ async fn main() -> Result<()> {
         .await?;
 
     // handler
-    //     .build_module::<AutoProver<Orderbook>>(Arc::new(AutoProverCtx {
-    //         data_directory: config.data_directory.clone(),
-    //         prover: Arc::new(prover),
-    //         contract_name: args.orderbook_cn.clone().into(),
-    //         node: node_client.clone(),
-    //         default_state,
-    //         buffer_blocks: config.buffer_blocks,
-    //         max_txs_per_proof: config.max_txs_per_proof,
-    //         tx_working_window_size: config.tx_working_window_size,
-    //         api: Some(api_ctx.clone()),
-    //     }))
-    //     .await?;
-
     // This module connects to the da_address and receives all the blocks²
     // handler
     //     .build_module::<DAListener>(DAListenerConf {

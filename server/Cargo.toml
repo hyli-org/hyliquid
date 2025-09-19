@@ -11,6 +11,7 @@ orderbook = { workspace = true, features = ["client", "sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
 client-sdk = { workspace = true, features = ["sp1", "rest"] }
 hyli-modules = { workspace = true }
+hyli-net = { workspace = true }
 # Remove features if you want reproducible builds with docker
 contracts = { workspace = true, features = ["nonreproducible"] }
 
@@ -20,7 +21,7 @@ sqlx = { workspace = true, features = [
   "migrate",
   "chrono",
   "derive",
-  "macros"
+  "macros",
 ] }
 
 sp1-sdk = { workspace = true, default-features = false, features = ["network"] }
