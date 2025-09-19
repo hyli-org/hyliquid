@@ -29,6 +29,7 @@ VALUES
 -- Deux users
 INSERT INTO users (identity)
 VALUES
+    ('txsender@orderbook'),
     ('alice'),
     ('bob');
 

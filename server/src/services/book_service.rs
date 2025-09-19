@@ -1,21 +1,38 @@
+use std::sync::Arc;
+
 use client_sdk::contract_indexer::AppError;
 use orderbook::orderbook::OrderbookEvent;
-use sdk::Identity;
+use reqwest::StatusCode;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
+use tokio::sync::RwLock;
+use tracing::info;
+
+use crate::services::asset_service::AssetService;
+use crate::services::user_service::UserService;
 
 pub struct BookWriterService {
     pool: PgPool,
+    user_service: Arc<RwLock<UserService>>,
+    asset_service: Arc<RwLock<AssetService>>,
 }
 
 impl BookWriterService {
-    pub fn new(pool: PgPool) -> Self {
-        BookWriterService { pool }
+    pub fn new(
+        pool: PgPool,
+        user_service: Arc<RwLock<UserService>>,
+        asset_service: Arc<RwLock<AssetService>>,
+    ) -> Self {
+        BookWriterService {
+            pool,
+            user_service,
+            asset_service,
+        }
     }
 
     pub async fn write_events(
         &self,
-        user: Identity,
+        user: &str,
         _events: Vec<OrderbookEvent>,
     ) -> Result<(), AppError> {
         // Transactionnaly write all events & update balances
@@ -28,24 +45,45 @@ impl BookWriterService {
                     token,
                     amount,
                 } => {
+                    if user == "orderbook" {
+                        continue;
+                    }
+                    let asset_service = self.asset_service.read().await;
+                    let asset = asset_service.get_asset(&token).await.ok_or(AppError(
+                        StatusCode::NOT_FOUND,
+                        anyhow::anyhow!("Asset not found: {}", token),
+                    ))?;
+                    let user_id = self.user_service.read().await.get_user_id(&user).await?;
+
+                    info!(
+                        "Updating balance for user {} with asset {:?} and amount {}",
+                        user, asset, amount
+                    );
+
                     sqlx::query(
                         "
-                        UPDATE 
-                            balances SET total = $1 
-                        JOIN users ON balances.user_id = users.user_id
-                        JOIN assets ON balances.asset_id = assets.asset_id
-                        WHERE 
-                            users.identity = $1
-                            AND assets.symbol = $2
+                        INSERT INTO balances (user_id, asset_id, total)
+                        VALUES ($1, $2, $3)
+                        ON CONFLICT (user_id, asset_id) DO UPDATE SET
+                            total = $3
                         ",
                     )
+                    .bind(user_id)
+                    .bind(asset.asset_id)
                     .bind(amount as i64)
-                    .bind(user)
-                    .bind(token)
                     .execute(&mut *tx)
                     .await?;
                 }
                 OrderbookEvent::OrderCreated { order } => {
+                    let user_id = self.user_service.read().await.get_user_id(&user).await?;
+                    let symbol = format!("{}/{}", order.pair.0, order.pair.1);
+                    let asset_service = self.asset_service.read().await;
+                    let instrument =
+                        asset_service.get_instrument(&symbol).await.ok_or(AppError(
+                            StatusCode::NOT_FOUND,
+                            anyhow::anyhow!("Instrument not found: {}", symbol),
+                        ))?;
+
                     sqlx::query(
                         "
                         INSERT INTO orders (
@@ -57,7 +95,7 @@ impl BookWriterService {
                             qty
                             )
                         VALUES (
-                            SELECT instrument_id FROM instruments WHERE symbol = $1, 
+                            $1, 
                             $2, 
                             $3, 
                             $4, 
@@ -66,8 +104,8 @@ impl BookWriterService {
                         )
                         ",
                     )
-                    .bind(&format!("{}/{}", order.pair.0, order.pair.1))
-                    .bind(user.0.clone())
+                    .bind(instrument.instrument_id)
+                    .bind(user_id)
                     .bind(order.order_side)
                     .bind(order.order_type)
                     .bind(order.price.map(|p| p as i64))

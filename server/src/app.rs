@@ -280,7 +280,7 @@ async fn create_order(
     };
 
     let private_input = create_permissioned_private_input(
-        user,
+        user.to_string(),
         &CreateOrderPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
             signature: auth.signature.expect("Missing signature in headers"),
@@ -310,7 +310,7 @@ async fn create_order(
         private_input,
     };
 
-    execute_orderbook_action(&calldata, &ctx).await
+    execute_orderbook_action(&user, &calldata, &ctx).await
 }
 
 async fn add_session_key(
@@ -329,7 +329,7 @@ async fn add_session_key(
             .as_blob(ctx.orderbook_cn.clone());
 
     let private_input = create_permissioned_private_input(
-        user,
+        user.to_string(),
         &AddSessionKeyPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
         },
@@ -346,7 +346,7 @@ async fn add_session_key(
         private_input,
     };
 
-    execute_orderbook_action(&calldata, &ctx).await
+    execute_orderbook_action(&user, &calldata, &ctx).await
 }
 
 async fn deposit(
@@ -381,7 +381,7 @@ async fn deposit(
         private_input,
     };
 
-    execute_orderbook_action(&calldata, &ctx).await
+    execute_orderbook_action(&user, &calldata, &ctx).await
 }
 
 async fn cancel_order(
@@ -403,7 +403,7 @@ async fn cancel_order(
         .as_blob(ctx.orderbook_cn.clone());
 
     let private_input = create_permissioned_private_input(
-        user,
+        user.to_string(),
         &CancelOrderPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
             signature: auth.signature.expect("Missing signature in headers"),
@@ -421,7 +421,7 @@ async fn cancel_order(
         private_input,
     };
 
-    execute_orderbook_action(&calldata, &ctx).await
+    execute_orderbook_action(&user, &calldata, &ctx).await
 }
 
 async fn withdraw(
@@ -450,7 +450,7 @@ async fn withdraw(
     };
 
     let private_input = create_permissioned_private_input(
-        user,
+        user.to_string(),
         &WithdrawPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
             signature: auth.signature.expect("Missing signature in headers"),
@@ -469,10 +469,11 @@ async fn withdraw(
         private_input,
     };
 
-    execute_orderbook_action( &calldata, &ctx).await
+    execute_orderbook_action(&user, &calldata, &ctx).await
 }
 
 async fn execute_orderbook_action(
+    user: &str,
     calldata: &Calldata,
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
@@ -484,7 +485,7 @@ async fn execute_orderbook_action(
         Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
             Ok(events) => {
                 tracing::info!("orderbook execute results: {:?}", events);
-                book_service.write_events(calldata.identity.clone(), events).await?;
+                book_service.write_events(user, events).await?;
                 let tx_hash = ctx
                     .client
                     .send_tx_blob(BlobTransaction::new(
