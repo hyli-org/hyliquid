@@ -1,0 +1,27 @@
+{
+  "name": "hyliquid-server-api",
+  "version": "0.1.0",
+  "description": "High-performance TypeScript backend API for Hyliquid trading platform",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "bun run --watch src/main.ts",
+    "build": "bun build src/main.ts --outdir dist --target bun",
+    "start": "bun run dist/main.js",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@types/node": "^20.0.0",
+    "bun-types": "latest",
+    "elysia": "^0.8.17",
+    "pg": "^8.11.3",
+    "postgres": "^3.4.3",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.10.9",
+    "eslint": "^8.57.0",
+    "typescript": "^5.3.3"
+  }
+}
