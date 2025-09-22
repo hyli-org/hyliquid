@@ -10,9 +10,13 @@ use client_sdk::contract_indexer::{
 };
 use serde::Serialize;
 
-use crate::{orderbook::TokenName, *};
 use client_sdk::contract_indexer::axum;
 use client_sdk::contract_indexer::utoipa;
+
+use crate::{
+    orderbook::{Order, Orderbook, TokenName},
+    smt_values::{Balance, UserInfo},
+};
 
 impl ContractHandler for Orderbook {
     async fn api(store: ContractHandlerStore<Orderbook>) -> (Router<()>, OpenApi) {
@@ -87,21 +91,49 @@ pub async fn get_orders_by_pair(
 
 /// Implementation for indexing purposes
 impl Orderbook {
-    pub fn get_state(&self) -> Self {
-        self.clone()
-    }
-
     pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, u64>> {
-        self.balances.clone()
+        // Create an inverse hashmap: key -> username
+        let mut key_to_username = BTreeMap::new();
+        for (username, salt) in self.users_info_salt.iter() {
+            let user_key = UserInfo::compute_key(username, salt);
+            key_to_username.insert(user_key, username.clone());
+        }
+
+        let mut balances = BTreeMap::new();
+        for (token, balances_mt) in self.balances.iter() {
+            let token_store = balances_mt.store();
+            let token_balances = balances.entry(token.clone()).or_insert_with(BTreeMap::new);
+            for (user_info_key, balance) in token_store.leaves_map().iter() {
+                let user_identifier = key_to_username
+                    .get(user_info_key)
+                    .cloned()
+                    .unwrap_or_else(|| hex::encode(user_info_key.as_slice()));
+                token_balances.insert(user_identifier, balance.0);
+            }
+        }
+        balances
     }
 
-    pub fn get_balance_for_account(&self, user: &str) -> BTreeMap<TokenName, u64> {
-        self.balances
-            .iter()
-            .filter_map(|(token, balances)| {
-                balances.get(user).map(|balance| (token.clone(), *balance))
-            })
-            .collect()
+    pub fn get_balance_for_account(&self, user: &str) -> Result<BTreeMap<TokenName, Balance>> {
+        // First compute the users key
+        let user_salt = self
+            .users_info_salt
+            .get(user)
+            .ok_or_else(|| anyhow!("No salt found for user '{user}'"))?;
+
+        let user_key = UserInfo::compute_key(user, user_salt);
+
+        let mut balances = BTreeMap::new();
+        for (token, balances_mt) in self.balances.iter() {
+            let token_store = balances_mt.store();
+            let user_balance = token_store
+                .leaves_map()
+                .get(&user_key)
+                .cloned()
+                .unwrap_or_default();
+            balances.insert(token.clone(), user_balance);
+        }
+        Ok(balances)
     }
 
     pub fn get_orders(&self) -> BTreeMap<String, Order> {

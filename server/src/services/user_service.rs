@@ -2,9 +2,9 @@ use client_sdk::contract_indexer::AppError;
 use reqwest::StatusCode;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
-use tracing::info;
 use std::collections::HashMap;
 use std::sync::RwLock;
+use tracing::info;
 
 pub struct UserService {
     pool: PgPool,
@@ -55,7 +55,12 @@ impl UserService {
             .bind(user)
             .fetch_one(&self.pool)
             .await
-            .map_err(|_e| AppError(StatusCode::NOT_FOUND, anyhow::anyhow!("User not found: {}", user)))?;
+            .map_err(|_e| {
+                AppError(
+                    StatusCode::NOT_FOUND,
+                    anyhow::anyhow!("User not found: {user}"),
+                )
+            })?;
 
         let user_id = row.get("user_id");
         self.user_id_map

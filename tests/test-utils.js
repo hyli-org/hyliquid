@@ -36,7 +36,7 @@ export async function runTxSenderCommand(command, args = [], identity = DEFAULT_
   
   try {
     const { stdout, stderr } = await execAsync(fullCmd, {
-      cwd: '/home/bertrand/workspace/hyliquid',
+      cwd: '..',
       timeout: 30000 // 30 second timeout
     });
     
@@ -210,9 +210,10 @@ export async function getOrdersByPair(token1, token2) {
 
 /**
  * Helper function to reset the orderbook state
+ * @param {boolean} recreatePairs - Whether to recreate trading pairs after reset (default: true)
  * @returns {Promise<boolean>} - True if reset was successful
  */
-export async function resetOrderbookState() {
+export async function resetOrderbookState(recreatePairs = true) {
   try {
     const response = await fetch(`${SERVER_URL}/temp/reset_state`, {
       method: 'GET',
@@ -227,6 +228,12 @@ export async function resetOrderbookState() {
     }
     
     console.log('🧹 Orderbook state reset successfully');
+    
+    // Recreate trading pairs after reset
+    if (recreatePairs) {
+      await setupTradingPairs();
+    }
+    
     return true;
   } catch (error) {
     console.error('Failed to reset orderbook state:', error);
@@ -291,7 +298,7 @@ export async function buildTxSender() {
   console.log('Building tx_sender binary...');
   try {
     await execAsync('cargo build --bin tx_sender', {
-      cwd: '/home/bertrand/workspace/hyliquid',
+      cwd: '..',
       timeout: 60000 // 1 minute timeout for build
     });
     console.log('Build completed successfully');
@@ -317,8 +324,55 @@ export async function addSessionKey(identity = DEFAULT_IDENTITY) {
 }
 
 /**
+ * Helper function to create a trading pair
+ * @param {string} token1 - First token in the pair
+ * @param {string} token2 - Second token in the pair
+ * @param {string} identity - The user identity to use for creating the pair
+ * @returns {Promise<boolean>} - True if pair was created successfully
+ */
+export async function createTradingPair(token1, token2, identity = DEFAULT_IDENTITY) {
+  console.log(`Creating trading pair ${token1}/${token2}...`);
+  
+  const pairResult = await runTxSenderCommand('create-pair', [
+    '--pair-token1', token1,
+    '--pair-token2', token2
+  ], identity);
+  
+  if (pairResult.success || pairResult.stderr?.includes('already exists')) {
+    console.log(`✓ Trading pair ${token1}/${token2} ready`);
+    return true;
+  } else {
+    throw new Error(`Failed to create trading pair ${token1}/${token2}: ${pairResult.error || pairResult.stderr}`);
+  }
+}
+
+/**
+ * Helper function to setup all required trading pairs
+ * @param {string} identity - The user identity to use for creating pairs
+ * @returns {Promise<void>}
+ */
+export async function setupTradingPairs(identity = DEFAULT_IDENTITY) {
+  console.log('🔧 Setting up trading pairs...');
+  
+  // Add session key first for the user who will create pairs
+  await addSessionKey(identity);
+  
+  // Create all required trading pairs
+  const pairs = [
+    [TOKENS.HYLLAR, TOKENS.ORANJ],
+    // Add more pairs here as needed
+  ];
+  
+  for (const [token1, token2] of pairs) {
+    await createTradingPair(token1, token2, identity);
+  }
+  
+  console.log('✓ All trading pairs set up successfully');
+}
+
+/**
  * Helper function to setup test environment
- * Checks server health and builds binary
+ * Checks server health, builds binary, and sets up trading pairs
  * @returns {Promise<void>}
  */
 export async function setupTestEnvironment() {
@@ -330,17 +384,20 @@ export async function setupTestEnvironment() {
 
   // Build the project
   await buildTxSender();
+  
+  // Setup required trading pairs
+  await setupTradingPairs();
 }
 
 /**
  * Helper function to cleanup test environment
- * Resets orderbook state
+ * Resets orderbook state (without recreating pairs for final cleanup)
  * @returns {Promise<void>}
  */
 export async function cleanupTestEnvironment() {
   try {
     console.log('🧹 Cleaning up: Resetting orderbook state...');
-    await resetOrderbookState();
+    await resetOrderbookState(false); // Don't recreate pairs during final cleanup
     console.log('✓ Cleanup completed successfully');
   } catch (error) {
     console.warn('⚠️ Failed to reset orderbook state during cleanup:', error.message);

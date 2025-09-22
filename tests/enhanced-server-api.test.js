@@ -65,7 +65,7 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       
       // Check nonce after session key addition
       let currentNonce = await getNonce(testUser);
-      expect(currentNonce).toBe(0); // Session key doesn't increment nonce
+      expect(currentNonce).toBe(1); // Session key DOES increment nonce
       console.log(`✓ Nonce after session key: ${currentNonce}`);
       
       // Make a deposit
@@ -75,9 +75,9 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       ], testUser);
       expect(depositResult.success).toBe(true);
       
-      // Check nonce after deposit (should still be 0 as deposit doesn't require signature)
+      // Check nonce after deposit (deposit doesn't increment nonce)
       currentNonce = await getNonce(testUser);
-      expect(currentNonce).toBe(0);
+      expect(currentNonce).toBe(1); // still 1, deposit doesn't increment nonce
       console.log(`✓ Nonce after deposit: ${currentNonce}`);
       
       // Create an order (this should increment nonce)
@@ -95,7 +95,7 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       
       // Check nonce after order creation
       currentNonce = await getNonce(testUser);
-      expect(currentNonce).toBe(1);
+      expect(currentNonce).toBe(2); // session key (1) + order (2)
       console.log(`✓ Nonce after order creation: ${currentNonce}`);
       
       // Cancel the order (this should increment nonce again)
@@ -104,9 +104,9 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       ], testUser);
       expect(cancelResult.success).toBe(true);
       
-      // Check final nonce
+            // Check final nonce
       currentNonce = await getNonce(testUser);
-      expect(currentNonce).toBe(2);
+      expect(currentNonce).toBe(3); // session key (1) + order (2) + cancel (3)
       console.log(`✓ Nonce after order cancellation: ${currentNonce}`);
     }, 60000);
   });
@@ -127,25 +127,23 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       expect(user1SessionResult.success).toBe(true);
       expect(user2SessionResult.success).toBe(true);
       
-      // Verify initial nonces
+      // Verify initial nonces (after session key addition)
       let user1Nonce = await getNonce(user1);
       let user2Nonce = await getNonce(user2);
-      expect(user1Nonce).toBe(0);
-      expect(user2Nonce).toBe(0);
+      expect(user1Nonce).toBe(1); // session key increments nonce
+      expect(user2Nonce).toBe(1); // session key increments nonce
       
-      // Both users deposit tokens
-      const user1DepositResult = await runTxSenderCommand('deposit', [
-        '--token', TOKENS.HYLLAR,
-        '--amount', '5000'
-      ], user1);
+      // Both users deposit tokens (give both users both tokens for trading)
+      const user1DepositResults = await Promise.all([
+        runTxSenderCommand('deposit', ['--token', TOKENS.HYLLAR, '--amount', '5000'], user1),
+      ]);
       
-      const user2DepositResult = await runTxSenderCommand('deposit', [
-        '--token', TOKENS.ORANJ,
-        '--amount', '10000'
-      ], user2);
+      const user2DepositResults = await Promise.all([
+        runTxSenderCommand('deposit', ['--token', TOKENS.ORANJ, '--amount', '10000'], user2)
+      ]);
       
-      expect(user1DepositResult.success).toBe(true);
-      expect(user2DepositResult.success).toBe(true);
+      expect(user1DepositResults[0].success).toBe(true);
+      expect(user2DepositResults[0].success).toBe(true);
       
       // User1 creates a sell order
       const sellOrderId = `multiuser_sell_${orderCounter++}`;
@@ -176,8 +174,8 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       // Check nonces after operations
       user1Nonce = await getNonce(user1);
       user2Nonce = await getNonce(user2);
-      expect(user1Nonce).toBe(1); // One order created
-      expect(user2Nonce).toBe(1); // One order created
+      expect(user1Nonce).toBe(2); // session key (1) + order (2)
+      expect(user2Nonce).toBe(2); // session key (1) + order (2)
       
       console.log(`✓ Multi-user nonces: ${user1}=${user1Nonce}, ${user2}=${user2Nonce}`);
       
@@ -230,8 +228,8 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       // Verify both users have independent nonce progression
       const user1FinalNonce = await getNonce(user1);
       const user2FinalNonce = await getNonce(user2);
-      expect(user1FinalNonce).toBe(1);
-      expect(user2FinalNonce).toBe(1);
+      expect(user1FinalNonce).toBe(2); // session key (1) + order (2)
+      expect(user2FinalNonce).toBe(2); // session key (1) + order (2)
       
       console.log(`✓ Concurrent operations completed - User nonces: ${user1}=${user1FinalNonce}, ${user2}=${user2FinalNonce}`);
     }, 60000);
@@ -380,12 +378,12 @@ describe('Enhanced TX Sender Integration Tests - Authentication & Nonce System',
       ], apiTestUser);
       
       const nonceAfterOrder = await getNonce(apiTestUser);
-      expect(nonceAfterOrder).toBe(1);
+      expect(nonceAfterOrder).toBe(2); // session key (1) + order (2)
       
       await runTxSenderCommand('cancel', ['--order-id', orderId], apiTestUser);
       
       const finalNonce = await getNonce(apiTestUser);
-      expect(finalNonce).toBe(2);
+      expect(finalNonce).toBe(3); // session key (1) + order (2) + cancel (3)
       
       console.log(`✓ Nonce endpoint working correctly: 0 → ${nonceAfterOrder} → ${finalNonce}`);
     });

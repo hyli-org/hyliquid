@@ -11,7 +11,7 @@ test = false
 
 [dependencies]
 anyhow = "1.0.96"
-sdk = { workspace = true, features = ["tracing"] }
+sdk = { workspace = true, features = ["tracing", "smt"] }
 serde = { version = "1.0", default-features = false, features = [
   "derive",
   "alloc",
@@ -19,6 +19,7 @@ serde = { version = "1.0", default-features = false, features = [
 borsh = { version = "1.5.7" }
 k256 = "0.13.4"
 sha2 = "0.10.8"
+sparse-merkle-tree = { version = "0.6.1", default-features = false }
 
 
 sp1-zkvm = { workspace = true, default-features = false, optional = true }
