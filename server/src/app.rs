@@ -368,6 +368,7 @@ async fn deposit(
         lane_id: ctx.lane_id.clone(),
         ..Default::default()
     };
+    // TODO: Check that the user actually has sent the funds to the contract before proceeding to deposit
 
     let orderbook_blob =
         OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::Deposit {
@@ -487,6 +488,10 @@ async fn execute_orderbook_action(
 ) -> Result<impl IntoResponse, AppError> {
     let mut orderbook = ctx.orderbook.lock().await;
     let book_service = ctx.book_service.lock().await;
+
+    // FIXME: This is not optimal. We should have a way to send the orderbook commitment metadata without blocking the entire process here
+    let commitment_metadata = orderbook.as_bytes()?;
+
     let res = orderbook.execute(calldata);
 
     match &res {
@@ -505,10 +510,6 @@ async fn execute_orderbook_action(
                             .collect(),
                     ))
                     .await?;
-
-                // Prove and send the transaction asynchronously
-                // FIXME: This is not optimal. We should have a way to send the orderbook commitment metadata without blocking the entire process here
-                let commitment_metadata = orderbook.as_bytes()?;
 
                 // Send tx to prover
                 let mut bus = ctx.bus.clone();

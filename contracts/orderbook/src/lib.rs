@@ -89,8 +89,7 @@ impl sdk::ZkContract for Orderbook {
                         self.add_session_key(user, &private_input.public_key)?
                     }
                     PermissionnedOrderbookAction::Deposit { token, amount } => {
-                        // TODO: assert there is a transfer blob for that token
-                        // TODO: create user account if
+                        // This is a permissionned action, the server is responsible for checking that a transfer blob happened
                         self.deposit(token, amount, user)?
                     }
                     PermissionnedOrderbookAction::CreateOrder {

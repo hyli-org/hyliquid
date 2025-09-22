@@ -9,9 +9,7 @@ use contracts::ORDERBOOK_ELF;
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
-        rest::{RestApi, RestApiRunContext},
-        websocket::WebSocketModule,
-        BuildApiContextInner, ModulesHandler,
+        da_listener::{DAListener, DAListenerConf}, rest::{RestApi, RestApiRunContext}, websocket::WebSocketModule, BuildApiContextInner, ModulesHandler
     },
     utils::logger::setup_tracing,
 };
@@ -218,7 +216,7 @@ async fn main() -> Result<()> {
         node_client: node_client.clone(),
         api: api_ctx.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
-        lane_id: validator_lane_id,
+        lane_id: validator_lane_id.clone(),
         default_state: default_state.clone(),
         book_service: book_writer_service,
     });
@@ -227,6 +225,7 @@ async fn main() -> Result<()> {
         node_client: node_client.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
+        lane_id: validator_lane_id,
     });
 
     let api_module_ctx = Arc::new(ApiModuleCtx {
@@ -253,16 +252,14 @@ async fn main() -> Result<()> {
         )
         .await?;
 
-    // handler
-    // This module connects to the da_address and receives all the blocks²
-    // handler
-    //     .build_module::<DAListener>(DAListenerConf {
-    //         start_block: None,
-    //         data_directory: config.data_directory.clone(),
-    //         da_read_from: config.da_read_from.clone(),
-    //         timeout_client_secs: 10,
-    //     })
-    //     .await?;
+    handler
+        .build_module::<DAListener>(DAListenerConf {
+            start_block: None,
+            data_directory: config.data_directory.clone(),
+            da_read_from: config.da_read_from.clone(),
+            timeout_client_secs: 10,
+        })
+        .await?;
 
     // Should come last so the other modules have nested their own routes.
     #[allow(clippy::expect_used, reason = "Fail on misconfiguration")]

@@ -1,8 +1,7 @@
 use anyhow::{bail, Result};
 use client_sdk::rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient};
 use sdk::{api::APIRegisterContract, info, ContractName, ProgramId, StateCommitment};
-use std::{sync::Arc, time::Duration};
-use tokio::time::timeout;
+use std::{sync::Arc};
 
 pub struct ContractInit {
     pub name: ContractName,
@@ -50,11 +49,12 @@ async fn init_contract(
                 ..Default::default()
             })
             .await?;
-            wait_contract_state(indexer, &contract.name).await?;
+            // wait_contract_state(indexer, &contract.name).await?;
         }
     }
     Ok(())
 }
+/*
 async fn wait_contract_state(
     indexer: &IndexerApiHttpClient,
     contract: &ContractName,
@@ -72,3 +72,4 @@ async fn wait_contract_state(
     })
     .await?
 }
+*/
