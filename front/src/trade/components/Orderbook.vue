@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { marketsState, orderbookState } from "../trade";
+import { instrumentsState, orderbookState } from "../trade";
 
-const midPrice = computed(() => marketsState.selected?.price ?? 0);
+const midPrice = computed(() => instrumentsState.selected?.price ?? 0);
 </script>
 
 <template>

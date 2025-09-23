@@ -1,14 +1,14 @@
 import { reactive } from "vue";
-import { fetchMarkets, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./mock_api";
+import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./mock_api";
 import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
 import { ref } from "vue";
 
-export type Side = "Long" | "Short";
+export type Side = "Bid" | "Ask";
 export type OrderType = "Market" | "Limit";
 
-export interface Market {
+export interface Instrument {
     symbol: string;
     price: number;
     change: number;
@@ -46,29 +46,29 @@ export interface Fill {
     time: string;
 }
 
-// Markets + selection
-const markets = useSWR<Market[]>(fetchMarkets);
+// Instruments
+const instruments = useSWR<Instrument[]>(fetchInstruments);
 
-export const marketsState = reactive({
+export const instrumentsState = reactive({
     search: "",
-    selected: null as Market | null,
-    list: [] as Market[],
-    fetching: markets.fetching,
-    error: markets.error,
+    selected: null as Instrument | null,
+    list: [] as Instrument[],
+    fetching: instruments.fetching,
+    error: instruments.error,
 });
 
 watchEffect(() => {
-    const v = markets.data.value;
-    marketsState.list = v ?? [];
-    if (v && !marketsState.selected) {
-        marketsState.selected = v[0] ?? null;
+    const v = instruments.data.value;
+    instrumentsState.list = v ?? [];
+    if (v && !instrumentsState.selected) {
+        instrumentsState.selected = v[0] ?? null;
     }
 });
 
 // Orderbook state via SWRV
 const orderbook = useSWR(() => {
-    if (!marketsState.selected) throw new Error("No market selected");
-    return fetchOrderbook(marketsState.selected!.symbol);
+    if (!instrumentsState.selected) throw new Error("No instrument selected");
+    return fetchOrderbook(instrumentsState.selected!.symbol);
 });
 
 export const orderbookState = reactive({
@@ -79,8 +79,8 @@ export const orderbookState = reactive({
 });
 
 watchEffect(() => {
-    // Clear the orders when changing market
-    marketsState.selected;
+    // Clear the orders when changing instrument
+    instrumentsState.selected;
     orderbookState.bids = [];
     orderbookState.asks = [];
 });
@@ -126,7 +126,7 @@ const orderFormState = {
     orderType: ref<OrderType>("Limit"),
     price: ref<number | null>(null),
     size: ref<number | null>(0.1),
-    side: ref<Side>("Long"),
+    side: ref<Side>("Bid"),
     leverage: ref(10),
     orderSubmit: ref<SWRResponse<void> | null>(null),
 };
@@ -145,7 +145,7 @@ export function useOrderFormState() {
 
 export async function submitOrder() {
     const created = placeOrder({
-        symbol: marketsState.selected!.symbol,
+        symbol: instrumentsState.selected!.symbol,
         side: orderFormState.side.value,
         size: orderFormState.size.value ?? 0,
         type: orderFormState.orderType.value,
@@ -164,14 +164,27 @@ export function placeOrder(input: {
     price: number | null;
 }): SWRResponse<void> {
     return useSWR(async () => {
-        // Mock implementation
         if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");
 
-        await fetch("/api/place_order", {
+        await fetch("http://localhost:9002/create_order", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(input),
+            headers: {
+                "Content-Type": "application/json",
+                "x-identity": "test_user",
+                "x-public-key": "1234",
+                "x-signature": "4564",
+            },
+            body: JSON.stringify({
+                order_id: "", // You may want to generate a unique ID here
+                order_side: input.side,
+                order_type: input.type,
+                pair: input.symbol.split("-"),
+                // TODO bertrand: pick decimals from API
+                price: input.price,
+                // TODO bertrand: pick decimals from API
+                quantity: Math.round(input.size * 10000000),
+            }),
         });
     });
 }

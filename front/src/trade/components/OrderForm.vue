@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { marketsState, submitOrder, useOrderFormState } from "../trade";
+import { instrumentsState, submitOrder, useOrderFormState } from "../trade";
 
-const { price, leverage, size, side, orderType, orderSubmit } = useOrderFormState();
+const { price, size, side, orderType, orderSubmit } = useOrderFormState();
 
-const baseSymbol = computed(() => (marketsState.selected ? marketsState.selected.symbol.split("-")[0] : "")!);
-
-const notional = computed(() => (size.value ?? 0) * (price.value ?? 0));
-const estInitialMargin = computed(() => (notional.value ? notional.value / leverage.value : 0));
+const baseSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.symbol.split("-")[0] : "")!);
 </script>
 
 <template>
@@ -16,24 +13,24 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / lever
             <button
                 class="w-full rounded-md px-3 py-2 text-sm"
                 :class="
-                    side === 'Long'
+                    side === 'Bid'
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-700'
                         : 'bg-neutral-900 text-neutral-300'
                 "
-                @click="() => (side = 'Long')"
+                @click="() => (side = 'Bid')"
             >
-                Long
+                Bid
             </button>
             <button
                 class="w-full rounded-md px-3 py-2 text-sm"
                 :class="
-                    side === 'Short'
+                    side === 'Ask'
                         ? 'bg-rose-500/20 text-rose-300 border border-rose-700'
                         : 'bg-neutral-900 text-neutral-300'
                 "
-                @click="() => (side = 'Short')"
+                @click="() => (side = 'Ask')"
             >
-                Short
+                Ask
             </button>
         </div>
 
@@ -79,19 +76,10 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / lever
             />
         </div>
 
-        <div class="mb-3 flex items-center justify-between text-sm text-neutral-400">
-            <span>Notional</span>
-            <span class="tabular-nums">${{ notional.toFixed(2) }}</span>
-        </div>
-        <div class="mb-4 flex items-center justify-between text-sm text-neutral-400">
-            <span>Est. Initial Margin</span>
-            <span class="tabular-nums">${{ estInitialMargin.toFixed(2) }}</span>
-        </div>
-
         <button
             class="mb-2 w-full rounded-md px-3 py-2 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
             :class="
-                side === 'Long'
+                side === 'Bid'
                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                     : 'bg-rose-600 hover:bg-rose-500 text-white'
             "
@@ -102,9 +90,6 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / lever
         </button>
         <div v-if="orderSubmit?.error" class="mb-2 text-xs text-rose-400">
             {{ orderSubmit.error }}
-        </div>
-        <div class="text-xs text-neutral-500">
-            Leverage: <span class="tabular-nums">{{ leverage }}x</span>
         </div>
     </section>
 </template>

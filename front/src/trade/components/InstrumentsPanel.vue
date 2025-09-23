@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { marketsState } from "../trade";
+import { instrumentsState } from "../trade";
 
-const filteredMarkets = computed(() => {
-    const q = marketsState.search.trim().toLowerCase();
-    const list = marketsState.list ?? [];
+const filteredInstruments = computed(() => {
+    const q = instrumentsState.search.trim().toLowerCase();
+    const list = instrumentsState.list ?? [];
     if (!q) return list;
     return list.filter((m) => m.symbol.toLowerCase().includes(q));
 });
@@ -14,23 +14,25 @@ const filteredMarkets = computed(() => {
     <aside class="w-64 shrink-0 border-r border-neutral-800 bg-neutral-950">
         <div class="p-3 border-b border-neutral-800">
             <input
-                :value="marketsState.search"
-                @input="(e: any) => (marketsState.search = e.target.value)"
+                :value="instrumentsState.search"
+                @input="(e: any) => (instrumentsState.search = e.target.value)"
                 class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm placeholder-neutral-500 outline-none focus:ring-1 focus:ring-neutral-700"
-                placeholder="Search markets"
+                placeholder="Search instruments"
             />
         </div>
         <div class="overflow-auto h-full">
-            <div v-if="marketsState.fetching" class="px-3 py-2 text-xs text-neutral-400">Loading markets…</div>
-            <div v-else-if="marketsState.error" class="px-3 py-2 text-xs text-rose-400">{{ marketsState.error }}</div>
+            <div v-if="instrumentsState.fetching" class="px-3 py-2 text-xs text-neutral-400">Loading instruments…</div>
+            <div v-else-if="instrumentsState.error" class="px-3 py-2 text-xs text-rose-400">
+                {{ instrumentsState.error }}
+            </div>
             <ul>
                 <li
-                    v-for="m in filteredMarkets"
+                    v-for="m in filteredInstruments"
                     :key="m.symbol"
-                    @click="() => (marketsState.selected = m)"
+                    @click="() => (instrumentsState.selected = m)"
                     :class="[
                         'cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-neutral-900',
-                        marketsState.selected?.symbol === m.symbol ? 'bg-neutral-900' : '',
+                        instrumentsState.selected?.symbol === m.symbol ? 'bg-neutral-900' : '',
                     ]"
                 >
                     <div>

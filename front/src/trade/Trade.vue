@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import MarketsPanel from "./components/MarketsPanel.vue";
+import InstrumentsPanel from "./components/InstrumentsPanel.vue";
 import TopBar from "./components/TopBar.vue";
 import ChartPlaceholder from "./components/ChartPlaceholder.vue";
 import OrderbookComp from "./components/Orderbook.vue";
@@ -8,15 +8,15 @@ import BottomTabs from "./components/BottomTabs.vue";
 import PositionsTable from "./components/PositionsTable.vue";
 import OrdersTable from "./components/OrdersTable.vue";
 import FillsTable from "./components/FillsTable.vue";
-import { activityState, marketsState, orderbookState } from "./trade";
+import { activityState, instrumentsState } from "./trade";
 </script>
 
 <template>
     <div class="flex h-screen w-full overflow-hidden">
-        <MarketsPanel />
+        <InstrumentsPanel />
 
         <main class="flex min-w-0 grow flex-col bg-neutral-950">
-            <TopBar v-if="marketsState.selected" />
+            <TopBar v-if="instrumentsState.selected" />
 
             <div class="grid grow grid-cols-12 overflow-hidden">
                 <section class="col-span-8 border-r border-neutral-800">
