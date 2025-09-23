@@ -516,9 +516,10 @@ mod orderbook_tests {
         assert!(events.iter().any(|event| matches!(event,
             OrderbookEvent::OrderUpdate {
                 order_id,
+                taker_order_id,
                 remaining_quantity,
                 pair: _
-            } if order_id == "sell1" && *remaining_quantity == 1
+            } if order_id == "sell1" && *remaining_quantity == 1 && taker_order_id == "buy1"
         )));
 
         // Check balance updates
@@ -593,9 +594,10 @@ mod orderbook_tests {
         assert!(events.iter().any(|event| matches!(event,
             OrderbookEvent::OrderUpdate {
                 order_id,
+                taker_order_id,
                 remaining_quantity,
                 pair: _
-            } if order_id == "sell1" && *remaining_quantity == 1
+            } if order_id == "sell1" && *remaining_quantity == 1 && taker_order_id == "buy1"
         )));
 
         // Check balance updates
@@ -671,9 +673,11 @@ mod orderbook_tests {
             .iter()
             .any(|event| matches!(event, OrderbookEvent::OrderUpdate {
             order_id,
+            taker_order_id,
             remaining_quantity,
             pair: _
-        } if order_id == "buy1" && *remaining_quantity == 1)));
+        } if order_id == "buy1" && *remaining_quantity == 1 && taker_order_id == "sell1"
+        )));
 
         // Check balance updates
         let balance_updated_count = events
@@ -872,9 +876,11 @@ mod orderbook_tests {
             .iter()
             .any(|event| matches!(event, OrderbookEvent::OrderUpdate {
             order_id,
+            taker_order_id,
             remaining_quantity,
             pair: _
-        } if order_id == "sell1" && *remaining_quantity == 1)));
+        } if order_id == "sell1" && *remaining_quantity == 1 && taker_order_id == "buy1"
+        )));
 
         // Check balance updates
         let balance_updated_count = events

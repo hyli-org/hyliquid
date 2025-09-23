@@ -80,6 +80,12 @@ CREATE TYPE order_side AS ENUM (
     'ask' -- sell
 );
 
+-- helper to get the other side
+CREATE OR REPLACE FUNCTION get_other_side(p_side order_side) RETURNS order_side
+LANGUAGE sql AS $$
+SELECT CASE WHEN p_side = 'bid' THEN 'ask'::order_side ELSE 'bid'::order_side END;
+$$;
+
 CREATE TYPE order_type AS ENUM (
     'limit',
     'market',
@@ -141,15 +147,16 @@ CREATE TABLE order_events (
 -- PARTITION BY RANGE (event_time)
 ;
 
--- CREATE TABLE trades (
---     trade_id BIGSERIAL,
---     instrument_id bigint NOT NULL,
---     taker_order_id bigint NOT NULL,
---     maker_order_id bigint NOT NULL,
---     price bigint NOT NULL,
---     qty bigint NOT NULL,
---     trade_time timestamptz NOT NULL DEFAULT now(),
---     side order_side NOT NULL, -- côté du taker
---     PRIMARY KEY (instrument_id, trade_time, trade_id)
--- )
--- PARTITION BY RANGE (trade_time);
+CREATE TABLE trades (
+    trade_id BIGSERIAL,
+    instrument_id bigint NOT NULL,
+    taker_user_signed_id text NOT NULL, -- taker orders are not necessarily stored in the orders table as they can be instantly fullfilled
+    maker_order_id bigserial NOT NULL, -- maker orders are always stored in the orders table
+    price bigint NOT NULL,
+    qty bigint NOT NULL,
+    trade_time timestamptz NOT NULL DEFAULT now(),
+    side order_side NOT NULL, -- côté du taker
+    PRIMARY KEY (instrument_id, trade_time, trade_id)
+)
+-- PARTITION BY RANGE (trade_time)
+;

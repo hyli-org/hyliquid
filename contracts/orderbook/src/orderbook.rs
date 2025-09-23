@@ -85,10 +85,12 @@ pub enum OrderbookEvent {
     },
     OrderExecuted {
         order_id: OrderId,
+        taker_order_id: OrderId,
         pair: TokenPair,
     },
     OrderUpdate {
         order_id: OrderId,
+        taker_order_id: OrderId,
         remaining_quantity: u32,
         pair: TokenPair,
     },
@@ -356,6 +358,7 @@ impl Orderbook {
 
                             events.push(OrderbookEvent::OrderUpdate {
                                 order_id: existing_order.order_id.clone(),
+                                taker_order_id: order.order_id.clone(),
                                 remaining_quantity: existing_order.quantity,
                                 pair: order.pair.clone(),
                             });
@@ -380,10 +383,12 @@ impl Orderbook {
                             // The two orders are executed
                             events.push(OrderbookEvent::OrderExecuted {
                                 order_id: order_id.clone(),
+                                taker_order_id: order.order_id.clone(),
                                 pair: order.pair.clone(),
                             });
                             events.push(OrderbookEvent::OrderExecuted {
                                 order_id: order.order_id.clone(),
+                                taker_order_id: order_id.clone(),
                                 pair: order.pair.clone(),
                             });
 
@@ -410,6 +415,7 @@ impl Orderbook {
                             // The existing order is fully filled
                             events.push(OrderbookEvent::OrderExecuted {
                                 order_id: existing_order.order_id.clone(),
+                                taker_order_id: order.order_id.clone(),
                                 pair: order.pair.clone(),
                             });
                             transfers_to_process.push((
@@ -506,6 +512,7 @@ impl Orderbook {
 
                             events.push(OrderbookEvent::OrderUpdate {
                                 order_id: existing_order.order_id.clone(),
+                                taker_order_id: order.order_id.clone(),
                                 remaining_quantity: existing_order.quantity,
                                 pair: order.pair.clone(),
                             });
@@ -530,6 +537,7 @@ impl Orderbook {
                             // The existing order fully covers this order
                             events.push(OrderbookEvent::OrderExecuted {
                                 order_id: existing_order.order_id.clone(),
+                                taker_order_id: order.order_id.clone(),
                                 pair: order.pair.clone(),
                             });
                             // Send token to the order owner
@@ -553,6 +561,7 @@ impl Orderbook {
                             // The existing order is fully filled
                             events.push(OrderbookEvent::OrderExecuted {
                                 order_id: existing_order.order_id.clone(),
+                                taker_order_id: order.order_id.clone(),
                                 pair: order.pair.clone(),
                             });
                             transfers_to_process.push((
