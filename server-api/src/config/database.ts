@@ -102,17 +102,50 @@ export class DatabaseQueries {
       WHERE 
         balances.user_id = $1
     `, [userId]);
-    return result.rows;
+    return result.rows.map(row => ({
+      symbol: row.symbol,
+      total: parseInt(row.total, 10),
+      reserved: parseInt(row.reserved, 10),
+      available: parseInt(row.available, 10)
+    }));
   }
 
   async getUserOrders(userId: number): Promise<Array<Order>> {
     const result = await this.pool.query('SELECT * FROM orders WHERE user_id = $1', [userId]);
-    return result.rows;
+    return result.rows.map(row => ({
+      order_id: row.order_id,
+      order_signed_id: row.order_signed_id,
+      instrument_id: row.instrument_id,
+      user_id: row.user_id,
+      side: row.side,
+      type: row.type,
+      price: parseInt(row.price, 10),
+      qty: parseInt(row.qty, 10),
+      qty_filled: parseInt(row.qty_filled, 10),
+      qty_remaining: parseInt(row.qty_remaining, 10),
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
   }
 
   async getUserOrdersByPair(userId: number, instrumentId: number): Promise<Array<Order>> {
     const result = await this.pool.query('SELECT * FROM orders WHERE user_id = $1 AND instrument_id = $2', [userId, instrumentId]);
-    return result.rows;
+    return result.rows.map(row => ({
+      order_id: row.order_id,
+      order_signed_id: row.order_signed_id,
+      instrument_id: row.instrument_id,
+      user_id: row.user_id,
+      side: row.side,
+      type: row.type,
+      price: parseInt(row.price, 10),
+      qty: parseInt(row.qty, 10),
+      qty_filled: parseInt(row.qty_filled, 10),
+      qty_remaining: parseInt(row.qty_remaining, 10),
+      status: row.status,
+      created_at: row.created_at,
+      updated_at: row.updated_at
+    }));
   }
 
   async getOrderbook(symbol: string, levels: number, groupTicks: number): Promise<Array<{
@@ -124,7 +157,13 @@ export class DatabaseQueries {
       'SELECT * FROM get_orderbook_grouped_by_ticks($1, $2, $3)',
       [symbol, levels, groupTicks]
     );
-    return result.rows;
+    
+    // Convert string values to numbers since PostgreSQL returns bigint as strings
+    return result.rows.map(row => ({
+      side: row.side,
+      price: parseInt(row.price, 10),
+      qty: parseInt(row.qty, 10)
+    }));
   }
 
   async getUserTrades(userId: number): Promise<Array<Trade>> {
@@ -136,7 +175,14 @@ export class DatabaseQueries {
       taker_order_signed_id IN(select order_signed_id from ids)
       OR maker_order_signed_id IN(select order_signed_id from ids);
     `, [userId]);
-    return result.rows;
+    return result.rows.map(row => ({
+      trade_id: row.trade_id,
+      instrument_id: row.instrument_id,
+      price: parseInt(row.price, 10),
+      qty: parseInt(row.qty, 10),
+      trade_time: row.trade_time,
+      side: row.side
+    }));
   }
 
   async getUserTradesByPair(userId: number, instrumentId: number): Promise<Array<Trade>> {
@@ -149,7 +195,14 @@ export class DatabaseQueries {
       OR maker_order_signed_id IN(select order_signed_id from ids)
       AND instrument_id = $2;
     `, [userId, instrumentId]);
-    return result.rows;
+    return result.rows.map(row => ({
+      trade_id: row.trade_id,
+      instrument_id: row.instrument_id,
+      price: parseInt(row.price, 10),
+      qty: parseInt(row.qty, 10),
+      trade_time: row.trade_time,
+      side: row.side
+    }));
   }
 
   async healthCheck(): Promise<boolean> {

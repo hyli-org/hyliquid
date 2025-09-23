@@ -1,5 +1,5 @@
 import { reactive } from "vue";
-import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./mock_api";
+import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./api";
 import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
@@ -7,6 +7,7 @@ import { ref } from "vue";
 
 export type Side = "Bid" | "Ask";
 export type OrderType = "Market" | "Limit";
+export type OrderStatus = "Open" | "Filled" | "Cancelled" | "Rejected";
 
 export interface Instrument {
     symbol: string;
@@ -32,11 +33,15 @@ export interface PerpPosition {
 export interface Order {
     symbol: string;
     side: Side;
-    size: number;
     type: OrderType;
-    price: number;
-    status: string;
-}
+    price: number | null;
+    qty: number;
+    qty_filled: number;
+    qty_remaining: number;
+    status: OrderStatus;
+    created_at: Date;
+    updated_at: Date;
+  }
 
 export interface Fill {
     symbol: string;
@@ -74,6 +79,7 @@ const orderbook = useSWR(() => {
 export const orderbookState = reactive({
     bids: [] as OrderbookEntry[],
     asks: [] as OrderbookEntry[],
+    mid: 0,
     fetching: orderbook.fetching,
     error: orderbook.error,
 });
@@ -90,6 +96,7 @@ watchEffect(() => {
     if (v) {
         orderbookState.bids = v.bids;
         orderbookState.asks = v.asks;
+        orderbookState.mid = v.mid;
     }
 });
 

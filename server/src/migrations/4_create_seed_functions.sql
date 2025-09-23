@@ -83,7 +83,7 @@ BEGIN
     SELECT
       g.ord_instrument_id,
       g.ord_user_id,
-      g.ord_user_signed_id,
+      g.ord_signed_id,
       g.ord_side,
       g.ord_type,
       g.ord_price,
@@ -100,7 +100,7 @@ BEGIN
     SELECT
       s.ord_instrument_id,
       s.ord_user_id,
-      s.ord_user_signed_id,
+      s.ord_signed_id,
       s.ord_side,
       s.ord_type,
       s.ord_price,
@@ -117,7 +117,7 @@ BEGIN
     SELECT
       l.ord_instrument_id,
       l.ord_user_id,
-      l.ord_user_signed_id,
+      l.ord_signed_id,
       l.ord_side,
       l.ord_type,
       l.ord_price,
@@ -142,12 +142,12 @@ BEGIN
   ),
   ins_orders AS (
     INSERT INTO orders(
-      instrument_id, user_id, order_user_signed_id, side, type, price, qty, qty_filled, status
+      instrument_id, user_id, order_signed_id, side, type, price, qty, qty_filled, status
     )
     SELECT
       wf.ord_instrument_id,
       wf.ord_user_id,
-      wf.ord_user_signed_id,
+      wf.ord_signed_id,
       wf.ord_side,
       wf.ord_type,
       wf.ord_price,

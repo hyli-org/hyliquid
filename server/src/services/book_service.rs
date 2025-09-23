@@ -159,7 +159,7 @@ impl BookWriterService {
                     log_error!(
                         sqlx::query(
                             "
-                        UPDATE orders SET status = 'cancelled' WHERE order_user_signed_id = $1
+                        UPDATE orders SET status = 'cancelled' WHERE order_signed_id = $1
                         ",
                         )
                         .bind(order_id)
@@ -277,7 +277,7 @@ impl BookWriterService {
                                 SELECT * FROM orders WHERE order_signed_id = $1
                             )
                             INSERT INTO trades (maker_order_signed_id, taker_order_signed_id, instrument_id, price, qty, side)
-                            SELECT $1, $2, $3, maker_order.price, $4 - maker_order.qty, get_other_side(maker_order.side)
+                            SELECT $1, $2, $3, maker_order.price, maker_order.qty - $4, get_other_side(maker_order.side)
                             FROM maker_order
                             "
                         )
@@ -293,7 +293,7 @@ impl BookWriterService {
                     log_error!(
                         sqlx::query(
                             "
-                        UPDATE orders SET qty_filled = qty - $1 WHERE order_user_signed_id = $2
+                        UPDATE orders SET qty_filled = qty - $1 WHERE order_signed_id = $2
                         ",
                         )
                         .bind(remaining_quantity as i64)

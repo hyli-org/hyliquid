@@ -2,7 +2,7 @@
 import { computed } from "vue";
 import { instrumentsState, orderbookState } from "../trade";
 
-const midPrice = computed(() => instrumentsState.selected?.price ?? 0);
+const midPrice = computed(() => orderbookState.mid);
 </script>
 
 <template>
