@@ -1,4 +1,4 @@
-import type { Fill, Market, Order, OrderType, Position, Side } from "./trade";
+import type { Fill, Market, Order, OrderType, PerpPosition, Side } from "./trade";
 
 function delay(ms: number) {
     return new Promise((res) => setTimeout(res, ms));
@@ -41,7 +41,7 @@ export async function fetchOrderbook(symbol: string) {
     };
 }
 
-export async function fetchPositions(): Promise<Position[]> {
+export async function fetchPositions(): Promise<PerpPosition[]> {
     await delay(200 + Math.random() * 200);
     maybeFail(0.06);
     return [

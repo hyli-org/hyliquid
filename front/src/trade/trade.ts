@@ -1,8 +1,9 @@
 import { reactive } from "vue";
 import { fetchMarkets, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./mock_api";
-import { useApi, useSWR } from "../api_call";
+import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
+import { ref } from "vue";
 
 export type Side = "Long" | "Short";
 export type OrderType = "Market" | "Limit";
@@ -19,7 +20,7 @@ export interface OrderbookEntry {
     quantity: number;
 }
 
-export interface Position {
+export interface PerpPosition {
     symbol: string;
     side: Side;
     size: number;
@@ -65,13 +66,23 @@ watchEffect(() => {
 });
 
 // Orderbook state via SWRV
-const orderbook = useSWR(() => fetchOrderbook(marketsState.selected!.symbol));
+const orderbook = useSWR(() => {
+    if (!marketsState.selected) throw new Error("No market selected");
+    return fetchOrderbook(marketsState.selected!.symbol);
+});
 
 export const orderbookState = reactive({
     bids: [] as OrderbookEntry[],
     asks: [] as OrderbookEntry[],
     fetching: orderbook.fetching,
-    error: null as string | null,
+    error: orderbook.error,
+});
+
+watchEffect(() => {
+    // Clear the orders when changing market
+    marketsState.selected;
+    orderbookState.bids = [];
+    orderbookState.asks = [];
 });
 
 watchEffect(() => {
@@ -79,20 +90,16 @@ watchEffect(() => {
     if (v) {
         orderbookState.bids = v.bids;
         orderbookState.asks = v.asks;
-        if (marketsState.selected) {
-            marketsState.selected = { ...marketsState.selected, price: v.mid };
-            if (orderFormState.price == null) orderFormState.price = v.mid;
-        }
     }
 });
 
 // Activity state via SWRV
-const swPositions = useSWR<Position[]>(fetchPositions);
+const swPositions = useSWR<PerpPosition[]>(fetchPositions);
 const swOrders = useSWR<Order[]>(fetchOrders);
 const swFills = useSWR<Fill[]>(fetchFills);
 
 export const activityState = reactive({
-    positions: [] as Position[],
+    positions: [] as PerpPosition[],
     orders: [] as Order[],
     fills: [] as Fill[],
     bottomTab: "Positions" as "Positions" | "Orders" | "Fills",
@@ -115,28 +122,36 @@ watchEffect(() => {
 });
 
 // Order form state
-export const orderFormState = reactive({
-    orderType: "Limit" as OrderType,
-    price: null as number | null,
-    size: 0.1 as number | null,
+const orderFormState = {
+    orderType: ref<OrderType>("Limit"),
+    price: ref<number | null>(null),
+    size: ref<number | null>(0.1),
+    side: ref<Side>("Long"),
+    leverage: ref(10),
+    orderSubmit: ref<SWRResponse<void> | null>(null),
+};
 
-    // Extra stuff for synthetics
-    side: "Long" as Side,
-    leverage: 10,
-
-    // API call state
-    orderSubmit: null as SWRResponse<void> | null,
-});
+// Composable for order form state
+export function useOrderFormState() {
+    return {
+        orderType: orderFormState.orderType,
+        price: orderFormState.price,
+        size: orderFormState.size,
+        side: orderFormState.side,
+        leverage: orderFormState.leverage,
+        orderSubmit: orderFormState.orderSubmit,
+    };
+}
 
 export async function submitOrder() {
     const created = placeOrder({
         symbol: marketsState.selected!.symbol,
-        side: orderFormState.side,
-        size: orderFormState.size ?? 0,
-        type: orderFormState.orderType,
-        price: orderFormState.price,
+        side: orderFormState.side.value,
+        size: orderFormState.size.value ?? 0,
+        type: orderFormState.orderType.value,
+        price: orderFormState.price.value,
     });
-    orderFormState.orderSubmit = created;
+    orderFormState.orderSubmit.value = created;
     // TODO: should we do this?
     // activityState.orders.unshift(created);
 }
