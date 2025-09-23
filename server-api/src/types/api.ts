@@ -2,7 +2,7 @@
  * API request and response types
  */
 
-import { Order } from "./database";
+import { Order } from "./orderbook";
 
 export interface ConfigResponse {
   contract_name: string;

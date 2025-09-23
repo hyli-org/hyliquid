@@ -2,6 +2,6 @@
  * Type definitions index
  */
 
-export * from './database';
+export * from './orderbook';
 export * from './api';
 export * from './websocket';
