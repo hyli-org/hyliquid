@@ -10,7 +10,7 @@ import { CustomError } from '../middleware/error-handler';
 export const userRoutes = (userService: UserService, assetService: AssetService) => {
   return new Elysia({ name: 'user' })
     .use(authMiddleware())
-    .get('/api/balances', async ({ auth }: { auth: AuthHeaders }) => {
+    .get('/api/user/balances', async ({ auth }: { auth: AuthHeaders }) => {
       try {
         const balances = await userService.getBalances(auth.user);
         return balances;
