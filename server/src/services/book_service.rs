@@ -104,9 +104,20 @@ impl BookWriterService {
 
                     log_error!(
                         sqlx::query(
+                            "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                        )
+                        .bind(order.order_id.clone())
+                        .bind(user_id)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to create order signed id"
+                    )?;
+
+                    log_error!(
+                        sqlx::query(
                             "
                         INSERT INTO orders (
-                            order_user_signed_id,
+                            order_signed_id,
                             instrument_id, 
                             user_id, 
                             side, 
@@ -167,6 +178,7 @@ impl BookWriterService {
                         user, order_id, taker_order_id, pair
                     );
 
+                    let user_id = self.user_service.read().await.get_user_id(&user).await?;
                     let asset_service = self.asset_service.read().await;
                     let instrument = asset_service
                         .get_instrument(&format!("{}/{}", pair.0, pair.1))
@@ -184,7 +196,7 @@ impl BookWriterService {
                     log_error!(
                         sqlx::query(
                             "
-                        UPDATE orders SET status = 'filled' WHERE order_user_signed_id = $1
+                        UPDATE orders SET status = 'filled', qty_filled = qty WHERE order_signed_id = $1
                         ",
                         )
                         .bind(order_id.clone())
@@ -195,12 +207,23 @@ impl BookWriterService {
 
                     log_error!(
                         sqlx::query(
+                            "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                        )
+                        .bind(taker_order_id.clone())
+                        .bind(user_id)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to create order signed id"
+                    )?;
+
+                    log_error!(
+                        sqlx::query(
                             "
                             WITH maker_order AS (
-                                SELECT * FROM orders WHERE order_user_signed_id = $1
+                                SELECT * FROM orders WHERE order_signed_id = $1
                             )
-                            INSERT INTO trades (maker_order_id, taker_user_signed_id, instrument_id, price, qty, side)
-                            SELECT maker_order.order_id, $2, $3, maker_order.price, maker_order.qty, get_other_side(maker_order.side)
+                            INSERT INTO trades (maker_order_signed_id, taker_order_signed_id, instrument_id, price, qty, side)
+                            SELECT $1, $2, $3, maker_order.price, maker_order.qty, get_other_side(maker_order.side)
                             FROM maker_order
                             "
                         )
@@ -223,6 +246,7 @@ impl BookWriterService {
                         user, order_id, taker_order_id, pair
                     );
 
+                    let user_id = self.user_service.read().await.get_user_id(&user).await?;
                     let asset_service = self.asset_service.read().await;
                     let instrument = asset_service
                         .get_instrument(&format!("{}/{}", pair.0, pair.1))
@@ -234,15 +258,26 @@ impl BookWriterService {
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
+                    log_error!(
+                        sqlx::query(
+                            "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                        )
+                        .bind(taker_order_id.clone())
+                        .bind(user_id)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to create order signed id"
+                    )?;
+
                     // The trade insert query must be done before the order update query to be able to compute the executed quantity
                     log_error!(
                         sqlx::query(
                             "
                             WITH maker_order AS (
-                                SELECT * FROM orders WHERE order_user_signed_id = $1
+                                SELECT * FROM orders WHERE order_signed_id = $1
                             )
-                            INSERT INTO trades (maker_order_id, taker_user_signed_id, instrument_id, price, qty, side)
-                            SELECT maker_order.order_id, $2, $3, maker_order.price, $4 - maker_order.qty, get_other_side(maker_order.side)
+                            INSERT INTO trades (maker_order_signed_id, taker_order_signed_id, instrument_id, price, qty, side)
+                            SELECT $1, $2, $3, maker_order.price, $4 - maker_order.qty, get_other_side(maker_order.side)
                             FROM maker_order
                             "
                         )

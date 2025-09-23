@@ -3,7 +3,7 @@
  */
 
 import { Pool, PoolConfig } from 'pg';
-import { Asset, Instrument, Order } from '../types';
+import { Asset, Instrument, Order, Trade } from '../types';
 
 export class DatabaseConfig {
   private static instance: DatabaseConfig;
@@ -124,6 +124,31 @@ export class DatabaseQueries {
       'SELECT * FROM get_orderbook_grouped_by_ticks($1, $2, $3)',
       [symbol, levels, groupTicks]
     );
+    return result.rows;
+  }
+
+  async getUserTrades(userId: number): Promise<Array<Trade>> {
+    const result = await this.pool.query(`
+      WITH ids AS(
+          SELECT order_signed_id FROM order_signed_ids WHERE user_id = $1
+      )
+      SELECT trade_id, instrument_id, price, qty, trade_time, side FROM trades WHERE 
+      taker_order_signed_id IN(select order_signed_id from ids)
+      OR maker_order_signed_id IN(select order_signed_id from ids);
+    `, [userId]);
+    return result.rows;
+  }
+
+  async getUserTradesByPair(userId: number, instrumentId: number): Promise<Array<Trade>> {
+    const result = await this.pool.query(`
+      WITH ids AS(
+          SELECT order_signed_id FROM order_signed_ids WHERE user_id = $1
+      )
+      SELECT trade_id, instrument_id, price, qty, trade_time, side FROM trades WHERE 
+      taker_order_signed_id IN(select order_signed_id from ids)
+      OR maker_order_signed_id IN(select order_signed_id from ids)
+      AND instrument_id = $2;
+    `, [userId, instrumentId]);
     return result.rows;
   }
 

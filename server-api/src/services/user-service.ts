@@ -2,7 +2,7 @@
  * User service with in-memory caching
  */
 
-import { UserBalances, BalanceResponse, UserOrders } from '../types';
+import { UserBalances, BalanceResponse, UserOrders, UserTrades } from '../types';
 import { DatabaseQueries } from '../config/database';
 
 export class UserService {
@@ -83,6 +83,24 @@ export class UserService {
     const userId = await this.getUserId(user);
     const orders = await this.queries.getUserOrdersByPair(userId, instrumentId);
     return { orders };
+  }
+
+  /**
+   * Get user trades
+   */
+  async getTrades(user: string): Promise<UserTrades> {
+    const userId = await this.getUserId(user);
+    const trades = await this.queries.getUserTrades(userId);
+    return { trades };
+  }
+
+  /**
+   * Get user trades by pair
+   */
+  async getTradesByPair(user: string, instrumentId: number): Promise<UserTrades> {
+    const userId = await this.getUserId(user);
+    const trades = await this.queries.getUserTradesByPair(userId, instrumentId);
+    return { trades };
   }
 
   /**

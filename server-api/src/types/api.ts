@@ -2,7 +2,7 @@
  * API request and response types
  */
 
-import { Order } from "./orderbook";
+import { Order, Trade } from "./orderbook";
 
 export interface ConfigResponse {
   contract_name: string;
@@ -21,6 +21,10 @@ export interface UserBalances {
 
 export interface UserOrders {
   orders: Order[];
+}
+
+export interface UserTrades {
+  trades: Trade[];
 }
 
 export interface GetBookQuery {

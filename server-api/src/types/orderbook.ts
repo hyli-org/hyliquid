@@ -55,6 +55,15 @@ export interface Order {
   updated_at: Date;
 }
 
+export interface Trade {
+  trade_id: number;
+  instrument_id: number;
+  price: number;
+  qty: number;
+  trade_time: Date;
+  side: OrderSide;
+}
+
 // Enums
 export enum MarketStatus {
   ACTIVE = 'active',

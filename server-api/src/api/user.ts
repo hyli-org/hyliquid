@@ -34,5 +34,18 @@ export const userRoutes = (userService: UserService, assetService: AssetService)
       const orders = await userService.getOrdersByPair(auth.user, instrumentId);
       return orders;
     })
+    .get('/api/user/trades', async ({ auth }: { auth: AuthHeaders }) => {
+      const trades = await userService.getTrades(auth.user);
+      return trades;
+    })
+    .get('/api/user/trades/:baseAssetSymbol/:quoteAssetSymbol', async ({ auth, params }: { auth: AuthHeaders, params: { baseAssetSymbol: string, quoteAssetSymbol: string } }) => {
+      const symbol = assetService.getInstrumentSymbol(params.baseAssetSymbol, params.quoteAssetSymbol);
+      const instrumentId = assetService.getInstrumentId(symbol);
+      if (!instrumentId) {
+        throw new CustomError(`Instrument not found: ${symbol}`, 404);
+      }
+      const trades = await userService.getTradesByPair(auth.user, instrumentId);
+      return trades;
+    })
     ;
 };

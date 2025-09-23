@@ -101,11 +101,17 @@ CREATE TYPE order_status AS ENUM (
     'rejected'
 );
 
+CREATE TABLE order_signed_ids (
+    order_signed_id text PRIMARY KEY,
+    user_id bigserial NOT NULL REFERENCES users (user_id),
+    created_at timestamptz NOT NULL DEFAULT now()
+);
+
 CREATE TABLE orders (
     order_id bigserial PRIMARY KEY,
-    order_user_signed_id text NOT NULL,
-    instrument_id bigserial NOT NULL REFERENCES instruments (instrument_id),
+    order_signed_id text NOT NULL REFERENCES order_signed_ids (order_signed_id),
     user_id bigserial NOT NULL REFERENCES users (user_id),
+    instrument_id bigserial NOT NULL REFERENCES instruments (instrument_id),
     side order_side NOT NULL,
     type order_type NOT NULL,
     price bigint, -- fixed-point (nullable for market)
@@ -149,14 +155,14 @@ CREATE TABLE order_events (
 
 CREATE TABLE trades (
     trade_id BIGSERIAL,
-    instrument_id bigint NOT NULL,
-    taker_user_signed_id text NOT NULL, -- taker orders are not necessarily stored in the orders table as they can be instantly fullfilled
-    maker_order_id bigserial NOT NULL, -- maker orders are always stored in the orders table
+    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
+    taker_order_signed_id text NOT NULL REFERENCES order_signed_ids (order_signed_id),
+    maker_order_signed_id text NOT NULL REFERENCES order_signed_ids (order_signed_id),
     price bigint NOT NULL,
     qty bigint NOT NULL,
     trade_time timestamptz NOT NULL DEFAULT now(),
     side order_side NOT NULL, -- côté du taker
-    PRIMARY KEY (instrument_id, trade_time, trade_id)
+    PRIMARY KEY (instrument_id, taker_order_signed_id, maker_order_signed_id)
 )
 -- PARTITION BY RANGE (trade_time)
 ;
