@@ -8,8 +8,7 @@ import BottomTabs from "./components/BottomTabs.vue";
 import PositionsTable from "./components/PositionsTable.vue";
 import OrdersTable from "./components/OrdersTable.vue";
 import FillsTable from "./components/FillsTable.vue";
-import { activityState, marketsState, orderFormState, orderbookState, type Market } from "./trade";
-import { placeOrder } from "./api";
+import { activityState, marketsState, orderFormState, orderbookState, placeOrder, type Market } from "./trade";
 import { computed } from "vue";
 
 const filteredMarkets = computed(() => {
@@ -28,22 +27,13 @@ function selectMarket(m: Market) {
 }
 
 async function submitOrder() {
-    orderFormState.submitError = null;
-    orderFormState.submitting = true;
-    try {
-        const created = await placeOrder({
-            symbol: marketsState.selected!.symbol,
-            side: orderFormState.side,
-            size: orderFormState.size ?? 0,
-            type: orderFormState.orderType,
-            price: orderFormState.price,
-        });
-        activityState.orders.unshift(created);
-    } catch (e: any) {
-        orderFormState.submitError = String(e?.message ?? e);
-    } finally {
-        orderFormState.submitting = false;
-    }
+    await placeOrder({
+        symbol: marketsState.selected!.symbol,
+        side: orderFormState.side,
+        size: orderFormState.size ?? 0,
+        type: orderFormState.orderType,
+        price: orderFormState.price,
+    });
 }
 </script>
 
@@ -113,21 +103,7 @@ async function submitOrder() {
                     :error="orderbookState.error"
                 />
 
-                <OrderForm
-                    :side="orderFormState.side"
-                    :order-type="orderFormState.orderType"
-                    :price="orderFormState.price"
-                    :size="orderFormState.size"
-                    :leverage="orderFormState.leverage"
-                    :base-symbol="baseSymbol"
-                    :submitting="orderFormState.submitting"
-                    :submit-error="orderFormState.submitError"
-                    @update:side="(v) => (orderFormState.side = v)"
-                    @update:orderType="(v) => (orderFormState.orderType = v)"
-                    @update:price="(v) => (orderFormState.price = v)"
-                    @update:size="(v) => (orderFormState.size = v)"
-                    @submit="submitOrder"
-                />
+                <OrderForm :base-symbol="baseSymbol" @submit="submitOrder" />
             </div>
         </main>
     </div>

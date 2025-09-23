@@ -1,17 +1,12 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { OrderType, Side } from "../trade";
+import { orderFormState, type OrderType, type Side } from "../trade";
 
 const props = defineProps<{
-    side: Side;
-    orderType: OrderType;
-    price: number | null;
-    size: number | null;
-    leverage: number;
     baseSymbol: string; // e.g., BTC from BTC-PERP
-    submitting?: boolean;
-    submitError?: string | null;
 }>();
+
+const formState = computed(() => orderFormState);
 
 const emit = defineEmits<{
     (e: "update:side", v: Side): void;
@@ -21,8 +16,8 @@ const emit = defineEmits<{
     (e: "submit"): void;
 }>();
 
-const notional = computed(() => (props.size ?? 0) * (props.price ?? 0));
-const estInitialMargin = computed(() => (notional.value ? notional.value / props.leverage : 0));
+const notional = computed(() => (formState.value.size ?? 0) * (formState.value.price ?? 0));
+const estInitialMargin = computed(() => (notional.value ? notional.value / formState.value.leverage : 0));
 </script>
 
 <template>
@@ -31,7 +26,7 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
             <button
                 class="w-full rounded-md px-3 py-2 text-sm"
                 :class="
-                    props.side === 'Long'
+                    formState.side === 'Long'
                         ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-700'
                         : 'bg-neutral-900 text-neutral-300'
                 "
@@ -42,7 +37,7 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
             <button
                 class="w-full rounded-md px-3 py-2 text-sm"
                 :class="
-                    props.side === 'Short'
+                    formState.side === 'Short'
                         ? 'bg-rose-500/20 text-rose-300 border border-rose-700'
                         : 'bg-neutral-900 text-neutral-300'
                 "
@@ -58,7 +53,9 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
                 <button
                     class="rounded-md px-3 py-2 text-sm"
                     :class="
-                        props.orderType === 'Limit' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'
+                        formState.orderType === 'Limit'
+                            ? 'bg-neutral-800 text-white'
+                            : 'bg-neutral-900 text-neutral-300'
                     "
                     @click="emit('update:orderType', 'Limit')"
                 >
@@ -67,7 +64,9 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
                 <button
                     class="rounded-md px-3 py-2 text-sm"
                     :class="
-                        props.orderType === 'Market' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'
+                        formState.orderType === 'Market'
+                            ? 'bg-neutral-800 text-white'
+                            : 'bg-neutral-900 text-neutral-300'
                     "
                     @click="emit('update:orderType', 'Market')"
                 >
@@ -76,10 +75,10 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
             </div>
         </div>
 
-        <div v-if="props.orderType === 'Limit'" class="mb-3">
+        <div v-if="formState.orderType === 'Limit'" class="mb-3">
             <div class="mb-1 text-xs text-neutral-400">Price</div>
             <input
-                :value="props.price ?? ''"
+                :value="formState.price ?? ''"
                 @input="(e: any) => emit('update:price', e.target.value === '' ? null : Number(e.target.value))"
                 type="number"
                 step="0.01"
@@ -90,7 +89,7 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
         <div class="mb-3">
             <div class="mb-1 text-xs text-neutral-400">Size ({{ props.baseSymbol }})</div>
             <input
-                :value="props.size ?? ''"
+                :value="formState.size ?? ''"
                 @input="(e: any) => emit('update:size', e.target.value === '' ? null : Number(e.target.value))"
                 type="number"
                 step="0.0001"
@@ -110,18 +109,20 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
         <button
             class="mb-2 w-full rounded-md px-3 py-2 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
             :class="
-                props.side === 'Long'
+                formState.side === 'Long'
                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                     : 'bg-rose-600 hover:bg-rose-500 text-white'
             "
-            :disabled="props.submitting"
+            :disabled="formState.orderSubmit?.fetching"
             @click="emit('submit')"
         >
-            {{ props.side }} {{ props.orderType }}
+            {{ formState.side }} {{ formState.orderType }}
         </button>
-        <div v-if="props.submitError" class="mb-2 text-xs text-rose-400">{{ props.submitError }}</div>
+        <div v-if="formState.orderSubmit?.error" class="mb-2 text-xs text-rose-400">
+            {{ formState.orderSubmit.error }}
+        </div>
         <div class="text-xs text-neutral-500">
-            Leverage: <span class="tabular-nums">{{ props.leverage }}x</span>
+            Leverage: <span class="tabular-nums">{{ formState.leverage }}x</span>
         </div>
     </section>
 </template>

@@ -1,6 +1,6 @@
 import { reactive } from "vue";
-import { fetchMarkets, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./api";
-import { useSWR } from "../api_call";
+import { fetchMarkets, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./mock_api";
+import { useApi, useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
 
@@ -14,9 +14,9 @@ export interface Market {
     vol: number;
 }
 
-export interface OrderbookLevel {
-    p: number; // price
-    q: number; // quantity
+export interface OrderbookEntry {
+    price: number;
+    quantity: number;
 }
 
 export interface Position {
@@ -64,22 +64,12 @@ watchEffect(() => {
     }
 });
 
-// Order form state
-export const orderFormState = reactive({
-    side: "Long" as Side,
-    orderType: "Limit" as OrderType,
-    price: null as number | null,
-    size: 0.1 as number | null,
-    leverage: 10,
-    orderSubmit: null as SWRResponse<void> | null,
-});
-
 // Orderbook state via SWRV
 const orderbook = useSWR(() => fetchOrderbook(marketsState.selected!.symbol));
 
 export const orderbookState = reactive({
-    bids: [] as { p: number; q: number }[],
-    asks: [] as { p: number; q: number }[],
+    bids: [] as OrderbookEntry[],
+    asks: [] as OrderbookEntry[],
     fetching: orderbook.fetching,
     error: null as string | null,
 });
@@ -123,3 +113,50 @@ watchEffect(() => {
     if (orders) activityState.orders = orders;
     if (fills) activityState.fills = fills;
 });
+
+// Order form state
+export const orderFormState = reactive({
+    orderType: "Limit" as OrderType,
+    price: null as number | null,
+    size: 0.1 as number | null,
+
+    // Extra stuff for synthetics
+    side: "Long" as Side,
+    leverage: 10,
+
+    // API call state
+    orderSubmit: null as SWRResponse<void> | null,
+});
+
+export async function submitOrder() {
+    const created = placeOrder({
+        symbol: marketsState.selected!.symbol,
+        side: orderFormState.side,
+        size: orderFormState.size ?? 0,
+        type: orderFormState.orderType,
+        price: orderFormState.price,
+    });
+    orderFormState.orderSubmit = created;
+    // TODO: should we do this?
+    // activityState.orders.unshift(created);
+}
+
+export function placeOrder(input: {
+    symbol: string;
+    side: Side;
+    size: number;
+    type: OrderType;
+    price: number | null;
+}): SWRResponse<void> {
+    return useSWR(async () => {
+        // Mock implementation
+        if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
+        if (input.size <= 0) throw new Error("Size must be positive");
+
+        await fetch("/api/place_order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(input),
+        });
+    });
+}

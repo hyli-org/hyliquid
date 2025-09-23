@@ -16,11 +16,11 @@ export async function fetchMarkets(): Promise<Market[]> {
     await delay(350 + Math.random() * 300);
     maybeFail(0.08);
     return [
-        { symbol: "BTC-PERP", price: 61234, change: +(2.4 + (Math.random() - 0.5)).toFixed(2), vol: 123_000_000 },
-        { symbol: "ETH-PERP", price: 2450.12, change: +(-1.2 + (Math.random() - 0.5)).toFixed(2), vol: 54_000_000 },
-        { symbol: "SOL-PERP", price: 178.45, change: +(3.8 + (Math.random() - 0.5)).toFixed(2), vol: 22_000_000 },
-        { symbol: "LINK-PERP", price: 12.34, change: +(0.9 + (Math.random() - 0.5)).toFixed(2), vol: 8_200_000 },
-        { symbol: "AVAX-PERP", price: 39.5, change: +(-0.7 + (Math.random() - 0.5)).toFixed(2), vol: 5_900_000 },
+        { symbol: "BTC-USD", price: 61234, change: +(2.4 + (Math.random() - 0.5)).toFixed(2), vol: 123_000_000 },
+        { symbol: "ETH-BTC", price: 2450.12, change: +(-1.2 + (Math.random() - 0.5)).toFixed(2), vol: 54_000_000 },
+        { symbol: "SOL-USD", price: 178.45, change: +(3.8 + (Math.random() - 0.5)).toFixed(2), vol: 22_000_000 },
+        { symbol: "LINK-USD", price: 12.34, change: +(0.9 + (Math.random() - 0.5)).toFixed(2), vol: 8_200_000 },
+        { symbol: "AVAX-ETH", price: 39.5, change: +(-0.7 + (Math.random() - 0.5)).toFixed(2), vol: 5_900_000 },
     ];
 }
 
@@ -30,8 +30,14 @@ export async function fetchOrderbook(symbol: string) {
     const mid = 60000 + Math.random() * 5000;
     return {
         mid,
-        bids: [2, 4, 6, 8, 10].map((d) => ({ p: +(mid - d).toFixed(2), q: +(Math.random() * 12).toFixed(2) })),
-        asks: [2, 4, 6, 8, 10].map((d) => ({ p: +(mid + d).toFixed(2), q: +(Math.random() * 12).toFixed(2) })),
+        bids: [2, 4, 6, 8, 10].map((d) => ({
+            price: +(mid - d).toFixed(2),
+            quantity: +(Math.random() * 12).toFixed(2),
+        })),
+        asks: [2, 4, 6, 8, 10].map((d) => ({
+            price: +(mid + d).toFixed(2),
+            quantity: +(Math.random() * 12).toFixed(2),
+        })),
     };
 }
 
@@ -68,25 +74,4 @@ export async function fetchFills(): Promise<Fill[]> {
             time: new Date().toLocaleTimeString(),
         },
     ];
-}
-
-export async function placeOrder(input: {
-    symbol: string;
-    side: Side;
-    size: number;
-    type: OrderType;
-    price: number | null;
-}): Promise<Order> {
-    await delay(300 + Math.random() * 300);
-    maybeFail(0.15);
-    if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
-    if (input.size <= 0) throw new Error("Size must be positive");
-    return {
-        symbol: input.symbol,
-        side: input.side,
-        size: input.size,
-        type: input.type,
-        price: input.type === "Market" ? (input.price ?? 0) : input.price!,
-        status: "Open",
-    };
 }
