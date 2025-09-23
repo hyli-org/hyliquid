@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
 import MarketsPanel from "./components/MarketsPanel.vue";
 import TopBar from "./components/TopBar.vue";
 import ChartPlaceholder from "./components/ChartPlaceholder.vue";
@@ -9,73 +8,42 @@ import BottomTabs from "./components/BottomTabs.vue";
 import PositionsTable from "./components/PositionsTable.vue";
 import OrdersTable from "./components/OrdersTable.vue";
 import FillsTable from "./components/FillsTable.vue";
-import type { Market, Order, OrderType, Position, Side, Fill } from "./types";
-
-const search = ref("");
-const markets = ref<Market[]>([
-    { symbol: "BTC-PERP", price: 61234, change: 2.4, vol: 123_000_000 },
-    { symbol: "ETH-PERP", price: 2450.12, change: -1.2, vol: 54_000_000 },
-    { symbol: "SOL-PERP", price: 178.45, change: 3.8, vol: 22_000_000 },
-    { symbol: "LINK-PERP", price: 12.34, change: 0.9, vol: 8_200_000 },
-    { symbol: "AVAX-PERP", price: 39.5, change: -0.7, vol: 5_900_000 },
-]);
+import { activityState, marketsState, orderFormState, orderbookState, type Market } from "./trade";
+import { placeOrder } from "./api";
+import { computed } from "vue";
 
 const filteredMarkets = computed(() => {
-    const q = search.value.trim().toLowerCase();
-    if (!q) return markets.value;
-    return markets.value.filter((m) => m.symbol.toLowerCase().includes(q));
+    const q = marketsState.search.trim().toLowerCase();
+    const list = marketsState.list ?? [];
+    if (!q) return list;
+    return list.filter((m) => m.symbol.toLowerCase().includes(q));
 });
 
-const selected = ref<Market>(markets.value[0]);
+const baseSymbol = computed(() => (marketsState.selected ? marketsState.selected.symbol.split("-")[0] : "")!);
 
-const side = ref<Side>("Long");
-const orderType = ref<OrderType>("Limit");
-const price = ref<number | null>(selected.value.price);
-const size = ref<number | null>(0.1);
-const leverage = ref(10);
-
-const orderbook = reactive({
-    bids: [
-        { p: selected.value.price - 10, q: 12.4 },
-        { p: selected.value.price - 8, q: 5.5 },
-        { p: selected.value.price - 6, q: 1.7 },
-        { p: selected.value.price - 4, q: 3.2 },
-        { p: selected.value.price - 2, q: 9.9 },
-    ],
-    asks: [
-        { p: selected.value.price + 2, q: 7.2 },
-        { p: selected.value.price + 4, q: 4.3 },
-        { p: selected.value.price + 6, q: 2.6 },
-        { p: selected.value.price + 8, q: 6.1 },
-        { p: selected.value.price + 10, q: 11.7 },
-    ],
-});
-
+// Actions
 function selectMarket(m: Market) {
-    selected.value = m;
-    price.value = m.price;
+    marketsState.selected = m;
+    orderFormState.price = m.price;
 }
 
-const positions = ref<Position[]>([
-    { symbol: "BTC-PERP", side: "Long", size: 0.25, entry: 60000, liq: 42000, pnl: 3123.45 },
-]);
-const orders = ref<Order[]>([
-    { symbol: "ETH-PERP", side: "Short", size: 1.0, type: "Limit", price: 2500, status: "Open" },
-]);
-const fills = ref<Fill[]>([{ symbol: "SOL-PERP", side: "Long", size: 5, price: 176.9, time: "10:21:04" }]);
-
-const bottomTab = ref<"Positions" | "Orders" | "Fills">("Positions");
-
-function submitOrder() {
-    if (!size.value || !price.value) return;
-    orders.value.unshift({
-        symbol: selected.value.symbol,
-        side: side.value,
-        size: size.value,
-        type: orderType.value,
-        price: price.value,
-        status: "Open",
-    });
+async function submitOrder() {
+    orderFormState.submitError = null;
+    orderFormState.submitting = true;
+    try {
+        const created = await placeOrder({
+            symbol: marketsState.selected!.symbol,
+            side: orderFormState.side,
+            size: orderFormState.size ?? 0,
+            type: orderFormState.orderType,
+            price: orderFormState.price,
+        });
+        activityState.orders.unshift(created);
+    } catch (e: any) {
+        orderFormState.submitError = String(e?.message ?? e);
+    } finally {
+        orderFormState.submitting = false;
+    }
 }
 </script>
 
@@ -83,54 +51,81 @@ function submitOrder() {
     <div class="flex h-screen w-full overflow-hidden">
         <MarketsPanel
             :markets="filteredMarkets"
-            :search="search"
-            :selected-symbol="selected.symbol"
-            @update:search="(v) => (search = v)"
+            :search="marketsState.search"
+            :selected-symbol="marketsState.selected?.symbol"
+            :loading="marketsState.fetching"
+            :error="marketsState.error"
+            @update:search="(v) => (marketsState.search = v)"
             @select="selectMarket"
         />
 
         <main class="flex min-w-0 grow flex-col bg-neutral-950">
-            <TopBar :selected="selected" :leverage="leverage" @update:leverage="(v) => (leverage = v)" />
+            <TopBar
+                v-if="marketsState.selected"
+                :selected="marketsState.selected"
+                :leverage="orderFormState.leverage"
+                @update:leverage="(v) => (orderFormState.leverage = v)"
+            />
 
             <div class="grid grow grid-cols-12 overflow-hidden">
                 <section class="col-span-8 border-r border-neutral-800">
                     <ChartPlaceholder />
 
                     <div class="flex h-[calc(100%-20rem)] flex-col p-3">
-                        <BottomTabs v-model="bottomTab" />
+                        <BottomTabs v-model="activityState.bottomTab" />
 
                         <component
                             :is="
-                                bottomTab === 'Positions'
+                                activityState.bottomTab === 'Positions'
                                     ? PositionsTable
-                                    : bottomTab === 'Orders'
+                                    : activityState.bottomTab === 'Orders'
                                       ? OrdersTable
                                       : FillsTable
                             "
                             v-bind="
-                                bottomTab === 'Positions'
-                                    ? { positions }
-                                    : bottomTab === 'Orders'
-                                      ? { orders }
-                                      : { fills }
+                                activityState.bottomTab === 'Positions'
+                                    ? {
+                                          positions: activityState.positions,
+                                          loading: activityState.positionsLoading,
+                                          error: activityState.positionsError,
+                                      }
+                                    : activityState.bottomTab === 'Orders'
+                                      ? {
+                                            orders: activityState.orders,
+                                            loading: activityState.ordersLoading,
+                                            error: activityState.ordersError,
+                                        }
+                                      : {
+                                            fills: activityState.fills,
+                                            loading: activityState.fillsLoading,
+                                            error: activityState.fillsError,
+                                        }
                             "
                         />
                     </div>
                 </section>
 
-                <OrderbookComp :asks="orderbook.asks" :bids="orderbook.bids" :mid="selected.price" />
+                <OrderbookComp
+                    :asks="orderbookState.asks"
+                    :bids="orderbookState.bids"
+                    :mid="marketsState.selected?.price ?? 0"
+                    :loading="orderbookState.fetching"
+                    :error="orderbookState.error"
+                />
 
                 <OrderForm
-                    :side="side"
-                    :order-type="orderType"
-                    :price="price"
-                    :size="size"
-                    :leverage="leverage"
-                    :base-symbol="selected.symbol.split('-')[0]"
-                    @update:side="(v) => (side = v)"
-                    @update:orderType="(v) => (orderType = v)"
-                    @update:price="(v) => (price = v)"
-                    @update:size="(v) => (size = v)"
+                    :side="orderFormState.side"
+                    :order-type="orderFormState.orderType"
+                    :price="orderFormState.price"
+                    :size="orderFormState.size"
+                    :leverage="orderFormState.leverage"
+                    :base-symbol="baseSymbol"
+                    :submitting="orderFormState.submitting"
+                    :submit-error="orderFormState.submitError"
+                    @update:side="(v) => (orderFormState.side = v)"
+                    @update:orderType="(v) => (orderFormState.orderType = v)"
+                    @update:price="(v) => (orderFormState.price = v)"
+                    @update:size="(v) => (orderFormState.size = v)"
                     @submit="submitOrder"
                 />
             </div>

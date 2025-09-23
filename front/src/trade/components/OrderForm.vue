@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import type { OrderType, Side } from "../types";
+import type { OrderType, Side } from "../trade";
 
 const props = defineProps<{
     side: Side;
@@ -9,6 +9,8 @@ const props = defineProps<{
     size: number | null;
     leverage: number;
     baseSymbol: string; // e.g., BTC from BTC-PERP
+    submitting?: boolean;
+    submitError?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -106,16 +108,18 @@ const estInitialMargin = computed(() => (notional.value ? notional.value / props
         </div>
 
         <button
-            class="mb-2 w-full rounded-md px-3 py-2 text-sm font-medium"
+            class="mb-2 w-full rounded-md px-3 py-2 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
             :class="
                 props.side === 'Long'
                     ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                     : 'bg-rose-600 hover:bg-rose-500 text-white'
             "
+            :disabled="props.submitting"
             @click="emit('submit')"
         >
             {{ props.side }} {{ props.orderType }}
         </button>
+        <div v-if="props.submitError" class="mb-2 text-xs text-rose-400">{{ props.submitError }}</div>
         <div class="text-xs text-neutral-500">
             Leverage: <span class="tabular-nums">{{ props.leverage }}x</span>
         </div>

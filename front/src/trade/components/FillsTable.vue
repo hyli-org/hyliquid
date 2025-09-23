@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Fill } from "../types";
-defineProps<{ fills: Fill[] }>();
+import type { Fill } from "../trade";
+defineProps<{ fills: Fill[]; loading?: boolean; error?: string | null }>();
 </script>
 
 <template>
@@ -16,6 +16,12 @@ defineProps<{ fills: Fill[] }>();
                 </tr>
             </thead>
             <tbody>
+                <tr v-if="loading">
+                    <td colspan="5" class="px-3 py-3 text-neutral-400">Loading fills…</td>
+                </tr>
+                <tr v-else-if="error">
+                    <td colspan="5" class="px-3 py-3 text-rose-400">{{ error }}</td>
+                </tr>
                 <tr v-for="f in fills" :key="f.symbol + f.time" class="border-t border-neutral-900">
                     <td class="px-3 py-2">{{ f.symbol }}</td>
                     <td class="px-3 py-2" :class="f.side === 'Long' ? 'text-emerald-400' : 'text-rose-400'">

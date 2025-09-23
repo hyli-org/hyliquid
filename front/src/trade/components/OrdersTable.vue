@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Order } from "../types";
-defineProps<{ orders: Order[] }>();
+import type { Order } from "../trade";
+defineProps<{ orders: Order[]; loading?: boolean; error?: string | null }>();
 </script>
 
 <template>
@@ -16,6 +16,12 @@ defineProps<{ orders: Order[] }>();
                 </tr>
             </thead>
             <tbody>
+                <tr v-if="loading">
+                    <td colspan="5" class="px-3 py-3 text-neutral-400">Loading orders…</td>
+                </tr>
+                <tr v-else-if="error">
+                    <td colspan="5" class="px-3 py-3 text-rose-400">{{ error }}</td>
+                </tr>
                 <tr v-for="o in orders" :key="o.symbol + o.price + o.type" class="border-t border-neutral-900">
                     <td class="px-3 py-2">{{ o.symbol }}</td>
                     <td class="px-3 py-2" :class="o.side === 'Long' ? 'text-emerald-400' : 'text-rose-400'">

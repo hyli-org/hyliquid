@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import type { Market } from "../types";
+import type { Market } from "../trade";
 
 const props = defineProps<{
     markets: Market[];
     search: string;
     selectedSymbol?: string;
+    loading?: boolean;
+    error?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -28,6 +30,8 @@ function onSearch(e: Event) {
             />
         </div>
         <div class="overflow-auto h-full">
+            <div v-if="props.loading" class="px-3 py-2 text-xs text-neutral-400">Loading markets…</div>
+            <div v-else-if="props.error" class="px-3 py-2 text-xs text-rose-400">{{ props.error }}</div>
             <ul>
                 <li
                     v-for="m in markets"

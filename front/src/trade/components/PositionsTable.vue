@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Position } from "../types";
-defineProps<{ positions: Position[] }>();
+import type { Position } from "../trade";
+defineProps<{ positions: Position[]; loading?: boolean; error?: string | null }>();
 </script>
 
 <template>
@@ -16,6 +16,12 @@ defineProps<{ positions: Position[] }>();
                 </tr>
             </thead>
             <tbody>
+                <tr v-if="loading">
+                    <td colspan="5" class="px-3 py-3 text-neutral-400">Loading positions…</td>
+                </tr>
+                <tr v-else-if="error">
+                    <td colspan="5" class="px-3 py-3 text-rose-400">{{ error }}</td>
+                </tr>
                 <tr v-for="p in positions" :key="p.symbol" class="border-t border-neutral-900">
                     <td class="px-3 py-2">{{ p.symbol }}</td>
                     <td class="px-3 py-2" :class="p.side === 'Long' ? 'text-emerald-400' : 'text-rose-400'">
