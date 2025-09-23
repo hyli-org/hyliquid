@@ -179,7 +179,7 @@ export function placeOrder(input: {
                 order_id: "", // You may want to generate a unique ID here
                 order_side: input.side,
                 order_type: input.type,
-                pair: input.symbol.split("-"),
+                pair: input.symbol.split("/"),
                 // TODO bertrand: pick decimals from API
                 price: input.price,
                 // TODO bertrand: pick decimals from API

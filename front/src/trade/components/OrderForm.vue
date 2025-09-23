@@ -4,7 +4,7 @@ import { instrumentsState, submitOrder, useOrderFormState } from "../trade";
 
 const { price, size, side, orderType, orderSubmit } = useOrderFormState();
 
-const baseSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.symbol.split("-")[0] : "")!);
+const baseSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.symbol.split("/")[0] : "")!);
 </script>
 
 <template>
