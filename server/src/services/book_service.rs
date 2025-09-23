@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde_json::json;
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::services::asset_service::AssetService;
 use crate::services::user_service::UserService;
@@ -206,10 +206,12 @@ impl BookWriterService {
                     info!("Creating user {}", user);
 
                     log_error!(
-                        sqlx::query("INSERT INTO users (identity) VALUES ($1) ON CONFLICT DO NOTHING")
-                            .bind(user)
-                            .execute(&mut *tx)
-                            .await,
+                        sqlx::query(
+                            "INSERT INTO users (identity) VALUES ($1) ON CONFLICT DO NOTHING"
+                        )
+                        .bind(user)
+                        .execute(&mut *tx)
+                        .await,
                         "Failed to create user"
                     )?;
                 }
@@ -217,16 +219,16 @@ impl BookWriterService {
         }
         tx.commit().await?;
 
-            self.send_order_book_update(symbol_book_updated).await?;
+        self.send_order_book_update(symbol_book_updated).await?;
 
         Ok(())
     }
 
-
     pub async fn send_order_book_update(&self, symbols: HashSet<String>) -> Result<(), AppError> {
         // Send a POST request to localhost:3000/api/websocket/trigger with instrument in body
         let client = reqwest::Client::new();
-        let response = client.post(self.trigger_url.clone())
+        let response = client
+            .post(self.trigger_url.clone())
             .body(serde_json::to_string(&json!({ "instruments": symbols })).unwrap())
             .header("Content-Type", "application/json")
             .send()
@@ -298,7 +300,6 @@ impl BookService {
 
         Ok(OrderbookAPI { bids, asks })
     }
-
 }
 
 #[derive(Debug, Serialize, sqlx::Type)]

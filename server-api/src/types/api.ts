@@ -2,6 +2,8 @@
  * API request and response types
  */
 
+import { Order } from "./database";
+
 export interface ConfigResponse {
   contract_name: string;
 }
@@ -15,6 +17,10 @@ export interface BalanceResponse {
 
 export interface UserBalances {
   balances: BalanceResponse[];
+}
+
+export interface UserOrders {
+  orders: Order[];
 }
 
 export interface GetBookQuery {

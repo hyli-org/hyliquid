@@ -7,7 +7,7 @@ import { healthRoutes } from './health';
 import { configRoutes } from './config';
 import { infoRoutes } from './info';
 import { bookRoutes } from './book';
-import { balanceRoutes } from './balances';
+import { userRoutes } from './user';
 import { AssetService, BookService, UserService } from '../services';
 
 export const createApiRoutes = (bookService: BookService, userService: UserService, assetService: AssetService) => {
@@ -17,5 +17,5 @@ export const createApiRoutes = (bookService: BookService, userService: UserServi
     .use(infoRoutes(bookService, assetService))
     .use(bookRoutes(bookService))
     // Authenticated routes
-    .use(balanceRoutes(userService))
+    .use(userRoutes(userService, assetService))
 };

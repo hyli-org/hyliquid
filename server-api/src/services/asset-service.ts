@@ -51,6 +51,20 @@ export class AssetService {
     return this.instrumentMap.get(symbol) || null;
   }
 
+  /** 
+   * Get instrument symbol by base and quote asset symbols
+   */
+  getInstrumentSymbol(baseAssetSymbol: string, quoteAssetSymbol: string): string {
+    return `${baseAssetSymbol.toUpperCase()}/${quoteAssetSymbol.toUpperCase()}`;
+  }
+
+  /**
+   * Get an instrument by id
+   */
+  getInstrumentId(symbol: string): number | null {
+    return this.getInstrument(symbol)?.instrument_id || null;
+  }
+
   /**
    * Get all assets
    */

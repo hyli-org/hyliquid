@@ -3,7 +3,7 @@
  */
 
 import { Pool, PoolConfig } from 'pg';
-import { Asset, Instrument } from '../types';
+import { Asset, Instrument, Order } from '../types';
 
 export class DatabaseConfig {
   private static instance: DatabaseConfig;
@@ -102,6 +102,16 @@ export class DatabaseQueries {
       WHERE 
         balances.user_id = $1
     `, [userId]);
+    return result.rows;
+  }
+
+  async getUserOrders(userId: number): Promise<Array<Order>> {
+    const result = await this.pool.query('SELECT * FROM orders WHERE user_id = $1', [userId]);
+    return result.rows;
+  }
+
+  async getUserOrdersByPair(userId: number, instrumentId: number): Promise<Array<Order>> {
+    const result = await this.pool.query('SELECT * FROM orders WHERE user_id = $1 AND instrument_id = $2', [userId, instrumentId]);
     return result.rows;
   }
 
