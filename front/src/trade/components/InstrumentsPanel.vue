@@ -1,45 +1,38 @@
 <script setup lang="ts">
-import type { Market } from "../trade";
+import { computed } from "vue";
+import { instrumentsState } from "../trade";
 
-const props = defineProps<{
-    markets: Market[];
-    search: string;
-    selectedSymbol?: string;
-    loading?: boolean;
-    error?: string | null;
-}>();
-
-const emit = defineEmits<{
-    (e: "update:search", value: string): void;
-    (e: "select", market: Market): void;
-}>();
-
-function onSearch(e: Event) {
-    emit("update:search", (e.target as HTMLInputElement).value);
-}
+const filteredInstruments = computed(() => {
+    const q = instrumentsState.search.trim().toLowerCase();
+    const list = instrumentsState.list ?? [];
+    if (!q) return list;
+    return list.filter((m) => m.symbol.toLowerCase().includes(q));
+});
 </script>
 
 <template>
     <aside class="w-64 shrink-0 border-r border-neutral-800 bg-neutral-950">
         <div class="p-3 border-b border-neutral-800">
             <input
-                :value="props.search"
-                @input="onSearch"
+                :value="instrumentsState.search"
+                @input="(e: any) => (instrumentsState.search = e.target.value)"
                 class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm placeholder-neutral-500 outline-none focus:ring-1 focus:ring-neutral-700"
-                placeholder="Search markets"
+                placeholder="Search instruments"
             />
         </div>
         <div class="overflow-auto h-full">
-            <div v-if="props.loading" class="px-3 py-2 text-xs text-neutral-400">Loading markets…</div>
-            <div v-else-if="props.error" class="px-3 py-2 text-xs text-rose-400">{{ props.error }}</div>
+            <div v-if="instrumentsState.fetching" class="px-3 py-2 text-xs text-neutral-400">Loading instruments…</div>
+            <div v-else-if="instrumentsState.error" class="px-3 py-2 text-xs text-rose-400">
+                {{ instrumentsState.error }}
+            </div>
             <ul>
                 <li
-                    v-for="m in markets"
+                    v-for="m in filteredInstruments"
                     :key="m.symbol"
-                    @click="emit('select', m)"
+                    @click="() => (instrumentsState.selected = m)"
                     :class="[
                         'cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-neutral-900',
-                        props.selectedSymbol === m.symbol ? 'bg-neutral-900' : '',
+                        instrumentsState.selected?.symbol === m.symbol ? 'bg-neutral-900' : '',
                     ]"
                 >
                     <div>

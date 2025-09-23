@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import type { Position } from "../trade";
-defineProps<{ positions: Position[]; loading?: boolean; error?: string | null }>();
+import type { PerpPosition } from "../trade";
+defineProps<{ positions: PerpPosition[]; loading?: boolean; error?: string | null }>();
 </script>
 
 <template>
