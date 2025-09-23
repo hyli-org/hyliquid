@@ -9,7 +9,10 @@ use contracts::ORDERBOOK_ELF;
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
-        da_listener::{DAListener, DAListenerConf}, rest::{RestApi, RestApiRunContext}, websocket::WebSocketModule, BuildApiContextInner, ModulesHandler
+        da_listener::{DAListener, DAListenerConf},
+        rest::{RestApi, RestApiRunContext},
+        websocket::WebSocketModule,
+        BuildApiContextInner, ModulesHandler,
     },
     utils::logger::setup_tracing,
 };

@@ -2,7 +2,6 @@ use borsh::{io::Error, BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use sdk::hyli_model_utils::TimestampMs;
 use sdk::{ContractName, LaneId, TxContext};
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
@@ -27,9 +26,6 @@ pub struct Orderbook {
     pub orders_owner: BTreeMap<OrderId, String>,
 
     /// These fields are not committed on-chain
-    // History of orders executed, indexed by token pair and timestamp
-    #[borsh(skip)]
-    pub orders_history: BTreeMap<TokenPair, BTreeMap<TimestampMs, u32>>,
     #[borsh(skip)]
     pub server_execution: bool,
 }
@@ -41,7 +37,10 @@ pub struct UserInfo {
 }
 
 #[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
-#[cfg_attr(feature = "sqlx", sqlx(type_name = "order_side", rename_all = "lowercase"))]
+#[cfg_attr(
+    feature = "sqlx",
+    sqlx(type_name = "order_side", rename_all = "lowercase")
+)]
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum OrderSide {
     Bid, // Buy
@@ -49,7 +48,10 @@ pub enum OrderSide {
 }
 
 #[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
-#[cfg_attr(feature = "sqlx", sqlx(type_name = "order_type", rename_all = "lowercase"))]
+#[cfg_attr(
+    feature = "sqlx",
+    sqlx(type_name = "order_type", rename_all = "lowercase")
+)]
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 pub enum OrderType {
     Market,
@@ -66,7 +68,6 @@ pub struct Order {
     pub price: Option<u32>,
     pub pair: TokenPair,
     pub quantity: u32,
-    pub timestamp: TimestampMs,
 }
 
 pub type OrderId = String;
@@ -345,13 +346,6 @@ impl Orderbook {
                         }
                     }
 
-                    // Update history
-                    if self.server_execution {
-                        self.orders_history
-                            .entry(order.pair.clone())
-                            .or_default()
-                            .insert(order.timestamp.clone(), existing_order.price.unwrap());
-                    }
                     // There is an order that can be filled
                     match existing_order.quantity.cmp(&order.quantity) {
                         std::cmp::Ordering::Greater => {
@@ -503,14 +497,6 @@ impl Orderbook {
                         }
                     }
 
-                    // Update history
-                    if self.server_execution {
-                        self.orders_history
-                            .entry(order.pair.clone())
-                            .or_default()
-                            .insert(order.timestamp.clone(), existing_order.price.unwrap());
-                    }
-
                     match existing_order.quantity.cmp(&order.quantity) {
                         std::cmp::Ordering::Greater => {
                             // The existing order do not fully cover this order
@@ -655,7 +641,6 @@ impl Orderbook {
             sell_orders: BTreeMap::new(),
             orders_owner: BTreeMap::new(),
             accepted_tokens,
-            orders_history: BTreeMap::new(),
             server_execution,
         }
     }

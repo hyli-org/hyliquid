@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod orderbook_tests {
 
-    use sdk::{hyli_model_utils::TimestampMs, LaneId};
+    use sdk::LaneId;
 
     use crate::{
         orderbook::{OrderSide, OrderbookEvent, UserInfo},
@@ -51,7 +51,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
 
         let events = orderbook
@@ -92,7 +91,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
 
         let events = orderbook
@@ -133,7 +131,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -147,7 +144,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -199,7 +195,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -213,7 +208,6 @@ mod orderbook_tests {
             price: Some(1900),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
         let events = orderbook
             .execute_order(
@@ -274,7 +268,6 @@ mod orderbook_tests {
             price: Some(1900),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&usd_user, sell_order, BTreeMap::default())
@@ -288,7 +281,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
         let events = orderbook
             .execute_order(
@@ -350,7 +342,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -364,7 +355,6 @@ mod orderbook_tests {
             price: Some(2100),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -418,7 +408,6 @@ mod orderbook_tests {
             price: Some(1000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -432,7 +421,6 @@ mod orderbook_tests {
             price: Some(1000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -501,7 +489,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -515,7 +502,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -580,7 +566,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -594,7 +579,6 @@ mod orderbook_tests {
             price: Some(2100),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -659,7 +643,6 @@ mod orderbook_tests {
             price: Some(1000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&usd_user, buy_order, BTreeMap::default())
@@ -673,7 +656,6 @@ mod orderbook_tests {
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -724,7 +706,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&usd_user, buy_order, BTreeMap::default())
@@ -738,7 +719,6 @@ mod orderbook_tests {
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -794,7 +774,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
 
         orderbook
@@ -809,7 +788,6 @@ mod orderbook_tests {
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -866,7 +844,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -880,7 +857,6 @@ mod orderbook_tests {
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -931,7 +907,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -945,7 +920,6 @@ mod orderbook_tests {
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -996,7 +970,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
         orderbook
             .execute_order(&eth_user, sell_order, BTreeMap::default())
@@ -1010,7 +983,6 @@ mod orderbook_tests {
             price: None, // Market order
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 2,
-            timestamp: TimestampMs(1),
         };
 
         let events = orderbook
@@ -1066,7 +1038,6 @@ mod orderbook_tests {
             price: Some(2000),
             pair: ("ETH".to_string(), "USD".to_string()),
             quantity: 1,
-            timestamp: TimestampMs(0),
         };
 
         // Execute the order
@@ -1165,7 +1136,6 @@ mod orderbook_tests {
     //         pair: ("ETH".to_string(), "USD".to_string()),
     //         quantity: 1,
 
-    //         timestamp: TimestampMs(0),
     //     };
 
     //     // Execute order with tx_ctx at block height 6 (< deposit block + 5)
