@@ -16,5 +16,6 @@ export const createApiRoutes = (bookService: BookService, userService: UserServi
     .use(configRoutes())
     .use(infoRoutes(bookService, assetService))
     .use(bookRoutes(bookService))
-    .use(balanceRoutes(userService));
+    // Authenticated routes
+    .use(balanceRoutes(userService))
 };

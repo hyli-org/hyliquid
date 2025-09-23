@@ -158,6 +158,7 @@ async fn main() -> Result<()> {
             pool.clone(),
             user_service.clone(),
             asset_service.clone(),
+            config.trigger_url.clone(),
         ),
     ));
     let book_service = Arc::new(RwLock::new(

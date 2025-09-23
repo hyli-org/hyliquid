@@ -17,16 +17,6 @@ export interface UserBalances {
   balances: BalanceResponse[];
 }
 
-export interface OrderbookEntry {
-  price: number;
-  quantity: number;
-}
-
-export interface OrderbookAPI {
-  bids: OrderbookEntry[];
-  asks: OrderbookEntry[];
-}
-
 export interface GetBookQuery {
   levels?: number;
   group_ticks?: number;

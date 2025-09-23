@@ -2,7 +2,7 @@
  * Book service for orderbook operations
  */
 
-import { OrderbookAPI, OrderbookEntry } from '../types';
+import { L2BookData, L2BookEntry } from '../types';
 import { DatabaseQueries } from '../config/database';
 import { AssetService } from './asset-service';
 
@@ -31,7 +31,7 @@ export class BookService {
     quoteAssetSymbol: string,
     levels: number = 20,
     groupTicks: number = 10
-  ): Promise<OrderbookAPI> {
+  ): Promise<L2BookData> {
     const symbol = `${baseAssetSymbol.toUpperCase()}/${quoteAssetSymbol.toUpperCase()}`;
     
     // Validate that the instrument exists
@@ -42,11 +42,11 @@ export class BookService {
 
     const rows = await this.queries.getOrderbook(symbol, levels, groupTicks);
 
-    const bids: OrderbookEntry[] = [];
-    const asks: OrderbookEntry[] = [];
+    const bids: L2BookEntry[] = [];
+    const asks: L2BookEntry[] = [];
 
     for (const row of rows) {
-      const entry: OrderbookEntry = {
+      const entry: L2BookEntry = {
         price: row.price,
         quantity: row.qty,
       };

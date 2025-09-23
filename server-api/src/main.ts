@@ -5,7 +5,7 @@
 import { Elysia } from 'elysia';
 import { DatabaseConfig, DatabaseQueries } from './config/database';
 import { getAppConfig } from './config/app';
-import { AssetService, UserService, BookService } from './services';
+import { AssetService, UserService, BookService, WebSocketService } from './services';
 import { createApiRoutes } from './api';
 import { corsMiddleware, errorHandler, loggerMiddleware } from './middleware/index';
 import { extractRouteInfo, displayRoutes } from './utils/route-info';
@@ -38,6 +38,7 @@ async function main() {
   const assetService = new AssetService(dbQueries);
   const userService = new UserService(dbQueries);
   const bookService = new BookService(dbQueries, assetService);
+  const webSocketService = new WebSocketService(bookService);
 
   // Load data into memory
   try {
@@ -49,11 +50,16 @@ async function main() {
     process.exit(1);
   }
 
+  // Create WebSocket route
+  const wsRoute = webSocketService.createWebSocketRoute();
+  
   // Create the main application
   const app = new Elysia()
     .use(corsMiddleware())
     .use(errorHandler())
     .use(loggerMiddleware())
+    .use(wsRoute)
+    //@ts-ignore
     .use(createApiRoutes(bookService, userService, assetService))
     .onError(({ error }: { error: Error }) => {
       console.error('Unhandled error:', error);
@@ -66,6 +72,7 @@ async function main() {
   });
 
   console.log(`🚀 Server running at http://${config.host}:${config.port}`);
+  console.log(`🔌 WebSocket server running at ws://${config.host}:${config.port}`);
   
   // Display available endpoints dynamically
   try {
@@ -80,12 +87,14 @@ async function main() {
   // Graceful shutdown
   process.on('SIGINT', async () => {
     console.log('\nReceived SIGINT, shutting down gracefully...');
+    webSocketService.close();
     await dbConfig.close();
     process.exit(0);
   });
 
   process.on('SIGTERM', async () => {
     console.log('\nReceived SIGTERM, shutting down gracefully...');
+    webSocketService.close();
     await dbConfig.close();
     process.exit(0);
   });

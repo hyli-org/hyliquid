@@ -27,6 +27,9 @@ pub struct Conf {
 
     /// Websocket configuration
     pub websocket: WebSocketConfig,
+
+    /// URL to trigger L2 book updates
+    pub trigger_url: String,
 }
 
 impl Conf {

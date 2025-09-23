@@ -36,7 +36,7 @@ export async function runTxSenderCommand(command, args = [], identity = DEFAULT_
   
   try {
     const { stdout, stderr } = await execAsync(fullCmd, {
-      cwd: '/home/maximilien/hyliquid',
+      cwd: '/home/bertrand/workspace/hyliquid',
       timeout: 30000 // 30 second timeout
     });
     
@@ -291,7 +291,7 @@ export async function buildTxSender() {
   console.log('Building tx_sender binary...');
   try {
     await execAsync('cargo build --bin tx_sender', {
-      cwd: '/home/maximilien/hyliquid',
+      cwd: '/home/bertrand/workspace/hyliquid',
       timeout: 60000 // 1 minute timeout for build
     });
     console.log('Build completed successfully');

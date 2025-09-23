@@ -16,6 +16,8 @@ buffer_blocks = 0
 max_txs_per_proof = 30
 tx_working_window_size = 150
 
+trigger_url = "http://localhost:3000/api/websocket/trigger"
+
 [websocket]
 port = 8082
 ws_path = "/ws"

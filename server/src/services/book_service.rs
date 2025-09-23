@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use client_sdk::contract_indexer::AppError;
@@ -5,9 +6,10 @@ use hyli_modules::log_error;
 use orderbook::orderbook::OrderbookEvent;
 use reqwest::StatusCode;
 use serde::Serialize;
+use serde_json::json;
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{error, info, warn};
 
 use crate::services::asset_service::AssetService;
 use crate::services::user_service::UserService;
@@ -16,6 +18,7 @@ pub struct BookWriterService {
     pool: PgPool,
     user_service: Arc<RwLock<UserService>>,
     asset_service: Arc<RwLock<AssetService>>,
+    trigger_url: String,
 }
 
 impl BookWriterService {
@@ -23,11 +26,13 @@ impl BookWriterService {
         pool: PgPool,
         user_service: Arc<RwLock<UserService>>,
         asset_service: Arc<RwLock<AssetService>>,
+        trigger_url: String,
     ) -> Self {
         BookWriterService {
             pool,
             user_service,
             asset_service,
+            trigger_url,
         }
     }
 
@@ -37,6 +42,8 @@ impl BookWriterService {
         _events: Vec<OrderbookEvent>,
     ) -> Result<(), AppError> {
         // Transactionnaly write all events & update balances
+
+        let mut symbol_book_updated = HashSet::<String>::new();
 
         let mut tx = self.pool.begin().await?;
         for event in _events {
@@ -93,6 +100,8 @@ impl BookWriterService {
                         user, instrument, order
                     );
 
+                    symbol_book_updated.insert(symbol);
+
                     log_error!(
                         sqlx::query(
                             "
@@ -134,6 +143,8 @@ impl BookWriterService {
                         user, order_id, pair
                     );
 
+                    symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
+
                     log_error!(
                         sqlx::query(
                             "
@@ -151,6 +162,8 @@ impl BookWriterService {
                         "Executing order for user {} with order id {:?} and pair {:?}",
                         user, order_id, pair
                     );
+
+                    symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
                     log_error!(
                         sqlx::query(
@@ -173,6 +186,8 @@ impl BookWriterService {
                         "Updating order for user {} with order id {:?} and pair {:?}",
                         user, order_id, pair
                     );
+
+                    symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
                     log_error!(
                         sqlx::query(
@@ -201,6 +216,24 @@ impl BookWriterService {
             }
         }
         tx.commit().await?;
+
+            self.send_order_book_update(symbol_book_updated).await?;
+
+        Ok(())
+    }
+
+
+    pub async fn send_order_book_update(&self, symbols: HashSet<String>) -> Result<(), AppError> {
+        // Send a POST request to localhost:3000/api/websocket/trigger with instrument in body
+        let client = reqwest::Client::new();
+        let response = client.post(self.trigger_url.clone())
+            .body(serde_json::to_string(&json!({ "instruments": symbols })).unwrap())
+            .header("Content-Type", "application/json")
+            .send()
+            .await;
+        if let Err(e) = response {
+            warn!("Failed to send order book update: {}", e);
+        }
         Ok(())
     }
 }
@@ -265,6 +298,7 @@ impl BookService {
 
         Ok(OrderbookAPI { bids, asks })
     }
+
 }
 
 #[derive(Debug, Serialize, sqlx::Type)]
