@@ -54,7 +54,7 @@ watchEffect(() => {
                 <section class="col-span-8 border-r border-neutral-800">
                     <ChartPlaceholder />
 
-                    <div class="flex h-[calc(100%-20rem)] flex-col p-3">
+                    <div class="flex h-150 flex-col p-3">
                         <BottomTabs v-model="activityState.bottomTab" />
 
                         <component
