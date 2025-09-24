@@ -1,4 +1,4 @@
-import type { Fill, Instrument, Order, OrderStatus, PerpPosition } from "./trade";
+import type { Balance, Fill, Instrument, Order, OrderStatus, PerpPosition } from "./trade";
 
 // Base API URL - you may want to make this configurable
 const API_BASE_URL = "http://localhost:3000";
@@ -214,4 +214,26 @@ export async function fetchFills(): Promise<Fill[]> {
   const instrumentsData: ApiInfoResponse = await instrumentsResponse.json();
   
   return data.trades.map(trade => transformTrade(trade, instrumentsData.instruments));
+}
+
+export async function fetchBalances(): Promise<Balance[]> {
+  const response = await fetch(`${API_BASE_URL}/api/user/balances`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...getAuthHeaders(),
+    },
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to fetch balances: ${response.status} ${response.statusText}`);
+  }
+  
+  const data: { balances: ApiBalance[] } = await response.json();
+  
+  return data.balances.map(balance => ({
+    asset: balance.token,
+    free: balance.available,
+    locked: balance.reserved,
+    total: balance.total,
+  }));
 }

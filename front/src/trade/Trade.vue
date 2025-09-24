@@ -10,6 +10,7 @@ import BottomTabs from "./components/BottomTabs.vue";
 import PositionsTable from "./components/PositionsTable.vue";
 import OrdersTable from "./components/OrdersTable.vue";
 import FillsTable from "./components/FillsTable.vue";
+import BalancesTable from "./components/BalancesTable.vue";
 import { activityState, instrumentsState, selectInstrumentBySymbol } from "./trade";
 
 const route = useRoute();
@@ -45,7 +46,9 @@ watchEffect(() => {
                                     ? PositionsTable
                                     : activityState.bottomTab === 'Orders'
                                       ? OrdersTable
-                                      : FillsTable
+                                      : activityState.bottomTab === 'Fills'
+                                        ? FillsTable
+                                        : BalancesTable
                             "
                             v-bind="
                                 activityState.bottomTab === 'Positions'
@@ -60,11 +63,17 @@ watchEffect(() => {
                                             loading: activityState.ordersLoading,
                                             error: activityState.ordersError,
                                         }
-                                      : {
-                                            fills: activityState.fills,
-                                            loading: activityState.fillsLoading,
-                                            error: activityState.fillsError,
-                                        }
+                                      : activityState.bottomTab === 'Fills'
+                                        ? {
+                                              fills: activityState.fills,
+                                              loading: activityState.fillsLoading,
+                                              error: activityState.fillsError,
+                                          }
+                                        : {
+                                              balances: activityState.balances,
+                                              loading: activityState.balancesLoading,
+                                              error: activityState.balancesError,
+                                          }
                             "
                         />
                     </div>

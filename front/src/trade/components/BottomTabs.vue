@@ -1,6 +1,6 @@
 <script setup lang="ts">
-const props = defineProps<{ modelValue: "Positions" | "Orders" | "Fills" }>();
-const emit = defineEmits<{ (e: "update:modelValue", v: "Positions" | "Orders" | "Fills"): void }>();
+const props = defineProps<{ modelValue: "Positions" | "Orders" | "Fills" | "Balances" }>();
+const emit = defineEmits<{ (e: "update:modelValue", v: "Positions" | "Orders" | "Fills" | "Balances"): void }>();
 </script>
 
 <template>
@@ -25,6 +25,13 @@ const emit = defineEmits<{ (e: "update:modelValue", v: "Positions" | "Orders" | 
             @click="emit('update:modelValue', 'Fills')"
         >
             Fills
+        </button>
+        <button
+            class="rounded-md px-3 py-1.5 text-sm"
+            :class="props.modelValue === 'Balances' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
+            @click="emit('update:modelValue', 'Balances')"
+        >
+            Balances
         </button>
     </div>
     <slot />

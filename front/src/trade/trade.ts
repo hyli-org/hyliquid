@@ -1,5 +1,5 @@
 import { reactive } from "vue";
-import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrders, fetchFills } from "./api";
+import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrders, fetchFills, fetchBalances } from "./api";
 import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
@@ -49,6 +49,13 @@ export interface Fill {
     size: number;
     price: number;
     time: string;
+}
+
+export interface Balance {
+    asset: string;
+    free: number;
+    locked: number;
+    total: number;
 }
 
 // Instruments
@@ -114,28 +121,34 @@ watchEffect(() => {
 const swPositions = useSWR<PerpPosition[]>(fetchPositions);
 const swOrders = useSWR<Order[]>(fetchOrders);
 const swFills = useSWR<Fill[]>(fetchFills);
+const swBalances = useSWR<Balance[]>(() => fetchBalances());
 
 export const activityState = reactive({
     positions: [] as PerpPosition[],
     orders: [] as Order[],
     fills: [] as Fill[],
-    bottomTab: "Positions" as "Positions" | "Orders" | "Fills",
+    balances: [] as Balance[],
+    bottomTab: "Positions" as "Positions" | "Orders" | "Fills" | "Balances",
     positionsLoading: swPositions.fetching,
     ordersLoading: swOrders.fetching,
     fillsLoading: swFills.fetching,
+    balancesLoading: swBalances.fetching,
     positionsError: swPositions.error,
     ordersError: swOrders.error,
     fillsError: swFills.error,
+    balancesError: swBalances.error,
 });
 
 watchEffect(() => {
     const positions = swPositions.data.value;
     const orders = swOrders.data.value;
     const fills = swFills.data.value;
+    const balances = swBalances.data.value;
 
     if (positions) activityState.positions = positions;
     if (orders) activityState.orders = orders;
     if (fills) activityState.fills = fills;
+    if (balances) activityState.balances = balances;
 });
 
 // Order form state
