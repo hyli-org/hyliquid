@@ -4,6 +4,7 @@ import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
 import { ref } from "vue";
+import { v7 as uuidv7 } from 'uuid';
 
 // Re-export types for components
 export type { PaginationInfo, PaginationParams } from "./api";
@@ -94,6 +95,19 @@ export const instrumentsState = reactive({
         const baseAssetScale = assetsState.list.find(a => a.symbol === baseAsset)?.scale ?? 0;
         const real = qty / 10 ** baseAssetScale;
         return real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: baseAssetScale });
+    },
+    fromRealPrice: (instrument_symbol: string | undefined, price: number) => {
+        if (!instrument_symbol) return price;
+        const quoteAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.quote_asset;
+        const priceScale = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.price_scale ?? 0;
+        const quoteAssetScale = assetsState.list.find(a => a.symbol === quoteAsset)?.scale ?? 0;
+        return price * 10 ** (quoteAssetScale + priceScale);
+    },
+    fromRealQty: (instrument_symbol: string | undefined, qty: number) => {
+        if (!instrument_symbol) return qty;
+        const baseAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.base_asset;
+        const baseAssetScale = assetsState.list.find(a => a.symbol === baseAsset)?.scale ?? 0;
+        return qty * 10 ** baseAssetScale;
     },
 });
 
@@ -230,7 +244,7 @@ watchEffect(() => {
 const orderFormState = {
     orderType: ref<OrderType>("Limit"),
     price: ref<number | null>(null),
-    size: ref<number | null>(0.1),
+    size: ref<number | null>(null),
     side: ref<Side>("Bid"),
     leverage: ref(10),
     orderSubmit: ref<SWRResponse<void> | null>(null),
@@ -299,9 +313,9 @@ export async function submitOrder() {
     const created = placeOrder({
         symbol: instrumentsState.selected!.symbol,
         side: orderFormState.side.value,
-        size: orderFormState.size.value ?? 0,
+        size: instrumentsState.fromRealQty(instrumentsState.selected!.symbol, orderFormState.size.value ?? 0),
         type: orderFormState.orderType.value,
-        price: orderFormState.price.value,
+        price: instrumentsState.fromRealPrice(instrumentsState.selected!.symbol, orderFormState.price.value ?? 0),
     });
     orderFormState.orderSubmit.value = created;
     // TODO: should we do this?
@@ -311,9 +325,9 @@ export async function submitOrder() {
 export function placeOrder(input: {
     symbol: string;
     side: Side;
-    size: number;
+    size: number; // integer amount
     type: OrderType;
-    price: number | null;
+    price: number | null; // integer price
 }): SWRResponse<void> {
     return useSWR(async () => {
         if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
@@ -328,14 +342,12 @@ export function placeOrder(input: {
                 "x-signature": "4564",
             },
             body: JSON.stringify({
-                order_id: "", // You may want to generate a unique ID here
+                order_id: uuidv7(), 
                 order_side: input.side,
                 order_type: input.type,
                 pair: input.symbol.split("/"),
-                // TODO bertrand: pick decimals from API
                 price: input.price,
-                // TODO bertrand: pick decimals from API
-                quantity: Math.round(input.size * 10000000),
+                quantity: input.size,
             }),
         });
     });

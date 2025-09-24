@@ -272,22 +272,22 @@ pub enum PermissionnedOrderbookAction {
     AddSessionKey,
     Deposit {
         token: String,
-        amount: u32,
+        amount: u64,
     },
     CreateOrder {
         order_id: String,
         order_side: OrderSide,
         order_type: OrderType,
-        price: Option<u32>,
+        price: Option<u64>,
         pair: TokenPair,
-        quantity: u32,
+        quantity: u64,
     },
     Cancel {
         order_id: String,
     },
     Withdraw {
         token: String,
-        amount: u32,
+        amount: u64,
     },
 }
 

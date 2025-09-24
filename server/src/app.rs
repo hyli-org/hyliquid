@@ -185,15 +185,15 @@ pub struct CreateOrderRequest {
     pub order_id: String,
     pub order_side: OrderSide,
     pub order_type: OrderType,
-    pub price: Option<u32>,
+    pub price: Option<u64>,
     pub pair: TokenPair,
-    pub quantity: u32,
+    pub quantity: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DepositRequest {
     pub token: String,
-    pub amount: u32,
+    pub amount: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -204,7 +204,7 @@ pub struct CancelOrderRequest {
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WithdrawRequest {
     pub token: String,
-    pub amount: u32,
+    pub amount: u64,
 }
 
 // --------------------------------------------------------
@@ -556,7 +556,7 @@ fn create_permissioned_private_input<T: BorshSerialize>(
 pub struct SerializableOrderbook {
     pub secret: Vec<u8>,
     pub lane_id: LaneId,
-    pub balances: BTreeMap<String, BTreeMap<String, u32>>,
+    pub balances: BTreeMap<String, BTreeMap<String, u64>>,
     pub users_info: BTreeMap<String, UserInfo>,
     pub orders: BTreeMap<String, Order>,
     pub buy_orders: BTreeMap<String, VecDeque<String>>, // "token1-token2" format

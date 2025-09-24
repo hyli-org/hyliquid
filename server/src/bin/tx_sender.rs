@@ -40,13 +40,13 @@ enum Commands {
         #[arg(long)]
         order_type: String,
         #[arg(long)]
-        price: Option<u32>,
+        price: Option<u64>,
         #[arg(long)]
         pair_token1: String,
         #[arg(long)]
         pair_token2: String,
         #[arg(long)]
-        quantity: u32,
+        quantity: u64,
     },
     /// Add a session key for user authentication
     AddSessionKey,
@@ -55,7 +55,7 @@ enum Commands {
         #[arg(long)]
         token: String,
         #[arg(long)]
-        amount: u32,
+        amount: u64,
     },
     // /// Cancel an existing order
     Cancel {
@@ -67,7 +67,7 @@ enum Commands {
         #[arg(long)]
         token: String,
         #[arg(long)]
-        amount: u32,
+        amount: u64,
     },
 }
 

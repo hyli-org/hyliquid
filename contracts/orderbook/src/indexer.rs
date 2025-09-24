@@ -91,11 +91,11 @@ impl Orderbook {
         self.clone()
     }
 
-    pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, u32>> {
+    pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, u64>> {
         self.balances.clone()
     }
 
-    pub fn get_balance_for_account(&self, user: &str) -> BTreeMap<TokenName, u32> {
+    pub fn get_balance_for_account(&self, user: &str) -> BTreeMap<TokenName, u64> {
         self.balances
             .iter()
             .filter_map(|(token, balances)| {

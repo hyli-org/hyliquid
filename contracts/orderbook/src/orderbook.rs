@@ -11,7 +11,7 @@ pub struct Orderbook {
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
     // User balances per token: token -> (user -> balance))
-    pub balances: BTreeMap<TokenName, BTreeMap<String, u32>>,
+    pub balances: BTreeMap<TokenName, BTreeMap<String, u64>>,
     // Users info
     pub users_info: BTreeMap<String, UserInfo>,
     // All orders indexed by order_id
@@ -65,9 +65,9 @@ pub struct Order {
     pub order_id: OrderId,
     pub order_type: OrderType,
     pub order_side: OrderSide,
-    pub price: Option<u32>,
+    pub price: Option<u64>,
     pub pair: TokenPair,
-    pub quantity: u32,
+    pub quantity: u64,
 }
 
 pub type OrderId = String;
@@ -91,13 +91,13 @@ pub enum OrderbookEvent {
     OrderUpdate {
         order_id: OrderId,
         taker_order_id: OrderId,
-        remaining_quantity: u32,
+        remaining_quantity: u64,
         pair: TokenPair,
     },
     BalanceUpdated {
         user: String,
         token: String,
-        amount: u32,
+        amount: u64,
     },
     SessionKeyAdded {
         user: String,
@@ -133,7 +133,7 @@ impl Orderbook {
     pub fn deposit(
         &mut self,
         token: String,
-        amount: u32,
+        amount: u64,
         user: &String,
     ) -> Result<Vec<OrderbookEvent>, String> {
         let server_execution = self.server_execution;
@@ -154,7 +154,7 @@ impl Orderbook {
     pub fn withdraw(
         &mut self,
         token: String,
-        amount: u32,
+        amount: u64,
         user: &str,
     ) -> Result<Vec<OrderbookEvent>, String> {
         let server_execution = self.server_execution;
@@ -256,7 +256,7 @@ impl Orderbook {
     ) -> Result<Vec<OrderbookEvent>, String> {
         let mut events = Vec::new();
 
-        let mut transfers_to_process: Vec<(String, String, String, u32)> = vec![];
+        let mut transfers_to_process: Vec<(String, String, String, u64)> = vec![];
         let mut order_to_insert: Option<Order> = None;
 
         let (required_token, required_amount) = match order.order_side {
@@ -660,7 +660,7 @@ impl Orderbook {
         from: &str,
         to: &str,
         token: &str,
-        amount: u32,
+        amount: u64,
     ) -> Result<(), String> {
         // Deduct from sender
         let from_user_balance = self.get_balance_mut(from, token);
@@ -683,11 +683,11 @@ impl Orderbook {
         self.users_info.entry(user.to_string()).or_default()
     }
 
-    pub fn get_balance(&mut self, user: &str, token: &str) -> u32 {
+    pub fn get_balance(&mut self, user: &str, token: &str) -> u64 {
         *self.get_balance_mut(user, token)
     }
 
-    pub fn get_balance_mut(&mut self, user: &str, token: &str) -> &mut u32 {
+    pub fn get_balance_mut(&mut self, user: &str, token: &str) -> &mut u64 {
         self.balances
             .entry(token.to_string())
             .or_default()
