@@ -110,9 +110,31 @@ export class DatabaseQueries {
     }));
   }
 
-  async getUserOrders(userId: number): Promise<Array<Order>> {
-    const result = await this.pool.query('SELECT * FROM orders WHERE user_id = $1', [userId]);
-    return result.rows.map(row => ({
+  async getUserOrders(
+    userId: number, 
+    page: number = 1, 
+    limit: number = 20, 
+    sortBy: string = 'created_at', 
+    sortOrder: 'asc' | 'desc' = 'desc'
+  ): Promise<{ orders: Array<Order>, total: number }> {
+    const offset = (page - 1) * limit;
+    
+    // Validate sort column to prevent SQL injection
+    const allowedSortColumns = ['created_at', 'updated_at', 'order_id', 'price', 'qty', 'status'];
+    const safeSortBy = allowedSortColumns.includes(sortBy) ? sortBy : 'created_at';
+    const safeSortOrder = sortOrder === 'asc' ? 'ASC' : 'DESC';
+    
+    // Get total count
+    const countResult = await this.pool.query('SELECT COUNT(*) FROM orders WHERE user_id = $1', [userId]);
+    const total = parseInt(countResult.rows[0].count, 10);
+    
+    // Get paginated results
+    const result = await this.pool.query(
+      `SELECT * FROM orders WHERE user_id = $1 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+    
+    const orders = result.rows.map(row => ({
       order_id: row.order_id,
       order_signed_id: row.order_signed_id,
       instrument_id: row.instrument_id,
@@ -127,11 +149,39 @@ export class DatabaseQueries {
       created_at: row.created_at,
       updated_at: row.updated_at
     }));
+    
+    return { orders, total };
   }
 
-  async getUserOrdersByPair(userId: number, instrumentId: number): Promise<Array<Order>> {
-    const result = await this.pool.query('SELECT * FROM orders WHERE user_id = $1 AND instrument_id = $2', [userId, instrumentId]);
-    return result.rows.map(row => ({
+  async getUserOrdersByPair(
+    userId: number, 
+    instrumentId: number,
+    page: number = 1, 
+    limit: number = 20, 
+    sortBy: string = 'created_at', 
+    sortOrder: 'asc' | 'desc' = 'desc'
+  ): Promise<{ orders: Array<Order>, total: number }> {
+    const offset = (page - 1) * limit;
+    
+    // Validate sort column to prevent SQL injection
+    const allowedSortColumns = ['created_at', 'updated_at', 'order_id', 'price', 'qty', 'status'];
+    const safeSortBy = allowedSortColumns.includes(sortBy) ? sortBy : 'created_at';
+    const safeSortOrder = sortOrder === 'asc' ? 'ASC' : 'DESC';
+    
+    // Get total count
+    const countResult = await this.pool.query(
+      'SELECT COUNT(*) FROM orders WHERE user_id = $1 AND instrument_id = $2', 
+      [userId, instrumentId]
+    );
+    const total = parseInt(countResult.rows[0].count, 10);
+    
+    // Get paginated results
+    const result = await this.pool.query(
+      `SELECT * FROM orders WHERE user_id = $1 AND instrument_id = $2 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $3 OFFSET $4`,
+      [userId, instrumentId, limit, offset]
+    );
+    
+    const orders = result.rows.map(row => ({
       order_id: row.order_id,
       order_signed_id: row.order_signed_id,
       instrument_id: row.instrument_id,
@@ -146,6 +196,8 @@ export class DatabaseQueries {
       created_at: row.created_at,
       updated_at: row.updated_at
     }));
+    
+    return { orders, total };
   }
 
   async getOrderbook(symbol: string, levels: number, groupTicks: number): Promise<Array<{

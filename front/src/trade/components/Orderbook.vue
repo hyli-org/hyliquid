@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { instrumentsState, orderbookState } from "../trade";
+import { orderbookState, instrumentsState, assetsState } from "../trade";
 
 const midPrice = computed(() => orderbookState.mid);
 </script>
@@ -17,12 +17,12 @@ const midPrice = computed(() => orderbookState.mid);
                     :key="'a' + a.price"
                     class="flex justify-between text-sm text-rose-300"
                 >
-                    <span class="tabular-nums">{{ a.price.toLocaleString() }}</span>
-                    <span class="tabular-nums">{{ a.quantity }}</span>
+                    <span class="tabular-nums">{{ instrumentsState.toRealPrice(instrumentsState.selected?.symbol, a.price) }}</span>
+                    <span class="tabular-nums">{{ instrumentsState.toRealQty(instrumentsState.selected?.symbol, a.quantity) }}</span>
                 </div>
             </div>
             <div class="my-2 border-t border-b border-neutral-800 py-1 text-center text-neutral-300">
-                <span class="tabular-nums">{{ midPrice.toLocaleString() }}</span>
+                <span class="tabular-nums">{{ instrumentsState.toRealPrice(instrumentsState.selected?.symbol, midPrice) }}</span>
             </div>
             <div class="space-y-1">
                 <div
@@ -30,8 +30,8 @@ const midPrice = computed(() => orderbookState.mid);
                     :key="'b' + b.price"
                     class="flex justify-between text-sm text-emerald-300"
                 >
-                    <span class="tabular-nums">{{ b.price.toLocaleString() }}</span>
-                    <span class="tabular-nums">{{ b.quantity }}</span>
+                    <span class="tabular-nums">{{ instrumentsState.toRealPrice(instrumentsState.selected?.symbol, b.price) }}</span>
+                    <span class="tabular-nums">{{ instrumentsState.toRealQty(instrumentsState.selected?.symbol, b.quantity) }}</span>
                 </div>
             </div>
         </template>

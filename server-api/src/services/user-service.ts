@@ -2,7 +2,7 @@
  * User service with in-memory caching
  */
 
-import { UserBalances, BalanceResponse, UserOrders, UserTrades } from '../types';
+import { UserBalances, BalanceResponse, UserTrades, PaginatedUserOrders, PaginationQuery } from '../types';
 import { DatabaseQueries } from '../config/database';
 
 export class UserService {
@@ -68,21 +68,57 @@ export class UserService {
   }
 
   /**
-   * Get user orders
+   * Get user orders with pagination
    */
-  async getOrders(user: string): Promise<UserOrders> {
+  async getOrdersPaginated(user: string, pagination: PaginationQuery = {}): Promise<PaginatedUserOrders> {
     const userId = await this.getUserId(user);
-    const orders = await this.queries.getUserOrders(userId);
-    return { orders };
+    const page = pagination.page || 1;
+    const limit = Math.min(pagination.limit || 20, 100); // Cap at 100 items per page
+    const sortBy = pagination.sort_by || 'created_at';
+    const sortOrder = pagination.sort_order || 'desc';
+    
+    const { orders, total } = await this.queries.getUserOrders(userId, page, limit, sortBy, sortOrder);
+    
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      data: orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: totalPages,
+        has_next: page < totalPages,
+        has_prev: page > 1
+      }
+    };
   }
 
   /**
-   * Get user orders by pair
+   * Get user orders by pair with pagination
    */
-  async getOrdersByPair(user: string, instrumentId: number): Promise<UserOrders> {
+  async getOrdersByPairPaginated(user: string, instrumentId: number, pagination: PaginationQuery = {}): Promise<PaginatedUserOrders> {
     const userId = await this.getUserId(user);
-    const orders = await this.queries.getUserOrdersByPair(userId, instrumentId);
-    return { orders };
+    const page = pagination.page || 1;
+    const limit = Math.min(pagination.limit || 20, 100); // Cap at 100 items per page
+    const sortBy = pagination.sort_by || 'created_at';
+    const sortOrder = pagination.sort_order || 'desc';
+    
+    const { orders, total } = await this.queries.getUserOrdersByPair(userId, instrumentId, page, limit, sortBy, sortOrder);
+    
+    const totalPages = Math.ceil(total / limit);
+    
+    return {
+      data: orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        total_pages: totalPages,
+        has_next: page < totalPages,
+        has_prev: page > 1
+      }
+    };
   }
 
   /**

@@ -1,7 +1,9 @@
 <script setup lang="ts">
+import { assetsState } from "../trade";
+
 interface Balance {
     asset: string;
-    free: number;
+    available: number;
     locked: number;
     total: number;
 }
@@ -21,7 +23,7 @@ const props = defineProps<Props>();
             <thead class="sticky top-0 bg-neutral-900/60 text-neutral-400">
                 <tr>
                     <th class="px-3 py-2 text-left font-medium">Asset</th>
-                    <th class="px-3 py-2 text-right font-medium">Free</th>
+                    <th class="px-3 py-2 text-right font-medium">Available</th>
                     <th class="px-3 py-2 text-right font-medium">Locked</th>
                     <th class="px-3 py-2 text-right font-medium">Total</th>
                 </tr>
@@ -39,13 +41,13 @@ const props = defineProps<Props>();
                 <tr v-for="balance in props.balances" :key="balance.asset" class="border-t border-neutral-900">
                     <td class="px-3 py-2 font-medium text-white">{{ balance.asset }}</td>
                     <td class="px-3 py-2 text-right tabular-nums text-neutral-300">
-                        {{ balance.free.toFixed(8) }}
+                        {{ assetsState.toRealQty(balance.asset, balance.available).toLocaleString() }}
                     </td>
                     <td class="px-3 py-2 text-right tabular-nums text-neutral-300">
-                        {{ balance.locked.toFixed(8) }}
+                        {{ assetsState.toRealQty(balance.asset, balance.locked).toLocaleString() }}
                     </td>
                     <td class="px-3 py-2 text-right tabular-nums text-white">
-                        {{ balance.total.toFixed(8) }}
+                        {{ assetsState.toRealQty(balance.asset, balance.total).toLocaleString() }}
                     </td>
                 </tr>
             </tbody>

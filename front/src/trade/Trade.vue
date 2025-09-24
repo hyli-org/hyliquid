@@ -62,6 +62,7 @@ watchEffect(() => {
                                             orders: activityState.orders,
                                             loading: activityState.ordersLoading,
                                             error: activityState.ordersError,
+                                            pagination: activityState.ordersPagination,
                                         }
                                       : activityState.bottomTab === 'Fills'
                                         ? {

@@ -11,7 +11,8 @@ INSERT INTO assets (symbol, scale, step)
 -- qty_step=1000 => pas de 1000 sats (0.00001000 BTC) pour les quantités d'ordre
 INSERT INTO instruments (symbol, tick_size, qty_step, price_scale, base_asset_id, quote_asset_id, status)
 VALUES
-    ('BTC/USDT', 5, -- 0.05 USDT
+    ('BTC/USDT', 
+        50000, -- 0.05 USDT (because of scale=6 for USDT)
         1000, -- 1000 sats
         2, -- 2 décimales pour le prix
         (

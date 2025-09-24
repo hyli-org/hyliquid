@@ -18,7 +18,7 @@ export const bookRoutes = (bookService: BookService) => {
         };
 
         const queryParams = query as GetBookQuery;
-        const levels = queryParams.levels ? parseInt(queryParams.levels.toString()) : 20;
+        const levels = queryParams.levels ? parseInt(queryParams.levels.toString()) : 10;
         const groupTicks = queryParams.group_ticks ? parseInt(queryParams.group_ticks.toString()) : 10;
 
         try {

@@ -18,6 +18,7 @@ AS $$
 DECLARE
   v_instrument_id bigint;
   v_tick_size     bigint;
+  v_price_scale   smallint;
   v_qty_step      bigint;
   v_user_ids      bigint[];
 BEGIN
@@ -27,8 +28,8 @@ BEGIN
   END IF;
 
   -- Récupère les paramètres de l’instrument (non ambigu)
-  SELECT i.instrument_id, i.tick_size, i.qty_step
-    INTO v_instrument_id, v_tick_size, v_qty_step
+  SELECT i.instrument_id, i.tick_size, i.price_scale, i.qty_step
+    INTO v_instrument_id, v_tick_size, v_price_scale, v_qty_step
   FROM instruments i
   WHERE i.symbol = p_instrument_symbol;
 
@@ -49,6 +50,7 @@ BEGIN
     SELECT
       v_instrument_id AS p_ins_id,
       v_tick_size     AS p_tick,
+      v_price_scale   AS p_price_scale,
       v_qty_step      AS p_qstep,
       p_mid_price_int AS p_mid,
       p_price_range_ticks AS p_rng,
@@ -65,13 +67,13 @@ BEGIN
       -- user aléatoire
       (SELECT v_user_ids[1 + floor(random()*array_length(v_user_ids,1))::int])::bigint AS ord_user_id,
       -- incrementing order id
-      md5(g::text)::text AS ord_user_signed_id,
+      md5(g::text)::text AS ord_signed_id,
       -- bid/ask biaisé
       (CASE WHEN random() < p.p_side_bias THEN 'bid' ELSE 'ask' END)::order_side AS ord_side,
       'limit'::order_type AS ord_type,
       -- prix = mid ± k*tick (>= tick)
       GREATEST(p.p_tick,
-               p.p_mid + ((floor(random() * (2*p.p_rng + 1))::int - p.p_rng) * p.p_tick)
+               p.p_mid + ((floor(random() * (2*p.p_rng + 1))::int - p.p_rng) * p.p_tick) * power(10::numeric, p.p_price_scale)
       )::bigint AS ord_price,
       -- qty = n_steps * qty_step
       ((p.p_smin + floor(random()*(p.p_smax - p.p_smin + 1))::int) * p.p_qstep)::bigint AS ord_qty,
@@ -140,6 +142,12 @@ BEGIN
       END::bigint AS ord_qty_filled
     FROM labeled l
   ),
+  ins_signed_ids AS (
+    INSERT INTO order_signed_ids(order_signed_id, user_id)
+    SELECT ord_signed_id, ord_user_id
+    FROM with_fill
+    RETURNING order_signed_id AS ret_signed_id
+  ),
   ins_orders AS (
     INSERT INTO orders(
       instrument_id, user_id, order_signed_id, side, type, price, qty, qty_filled, status
@@ -190,11 +198,19 @@ AS $$
 DECLARE
   v_ps smallint;
   v_mid_int bigint;
+  v_scale smallint;
+  v_quote_asset_id bigint;
 BEGIN
+  SELECT quote_asset_id INTO v_quote_asset_id FROM instruments WHERE symbol=p_instrument_symbol;
+  IF v_quote_asset_id IS NULL THEN RAISE EXCEPTION 'Instrument % not found', p_instrument_symbol; END IF;
+
+  SELECT scale INTO v_scale FROM assets WHERE asset_id=v_quote_asset_id;
+  IF v_scale IS NULL THEN RAISE EXCEPTION 'Asset % not found', v_quote_asset_id; END IF;
+
   SELECT price_scale INTO v_ps FROM instruments WHERE symbol=p_instrument_symbol;
   IF v_ps IS NULL THEN RAISE EXCEPTION 'Instrument % not found', p_instrument_symbol; END IF;
 
-  v_mid_int := round(p_mid_price * power(10::numeric, v_ps))::bigint;
+  v_mid_int := round(p_mid_price * power(10::numeric, v_scale + v_ps))::bigint;
 
   PERFORM seed_limit_orders_int_v2(
     p_instrument_symbol, p_n, v_mid_int,

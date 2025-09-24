@@ -166,12 +166,3 @@ CREATE TABLE trades (
 )
 -- PARTITION BY RANGE (trade_time)
 ;
-
--- Select price difference between now and  24h agor for a pair
-WITH price_24h AS (
-    SELECT price FROM trades WHERE instrument_id = 2 AND trade_time < now() - interval '24 hours' ORDER BY trade_id DESC LIMIT 1
-),
-price_now AS (
-    SELECT price FROM trades WHERE instrument_id = 2 ORDER BY trade_id DESC LIMIT 1
-)
-SELECT price_now.price, price_24h.price, price_now.price - price_24h.price AS price_change FROM price_now, price_24h;

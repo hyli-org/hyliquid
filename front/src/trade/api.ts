@@ -1,4 +1,4 @@
-import type { Balance, Fill, Instrument, Order, OrderStatus, PerpPosition } from "./trade";
+import type { Asset, Balance, Fill, Instrument, Order, OrderStatus, PerpPosition } from "./trade";
 
 // Base API URL - you may want to make this configurable
 const API_BASE_URL = "http://localhost:3000";
@@ -62,6 +62,27 @@ interface ApiOrder {
   updated_at: string;
 }
 
+export interface PaginationInfo {
+  page: number;
+  limit: number;
+  total: number;
+  total_pages: number;
+  has_next: boolean;
+  has_prev: boolean;
+}
+
+interface PaginatedApiOrdersResponse {
+  data: ApiOrder[];
+  pagination: PaginationInfo;
+}
+
+export interface PaginationParams {
+  page?: number;
+  limit?: number;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+}
+
 interface ApiTrade {
   trade_id: number;
   instrument_id: number;
@@ -85,6 +106,10 @@ function transformInstrument(apiInstrument: ApiInstrument, marketPrice?: number,
     price: marketPrice || 0,
     change: priceChange || 0,
     vol: vol || 0,
+    price_scale: apiInstrument.price_scale,
+    qty_step: apiInstrument.qty_step,
+    base_asset: apiInstrument.symbol.split("/")[0] || "?",
+    quote_asset: apiInstrument.symbol.split("/")[1] || "?",
   };
 }
 
@@ -146,7 +171,7 @@ export async function fetchMarketPrice(symbol: string): Promise<{ price: number;
   }
 }
 
-export async function fetchInstruments(): Promise<Instrument[]> {
+export async function fetchInstruments(): Promise<{instruments: Instrument[], assets: Asset[]}> {
   const response = await fetch(`${API_BASE_URL}/api/info`);
   if (!response.ok) {
     throw new Error(`Failed to fetch instruments: ${response.status} ${response.statusText}`);
@@ -159,7 +184,14 @@ export async function fetchInstruments(): Promise<Instrument[]> {
     .filter(inst => inst.status === "active")
     .map(inst => fetchMarketPrice(inst.symbol).then(price => transformInstrument(inst, price.price, price.change, price.vol))));
 
-  return instruments;
+  const assets = data.assets.filter(asset => asset.status === "active").map(asset => ({
+    symbol: asset.symbol,
+    scale: asset.scale,
+    step: asset.step,
+  }));
+
+
+  return {instruments, assets};
 }
 
 export async function fetchOrderbook(symbol: string) {
@@ -167,7 +199,7 @@ export async function fetchOrderbook(symbol: string) {
   const [baseAsset, quoteAsset] = symbol.split("/");
   
   const response = await fetch(
-    `${API_BASE_URL}/api/book/${baseAsset}/${quoteAsset}?levels=20&group_ticks=1`
+    `${API_BASE_URL}/api/book/${baseAsset}/${quoteAsset}?levels=10&group_ticks=1`
   );
   
   if (!response.ok) {
@@ -196,8 +228,18 @@ export async function fetchPositions(): Promise<PerpPosition[]> {
   return [];
 }
 
-export async function fetchOrders(): Promise<Order[]> {
-  const response = await fetch(`${API_BASE_URL}/api/user/orders`, {
+export async function fetchOrders(pagination?: PaginationParams): Promise<{ orders: Order[], pagination?: PaginationInfo }> {
+  const url = new URL(`${API_BASE_URL}/api/user/orders`);
+  
+  // Add pagination parameters to URL if provided
+  if (pagination) {
+    if (pagination.page) url.searchParams.set('page', pagination.page.toString());
+    if (pagination.limit) url.searchParams.set('limit', pagination.limit.toString());
+    if (pagination.sort_by) url.searchParams.set('sort_by', pagination.sort_by);
+    if (pagination.sort_order) url.searchParams.set('sort_order', pagination.sort_order);
+  }
+  
+  const response = await fetch(url.toString(), {
     headers: {
       "Content-Type": "application/json",
       ...getAuthHeaders(),
@@ -208,13 +250,27 @@ export async function fetchOrders(): Promise<Order[]> {
     throw new Error(`Failed to fetch orders: ${response.status} ${response.statusText}`);
   }
   
-  const data: { orders: ApiOrder[] } = await response.json();
+  const data = await response.json();
   
   // Get instruments for symbol mapping
   const instrumentsResponse = await fetch(`${API_BASE_URL}/api/info`);
   const instrumentsData: ApiInfoResponse = await instrumentsResponse.json();
   
-  return data.orders.map(order => transformOrder(order, instrumentsData.instruments));
+  // Check if response is paginated or legacy format
+  if (data.data && data.pagination) {
+    // Paginated response
+    const paginatedData = data as PaginatedApiOrdersResponse;
+    return {
+      orders: paginatedData.data.map(order => transformOrder(order, instrumentsData.instruments)),
+      pagination: paginatedData.pagination
+    };
+  } else {
+    // Legacy response format
+    const legacyData = data as { orders: ApiOrder[] };
+    return {
+      orders: legacyData.orders.map(order => transformOrder(order, instrumentsData.instruments))
+    };
+  }
 }
 
 export async function fetchFills(): Promise<Fill[]> {
@@ -254,7 +310,7 @@ export async function fetchBalances(): Promise<Balance[]> {
   
   return data.balances.map(balance => ({
     asset: balance.token,
-    free: balance.available,
+    available: balance.available,
     locked: balance.reserved,
     total: balance.total,
   }));
