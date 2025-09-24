@@ -70,6 +70,16 @@ watchEffect(() => {
     }
 });
 
+// Function to select instrument by symbol (for URL-based selection)
+export function selectInstrumentBySymbol(symbol: string): boolean {
+    const instrument = instrumentsState.list.find(instrument => instrument.symbol === symbol);
+    if (instrument) {
+        instrumentsState.selected = instrument;
+        return true;
+    }
+    return false;
+}
+
 // Orderbook state via SWRV
 const orderbook = useSWR(() => {
     if (!instrumentsState.selected) throw new Error("No instrument selected");

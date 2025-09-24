@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { watchEffect } from "vue";
+import { useRoute } from "vue-router";
 import InstrumentsPanel from "./components/InstrumentsPanel.vue";
 import TopBar from "./components/TopBar.vue";
 import ChartPlaceholder from "./components/ChartPlaceholder.vue";
@@ -8,7 +10,19 @@ import BottomTabs from "./components/BottomTabs.vue";
 import PositionsTable from "./components/PositionsTable.vue";
 import OrdersTable from "./components/OrdersTable.vue";
 import FillsTable from "./components/FillsTable.vue";
-import { activityState, instrumentsState } from "./trade";
+import { activityState, instrumentsState, selectInstrumentBySymbol } from "./trade";
+
+const route = useRoute();
+
+// Handle URL-based instrument selection
+watchEffect(() => {
+    const urlInstrument = route.params.instrument as string;
+    if (urlInstrument && instrumentsState.list.length > 0) {
+        // Decode the instrument symbol from the URL
+        const decodedSymbol = decodeURIComponent(urlInstrument);
+        selectInstrumentBySymbol(decodedSymbol);
+    }
+});
 </script>
 
 <template>

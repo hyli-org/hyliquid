@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { useRouter } from "vue-router";
 import { instrumentsState } from "../trade";
+
+const router = useRouter();
 
 const filteredInstruments = computed(() => {
     const q = instrumentsState.search.trim().toLowerCase();
@@ -8,6 +11,13 @@ const filteredInstruments = computed(() => {
     if (!q) return list;
     return list.filter((m) => m.symbol.toLowerCase().includes(q));
 });
+
+const selectInstrument = (instrument: any) => {
+    instrumentsState.selected = instrument;
+    // Update URL to include the instrument parameter (encode the symbol for URL safety)
+    const encodedSymbol = encodeURIComponent(instrument.symbol);
+    router.push(`/trade/${encodedSymbol}`);
+};
 </script>
 
 <template>
@@ -29,7 +39,7 @@ const filteredInstruments = computed(() => {
                 <li
                     v-for="m in filteredInstruments"
                     :key="m.symbol"
-                    @click="() => (instrumentsState.selected = m)"
+                    @click="() => selectInstrument(m)"
                     :class="[
                         'cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-neutral-900',
                         instrumentsState.selected?.symbol === m.symbol ? 'bg-neutral-900' : '',

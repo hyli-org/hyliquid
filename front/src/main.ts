@@ -7,6 +7,7 @@ import Trade from "./trade/Trade.vue";
 const routes = [
     { path: "/", redirect: "/trade" },
     { path: "/trade", component: Trade },
+    { path: "/trade/:instrument", component: Trade },
 ];
 
 export const router = createRouter({
