@@ -166,6 +166,34 @@ export class DatabaseQueries {
     }));
   }
 
+  async getLatestPrice(instrumentId: number): Promise<number> {
+    const result = await this.pool.query('SELECT price FROM trades WHERE instrument_id = $1 ORDER BY trade_id DESC LIMIT 1', [instrumentId]);
+    return parseInt(result.rows?.[0]?.price, 10) || 0;
+  }
+
+  /** 
+   * Get price change over 24h for a pair
+   */
+  async getPriceChange(instrumentId: number): Promise<number> {
+    const result = await this.pool.query(`WITH price_24h AS (
+    SELECT price, trade_id FROM trades WHERE instrument_id = $1 AND trade_time < now() - interval '24 hours'
+        UNION ALL
+        SELECT 0 AS price, 0 as trade_id
+        ORDER BY trade_id DESC LIMIT 1
+        ),
+    price_now AS (
+        SELECT price FROM trades WHERE instrument_id = $1 ORDER BY trade_id DESC LIMIT 1
+    )
+    SELECT price_now.price - price_24h.price AS price_change FROM price_now, price_24h;
+    `, [instrumentId]);
+    return parseInt(result.rows?.[0]?.price_change, 10) || 0;
+  }
+
+  async getVolume(instrumentId: number): Promise<number> {
+    const result = await this.pool.query(`SELECT SUM(qty) FROM trades WHERE instrument_id = $1 AND trade_time > now() - interval '24 hours'`, [instrumentId]);
+    return parseInt(result.rows?.[0]?.sum, 10) || 0;
+  }
+
   async getUserTrades(userId: number): Promise<Array<Trade>> {
     const result = await this.pool.query(`
       WITH ids AS(

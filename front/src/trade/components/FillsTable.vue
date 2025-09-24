@@ -28,7 +28,7 @@ defineProps<{ fills: Fill[]; loading?: boolean; error?: string | null }>();
                         {{ f.side }}
                     </td>
                     <td class="px-3 py-2 tabular-nums">{{ f.size }}</td>
-                    <td class="px-3 py-2 tabular-nums">@ {{ f.price }}</td>
+                    <td class="px-3 py-2 tabular-nums">{{ f.price }}</td>
                     <td class="px-3 py-2">{{ f.time }}</td>
                 </tr>
             </tbody>

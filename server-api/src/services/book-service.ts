@@ -62,6 +62,45 @@ export class BookService {
   }
 
   /**
+   * Get latest price for a trading pair
+   */
+  async getLatestPrice(baseAssetSymbol: string, quoteAssetSymbol: string): Promise<number> {
+    const symbol = this.assetService.getInstrumentSymbol(baseAssetSymbol, quoteAssetSymbol);
+    const instrumentId = this.assetService.getInstrumentId(symbol);
+    if (!instrumentId) {
+      throw new Error(`Instrument not found: ${symbol}`);
+    }
+    const price = await this.queries.getLatestPrice(instrumentId);
+    return price;
+  }
+
+  /**
+   * Get price change for a trading pair
+   */
+  async getPriceChange(baseAssetSymbol: string, quoteAssetSymbol: string): Promise<number> {
+    const symbol = this.assetService.getInstrumentSymbol(baseAssetSymbol, quoteAssetSymbol);
+    const instrumentId = this.assetService.getInstrumentId(symbol);
+    if (!instrumentId) {
+      throw new Error(`Instrument not found: ${symbol}`);
+    }
+    const change = await this.queries.getPriceChange(instrumentId);
+    return change;
+  }
+
+  /**
+   * Get volume for a trading pair
+   */
+  async getVolume(baseAssetSymbol: string, quoteAssetSymbol: string): Promise<number> {
+    const symbol = this.assetService.getInstrumentSymbol(baseAssetSymbol, quoteAssetSymbol);
+    const instrumentId = this.assetService.getInstrumentId(symbol);
+    if (!instrumentId) {
+      throw new Error(`Instrument not found: ${symbol}`);
+    }
+    const vol = await this.queries.getVolume(instrumentId);
+    return vol;
+  }
+
+  /**
    * Get all available trading pairs
    */
   getAvailablePairs(): string[] {

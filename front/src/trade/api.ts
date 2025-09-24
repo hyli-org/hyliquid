@@ -79,18 +79,12 @@ interface ApiBalance {
 }
 
 // Helper function to transform API instrument to frontend instrument
-function transformInstrument(apiInstrument: ApiInstrument): Instrument {
-  // For now, we'll use mock data for price, change, and volume
-  // In a real implementation, you'd fetch this from a price feed or market data service
-  const mockPrice = 50000 + Math.random() * 20000; // Mock price
-  const mockChange = (Math.random() - 0.5) * 10; // Mock change
-  const mockVolume = Math.floor(Math.random() * 100000000); // Mock volume
-  
+function transformInstrument(apiInstrument: ApiInstrument, marketPrice?: number, priceChange?: number, vol?: number): Instrument {
   return {
     symbol: apiInstrument.symbol,
-    price: mockPrice,
-    change: mockChange,
-    vol: mockVolume,
+    price: marketPrice || 0,
+    change: priceChange || 0,
+    vol: vol || 0,
   };
 }
 
@@ -126,6 +120,32 @@ function transformTrade(apiTrade: ApiTrade, instruments: ApiInstrument[]): Fill 
 }
 
 
+export async function fetchMarketPrice(symbol: string): Promise<{ price: number; change: number; vol: number }> {
+  try {
+    // Parse symbol to get base and quote assets
+    const [baseAsset, quoteAsset] = symbol.split("/");
+    
+    const response = await fetch(
+      `${API_BASE_URL}/api/market/price/${baseAsset}/${quoteAsset}`
+    );
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch market price: ${response.status} ${response.statusText}`);
+    }
+    
+    const data = await response.json();
+    
+    return {
+      price: data.price || 0,
+      change: data.change || 0,
+      vol: data.vol || 0,
+    };
+  } catch (error) {
+    console.warn(`Failed to fetch market price for ${symbol}:`, error);
+    return { price: 0, change: 0, vol: 0 };
+  }
+}
+
 export async function fetchInstruments(): Promise<Instrument[]> {
   const response = await fetch(`${API_BASE_URL}/api/info`);
   if (!response.ok) {
@@ -133,11 +153,13 @@ export async function fetchInstruments(): Promise<Instrument[]> {
   }
   
   const data: ApiInfoResponse = await response.json();
-  
-  // Transform API instruments to frontend format
-  return data.instruments
+
+  // Transform API instruments to frontend format (initially with price 0)
+  const instruments = await Promise.all(data.instruments
     .filter(inst => inst.status === "active")
-    .map(inst => transformInstrument(inst));
+    .map(inst => fetchMarketPrice(inst.symbol).then(price => transformInstrument(inst, price.price, price.change, price.vol))));
+
+  return instruments;
 }
 
 export async function fetchOrderbook(symbol: string) {
