@@ -136,14 +136,15 @@ impl Orderbook {
         amount: u32,
         user: &String,
     ) -> Result<Vec<OrderbookEvent>, String> {
+        let server_execution = self.server_execution;
         let user_balance = self.get_balance_mut(user, &token);
         *user_balance += amount;
 
-        if self.server_execution {
+        if server_execution {
             Ok(vec![OrderbookEvent::BalanceUpdated {
                 user: user.to_string(),
                 token,
-                amount,
+                amount: *user_balance,
             }])
         } else {
             Ok(vec![])
