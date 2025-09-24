@@ -228,8 +228,8 @@ export async function fetchPositions(): Promise<PerpPosition[]> {
   return [];
 }
 
-export async function fetchOrders(pagination?: PaginationParams): Promise<{ orders: Order[], pagination?: PaginationInfo }> {
-  const url = new URL(`${API_BASE_URL}/api/user/orders`);
+export async function fetchOrdersForInstrument(baseAssetSymbol: string, quoteAssetSymbol: string, pagination?: PaginationParams): Promise<{ orders: Order[], pagination?: PaginationInfo }> {
+  const url = new URL(`${API_BASE_URL}/api/user/orders/${baseAssetSymbol}/${quoteAssetSymbol}`);
   
   // Add pagination parameters to URL if provided
   if (pagination) {
@@ -247,7 +247,7 @@ export async function fetchOrders(pagination?: PaginationParams): Promise<{ orde
   });
   
   if (!response.ok) {
-    throw new Error(`Failed to fetch orders: ${response.status} ${response.statusText}`);
+    throw new Error(`Failed to fetch orders for ${baseAssetSymbol}/${quoteAssetSymbol}: ${response.status} ${response.statusText}`);
   }
   
   const data = await response.json();

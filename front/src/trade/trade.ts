@@ -1,5 +1,5 @@
 import { reactive } from "vue";
-import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrders, fetchFills, fetchBalances, type PaginationInfo, type PaginationParams } from "./api";
+import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrdersForInstrument, fetchFills, fetchBalances, type PaginationInfo, type PaginationParams } from "./api";
 import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
@@ -149,7 +149,7 @@ export const orderbookState = reactive({
 });
 
 watchEffect(() => {
-    // Clear the orders when changing instrument
+    // Clear the orderbook when changing instrument
     instrumentsState.selected;
     orderbookState.bids = [];
     orderbookState.asks = [];
@@ -166,7 +166,14 @@ watchEffect(() => {
 
 // Activity state via SWRV
 const swPositions = useSWR<PerpPosition[]>(fetchPositions);
-const swOrders = useSWR<{ orders: Order[], pagination?: PaginationInfo }>(() => fetchOrders());
+const swOrders = useSWR<{ orders: Order[], pagination?: PaginationInfo }>(() => {
+    if (!instrumentsState.selected) throw new Error("No instrument selected");
+    const parts = instrumentsState.selected.symbol.split("/");
+    if (parts.length !== 2) throw new Error("Invalid instrument symbol format");
+    const baseAsset = parts[0]!;
+    const quoteAsset = parts[1]!;
+    return fetchOrdersForInstrument(baseAsset, quoteAsset);
+});
 const swFills = useSWR<Fill[]>(fetchFills);
 const swBalances = useSWR<Balance[]>(() => fetchBalances());
 
@@ -191,6 +198,16 @@ export const activityState = reactive({
     ordersSortBy: 'created_at',
     ordersSortOrder: 'desc' as 'asc' | 'desc',
 });
+
+watchEffect(() => {
+    // Clear the orders when changing instrument
+    instrumentsState.selected;
+    activityState.orders = [];
+    activityState.ordersPagination = null;
+    activityState.ordersCurrentPage = 1;
+});
+
+
 
 watchEffect(() => {
     const positions = swPositions.data.value;
@@ -233,6 +250,10 @@ export function useOrderFormState() {
 
 // Functions to handle orders pagination
 export async function loadOrdersPage(page: number, pageSize?: number, sortBy?: string, sortOrder?: 'asc' | 'desc') {
+    if (!instrumentsState.selected) {
+        throw new Error("No instrument selected");
+    }
+    
     const pagination: PaginationParams = {
         page,
         limit: pageSize || activityState.ordersPageSize,
@@ -246,8 +267,12 @@ export async function loadOrdersPage(page: number, pageSize?: number, sortBy?: s
     if (sortBy) activityState.ordersSortBy = sortBy;
     if (sortOrder) activityState.ordersSortOrder = sortOrder;
     
-    // Fetch new data
-    const result = await fetchOrders(pagination);
+    // Fetch new data for the selected instrument
+    const parts = instrumentsState.selected.symbol.split("/");
+    if (parts.length !== 2) throw new Error("Invalid instrument symbol format");
+    const baseAsset = parts[0]!;
+    const quoteAsset = parts[1]!;
+    const result = await fetchOrdersForInstrument(baseAsset, quoteAsset, pagination);
     activityState.orders = result.orders;
     if (result.pagination) {
         activityState.ordersPagination = result.pagination;
