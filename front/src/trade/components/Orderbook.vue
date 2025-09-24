@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { orderbookState, instrumentsState, assetsState } from "../trade";
+import { orderbookState, instrumentsState } from "../trade";
 
 const midPrice = computed(() => orderbookState.mid);
 </script>

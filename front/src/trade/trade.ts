@@ -80,14 +80,16 @@ export const instrumentsState = reactive({
     list: [] as Instrument[],
     fetching: instrumentsAndAssets.fetching,
     error: instrumentsAndAssets.error,
-    toRealPrice: (instrument_symbol: string, price: number) => {
+    toRealPrice: (instrument_symbol: string | undefined, price: number) => {
+        if (!instrument_symbol) return price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         const quoteAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.quote_asset;
         const priceScale = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.price_scale ?? 0;
         const quoteAssetScale = assetsState.list.find(a => a.symbol === quoteAsset)?.scale ?? 0;
         const real = price / 10 ** (quoteAssetScale + priceScale);
         return real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: quoteAssetScale });
     },
-    toRealQty: (instrument_symbol: string, qty: number) => {
+    toRealQty: (instrument_symbol: string | undefined, qty: number) => {
+        if (!instrument_symbol) return qty.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         const baseAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.base_asset;
         const baseAssetScale = assetsState.list.find(a => a.symbol === baseAsset)?.scale ?? 0;
         const real = qty / 10 ** baseAssetScale;
