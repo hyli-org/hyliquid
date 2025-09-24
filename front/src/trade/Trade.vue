@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watchEffect } from "vue";
+import { watchEffect, onMounted } from "vue";
 import { useRoute } from "vue-router";
 import InstrumentsPanel from "./components/InstrumentsPanel.vue";
 import TopBar from "./components/TopBar.vue";
@@ -14,6 +14,23 @@ import BalancesTable from "./components/BalancesTable.vue";
 import { activityState, instrumentsState, selectInstrumentBySymbol } from "./trade";
 
 const route = useRoute();
+
+// Map hash values to tab names
+const hashToTab: Record<string, "Positions" | "Orders" | "Fills" | "Balances"> = {
+    '#positions': 'Positions',
+    '#orders': 'Orders',
+    '#fills': 'Fills', 
+    '#balances': 'Balances'
+};
+
+// Initialize tab from URL hash on page load
+onMounted(() => {
+    const currentHash = window.location.hash;
+    const tab = hashToTab[currentHash];
+    if (tab) {
+        activityState.bottomTab = tab;
+    }
+});
 
 // Handle URL-based instrument selection
 watchEffect(() => {
