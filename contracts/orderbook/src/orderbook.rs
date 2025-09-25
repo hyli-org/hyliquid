@@ -13,16 +13,16 @@ use sdk::{ContractName, LaneId, TxContext};
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
 pub struct Orderbook {
     // Server secret for authentication on permissionned actions
-    pub hashed_secret: Vec<u8>,
+    pub hashed_secret: [u8; 32],
     // Registered token pairs with asset scales
     pub pairs_info: BTreeMap<TokenPair, PairInfo>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
 
     // Balances merkle tree root for each token
-    pub balances_merkle_roots: BTreeMap<TokenName, Vec<u8>>,
+    pub balances_merkle_roots: BTreeMap<TokenName, [u8; 32]>,
     // Users info merkle root
-    pub users_info_merkle_root: Vec<u8>,
+    pub users_info_merkle_root: [u8; 32],
 
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,
@@ -148,10 +148,10 @@ impl Clone for Orderbook {
 
         // Clone all the simple fields
         Orderbook {
-            hashed_secret: self.hashed_secret.clone(),
+            hashed_secret: self.hashed_secret,
             pairs_info: self.pairs_info.clone(),
             lane_id: self.lane_id.clone(),
-            users_info_merkle_root: self.users_info_merkle_root.clone(),
+            users_info_merkle_root: self.users_info_merkle_root,
             balances_merkle_roots: self.balances_merkle_roots.clone(),
             users_info_mt: users_info,
             users_info_salt: self.users_info_salt.clone(),
@@ -188,7 +188,7 @@ impl Orderbook {
                 SparseMerkleTree::new(H256::zero(), Default::default()),
             );
             self.balances_merkle_roots
-                .insert(pair.0.clone(), H256::zero().as_slice().to_vec());
+                .insert(pair.0.clone(), H256::zero().into());
         }
         if !self.balances.contains_key(&pair.1) {
             self.balances.insert(
@@ -196,7 +196,7 @@ impl Orderbook {
                 SparseMerkleTree::new(H256::zero(), Default::default()),
             );
             self.balances_merkle_roots
-                .insert(pair.1.clone(), H256::zero().as_slice().to_vec());
+                .insert(pair.1.clone(), H256::zero().into());
         }
 
         Ok(vec![OrderbookEvent::PairCreated { pair, info }])
@@ -840,8 +840,8 @@ impl Orderbook {
 impl Orderbook {
     pub fn init(lane_id: LaneId, server_execution: bool, secret: Vec<u8>) -> Result<Self, String> {
         let users_info_mt = SparseMerkleTree::default();
-        let users_info_merkle_root = users_info_mt.root().as_slice().to_vec();
-        let hashed_secret = Sha256::digest(&secret).as_slice().to_vec();
+        let users_info_merkle_root = (*users_info_mt.root()).into();
+        let hashed_secret = Sha256::digest(&secret).into();
 
         Ok(Orderbook {
             hashed_secret,
@@ -904,6 +904,34 @@ impl Orderbook {
             .unwrap_or_default()
     }
 
+    pub fn update_user_info_merkle_root(
+        &mut self,
+        user_info: &UserInfo,
+        user_info_proof: &BorshableMerkleProof,
+    ) -> Result<(), String> {
+        let new_users_info_merkle_root = if self.server_execution {
+            // Update the users_info the root *and the merkle tree* only for server execution
+            (*self
+                .users_info_mt
+                .update(user_info.get_key(), user_info.clone())
+                .map_err(|e| format!("Failed to update user info in SMT: {e}"))?)
+            .into()
+        } else {
+            // Update the only users_info_merkle_root
+            user_info_proof
+                .0
+                .clone()
+                .compute_root::<SHA256Hasher>(vec![(user_info.get_key(), user_info.to_h256())])
+                .unwrap_or_else(|e| {
+                    panic!("Failed to compute new root on user_info merkle tree: {e}")
+                })
+                .into()
+        };
+
+        self.users_info_merkle_root = new_users_info_merkle_root;
+        Ok(())
+    }
+
     pub fn update_users_info_merkle_root(
         &mut self,
         users_info: &BTreeSet<UserInfo>,
@@ -911,16 +939,16 @@ impl Orderbook {
     ) -> Result<(), String> {
         let new_users_info_merkle_root = if self.server_execution {
             // Update the users_info the root *and the merkle tree* only for server execution
-            self.users_info_mt
+            (*self
+                .users_info_mt
                 .update_all(
                     users_info
                         .iter()
                         .map(|user_info| (user_info.get_key(), user_info.clone()))
                         .collect(),
                 )
-                .map_err(|e| format!("Failed to update user info in SMT: {e}"))?
-                .as_slice()
-                .to_vec()
+                .map_err(|e| format!("Failed to update user info in SMT: {e}"))?)
+            .into()
         } else {
             // Update the only users_info_merkle_root
             user_info_proof
@@ -935,8 +963,7 @@ impl Orderbook {
                 .unwrap_or_else(|e| {
                     panic!("Failed to compute new root on user_info merkle tree: {e}")
                 })
-                .as_slice()
-                .to_vec()
+                .into()
         };
 
         self.users_info_merkle_root = new_users_info_merkle_root;
@@ -1012,10 +1039,10 @@ impl Orderbook {
                 .iter()
                 .map(|(user_info, balance)| (user_info.get_key(), balance.clone()))
                 .collect();
-            tree.update_all(leaves)
-                .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?
-                .as_slice()
-                .to_vec()
+            (*tree
+                .update_all(leaves)
+                .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?)
+            .into()
         } else {
             // Only update the merkle root using the proof and new leaves
             let leaves = balances_to_update
@@ -1027,8 +1054,7 @@ impl Orderbook {
                 .clone()
                 .compute_root::<SHA256Hasher>(leaves)
                 .unwrap_or_else(|e| panic!("Failed to compute new root on token {token}: {e}"))
-                .as_slice()
-                .to_vec()
+                .into()
         };
 
         self.balances_merkle_roots
@@ -1036,9 +1062,28 @@ impl Orderbook {
         Ok(())
     }
 
+    pub fn verify_user_info_proof(
+        &self,
+        user_info: &UserInfo,
+        user_info_proof: &BorshableMerkleProof,
+    ) -> Result<(), String> {
+        // Verify that users info are correct
+        user_info_proof
+            .0
+            .clone()
+            .verify::<SHA256Hasher>(
+                &TryInto::<[u8; 32]>::try_into(self.users_info_merkle_root.as_slice())
+                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
+                    .into(),
+                vec![(user_info.get_key(), user_info.to_h256())],
+            )
+            .expect("Failed to verify proof");
+        Ok(())
+    }
+
     pub fn verify_users_info_proof(
         &self,
-        users_info: &[UserInfo],
+        users_info: &BTreeSet<UserInfo>,
         user_info_proof: &BorshableMerkleProof,
     ) -> Result<(), String> {
         // Verify that users info are correct
@@ -1051,10 +1096,36 @@ impl Orderbook {
             .0
             .clone()
             .verify::<SHA256Hasher>(
-                &TryInto::<[u8; 32]>::try_into(self.users_info_merkle_root.clone())
-                    .expect("Failed to cast proof root to H256")
+                &TryInto::<[u8; 32]>::try_into(self.users_info_merkle_root.as_slice())
+                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
                     .into(),
                 leaves,
+            )
+            .expect("Failed to verify proof");
+        Ok(())
+    }
+
+    pub fn verify_balance_proof(
+        &self,
+        token: &TokenName,
+        user_info: &UserInfo,
+        balance: &Balance,
+        balance_proof: &BorshableMerkleProof,
+    ) -> Result<(), String> {
+        // Verify that users balance are correct
+        let token_root = self
+            .balances_merkle_roots
+            .get(token.as_str())
+            .ok_or(format!("Token {token} not found in balances merkle roots"))?;
+
+        balance_proof
+            .0
+            .clone()
+            .verify::<SHA256Hasher>(
+                &TryInto::<[u8; 32]>::try_into(token_root.as_slice())
+                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
+                    .into(),
+                vec![(user_info.get_key(), balance.to_h256())],
             )
             .expect("Failed to verify proof");
         Ok(())
@@ -1081,8 +1152,8 @@ impl Orderbook {
             .0
             .clone()
             .verify::<SHA256Hasher>(
-                &TryInto::<[u8; 32]>::try_into(token_root.clone())
-                    .expect("Failed to cast proof root to H256")
+                &TryInto::<[u8; 32]>::try_into(token_root.as_slice())
+                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
                     .into(),
                 leaves,
             )
