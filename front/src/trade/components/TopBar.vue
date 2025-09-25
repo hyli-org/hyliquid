@@ -14,10 +14,10 @@ const selectedInstrument = computed(() => {
             <div class="text-sm text-neutral-400">Perpetual</div>
             <div class="ml-4 text-sm">
                 <span class="text-neutral-400">Mark</span>
-                <span class="ml-2 tabular-nums">{{ selectedInstrument.price.toLocaleString() }}</span>
+                <span class="ml-2 tabular-nums">{{ instrumentsState.toRealPrice(selectedInstrument.symbol, selectedInstrument.price) }}</span>
             </div>
             <div class="text-sm" :class="selectedInstrument.change >= 0 ? 'text-emerald-400' : 'text-rose-400'">
-                {{ selectedInstrument.change >= 0 ? "+" : "" }}{{ selectedInstrument.change }}%
+                {{ selectedInstrument.change >= 0 ? "+" : "" }}{{ instrumentsState.toRealPrice(selectedInstrument.symbol, selectedInstrument.change) }}%
             </div>
         </div>
         <div class="flex items-center gap-4">

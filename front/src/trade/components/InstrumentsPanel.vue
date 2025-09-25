@@ -50,9 +50,9 @@ const selectInstrument = (instrument: any) => {
                         <div class="text-xs text-neutral-500">Vol ${{ (m.vol / 1_000_000).toFixed(1) }}M</div>
                     </div>
                     <div class="text-right">
-                        <div class="text-sm tabular-nums">{{ m.price.toLocaleString() }}</div>
+                        <div class="text-sm tabular-nums">{{ instrumentsState.toRealPrice(m.symbol, m.price) }}</div>
                         <div :class="['text-xs', m.change >= 0 ? 'text-emerald-400' : 'text-rose-400']">
-                            {{ m.change >= 0 ? "+" : "" }}{{ m.change }}%
+                            {{ m.change >= 0 ? "+" : "" }}{{ instrumentsState.toRealPrice(m.symbol, m.change) }}%
                         </div>
                     </div>
                 </li>

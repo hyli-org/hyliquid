@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { Fill } from "../trade";
+import { instrumentsState } from "../trade";
 defineProps<{ fills: Fill[]; loading?: boolean; error?: string | null }>();
 </script>
 
@@ -27,8 +28,8 @@ defineProps<{ fills: Fill[]; loading?: boolean; error?: string | null }>();
                     <td class="px-3 py-2" :class="f.side === 'Bid' ? 'text-emerald-400' : 'text-rose-400'">
                         {{ f.side }}
                     </td>
-                    <td class="px-3 py-2 tabular-nums">{{ f.size }}</td>
-                    <td class="px-3 py-2 tabular-nums">{{ f.price }}</td>
+                    <td class="px-3 py-2 tabular-nums">{{ instrumentsState.toRealQty(f.symbol, f.size) }}</td>
+                    <td class="px-3 py-2 tabular-nums">{{ instrumentsState.toRealPrice(f.symbol, f.price) }}</td>
                     <td class="px-3 py-2">{{ f.time }}</td>
                 </tr>
             </tbody>
