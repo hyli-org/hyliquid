@@ -1,11 +1,18 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use sdk::RunResult;
+use sdk::{merkle_utils::BorshableMerkleProof, RunResult};
+use sha2::{Digest, Sha256};
 
-use crate::orderbook::{Order, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair};
+use crate::{
+    orderbook::{
+        Order, OrderId, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenName,
+        TokenPair,
+    },
+    smt_values::{Balance, UserInfo},
+};
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -13,6 +20,7 @@ pub mod client;
 pub mod indexer;
 
 pub mod orderbook;
+pub mod smt_values;
 mod tests;
 pub mod utils;
 
@@ -58,14 +66,16 @@ impl sdk::ZkContract for Orderbook {
                         }
                     })?;
 
+                // Investigate if still relevant. Investigate if there are security implications to remove it
                 let user = &permissionned_private_input.user;
 
-                // TODO: Make a proper authentication mechanism
-                if permissionned_private_input.secret != self.secret {
+                let hashed_secret = Sha256::digest(&permissionned_private_input.secret)
+                    .as_slice()
+                    .to_vec();
+                if hashed_secret != self.hashed_secret {
                     if self.server_execution {
                         return Err("Invalid secret in private input".to_string());
                     } else {
-                        // We need to panic here to avoid generating a proof
                         panic!("Invalid secret in private input");
                     }
                 }
@@ -78,22 +88,66 @@ impl sdk::ZkContract for Orderbook {
                     PermissionnedOrderbookAction::AddSessionKey => {
                         // On this step, the public key is provided in private_input and hence is never public.
                         // The orderbook server knows the public key as user informed it offchain.
-                        let private_input = borsh::from_slice::<AddSessionKeyPrivateInput>(
+                        let mut add_session_key_private_input =
+                            borsh::from_slice::<AddSessionKeyPrivateInput>(
+                                &permissionned_private_input.private_input,
+                            )
+                            .map_err(|_| {
+                                if self.server_execution {
+                                    "Failed to deserialize CreateOrderPrivateInput".to_string()
+                                } else {
+                                    panic!("Failed to deserialize CreateOrderPrivateInput")
+                                }
+                            })?;
+
+                        // Verify that user info proof is correct
+                        self.verify_users_info_proof(
+                            &[add_session_key_private_input.user_info.clone()],
+                            &add_session_key_private_input.user_info_proof,
+                        )?;
+
+                        self.add_session_key(
+                            &mut add_session_key_private_input.user_info,
+                            &add_session_key_private_input.user_info_proof,
+                            &add_session_key_private_input.new_public_key,
+                        )?
+                    }
+                    PermissionnedOrderbookAction::Deposit { token, amount } => {
+                        // This is a permissionned action, the server is responsible for checking that a transfer blob happened
+                        let mut deposit_private_input = borsh::from_slice::<DepositPrivateInput>(
                             &permissionned_private_input.private_input,
                         )
                         .map_err(|_| {
                             if self.server_execution {
-                                "Failed to deserialize CreateOrderPrivateInput".to_string()
+                                "Failed to deserialize DepositPrivateInput".to_string()
                             } else {
-                                panic!("Failed to deserialize CreateOrderPrivateInput")
+                                panic!("Failed to deserialize DepositPrivateInput")
                             }
                         })?;
 
-                        self.add_session_key(user, &private_input.public_key)?
-                    }
-                    PermissionnedOrderbookAction::Deposit { token, amount } => {
-                        // This is a permissionned action, the server is responsible for checking that a transfer blob happened
-                        self.deposit(token, amount, user)?
+                        // Verify that user info proof is correct
+                        self.verify_users_info_proof(
+                            &[deposit_private_input.user_info.clone()],
+                            &deposit_private_input.user_info_proof,
+                        )?;
+
+                        // Verify the balance is correct
+                        self.verify_balances_proof(
+                            &token,
+                            &BTreeMap::from([(
+                                deposit_private_input.user_info.clone(), // FIXME: remove useless clone
+                                deposit_private_input.balance.clone(), // FIXME: remove useless clone
+                            )]),
+                            &deposit_private_input.balance_proof,
+                        )?;
+
+                        self.deposit(
+                            token,
+                            amount,
+                            &deposit_private_input.user_info,
+                            &mut deposit_private_input.balance,
+                            &deposit_private_input.balance_proof,
+                        )?
                     }
                     PermissionnedOrderbookAction::CreateOrder {
                         order_id,
@@ -103,7 +157,7 @@ impl sdk::ZkContract for Orderbook {
                         pair,
                         quantity,
                     } => {
-                        let create_order_private_data =
+                        let create_order_private_input =
                             borsh::from_slice::<CreateOrderPrivateInput>(
                                 &permissionned_private_input.private_input,
                             )
@@ -115,20 +169,65 @@ impl sdk::ZkContract for Orderbook {
                                 }
                             })?;
 
+                        let user_info = create_order_private_input
+                            .users_info
+                            .iter()
+                            .find(|u| u.user == *user)
+                            .ok_or_else(|| format!("Missing user info for user {user}"))?;
+
+                        // Verify that users info proof are correct for all users
+                        self.verify_users_info_proof(
+                            create_order_private_input
+                                .users_info
+                                .iter()
+                                .cloned()
+                                .collect::<Vec<_>>()
+                                .as_slice(),
+                            &create_order_private_input.user_info_proof,
+                        )?;
+
+                        // Verify all balances proofs
+                        for (token, balances) in &create_order_private_input.balances {
+                            let Some(balance_proof) =
+                                create_order_private_input.balances_proof.get(token)
+                            else {
+                                return Err(format!("Missing balance proof for token {token}"));
+                            };
+
+                            self.verify_balances_proof(token, balances, balance_proof)?;
+                        }
+
                         // Verify user signature authorization
                         // On this step, signature is provided in private_input and hence is never public.
                         // The orderbook server knows the signature as user informed it offchain.
                         // As the public key has been registered, only the user can create that signature and hence allow this order creation
-                        let user_nonce = self.get_nonce(user);
+                        let nonce = user_info.nonce + 1;
                         utils::verify_user_signature_authorization(
                             user,
-                            &create_order_private_data.public_key,
-                            &self.get_session_keys(user),
-                            &format!("{user}:{user_nonce}:create_order:{order_id}"),
-                            &create_order_private_data.signature,
+                            &create_order_private_input.public_key,
+                            user_info.session_keys.as_slice(),
+                            &format!("{user}:{nonce}:create_order:{order_id}"),
+                            &create_order_private_input.signature,
                         )?;
-                        // User's action has been validated, increment user's nonce
-                        self.increment_nonce(user);
+
+                        // Increment user's nonce
+                        let new_user_info = UserInfo {
+                            nonce,
+                            ..user_info.clone()
+                        };
+
+                        // Update the user_info set with the user's info containing the incremented nonce
+                        let updated_users_info: BTreeSet<UserInfo> = create_order_private_input
+                            .users_info
+                            .iter()
+                            .filter(|&u| u.user != *user)
+                            .cloned()
+                            .chain(std::iter::once(new_user_info.clone()))
+                            .collect();
+                        self.update_users_info_merkle_root(
+                            &updated_users_info,
+                            &create_order_private_input.user_info_proof,
+                        )?;
 
                         let order = Order {
                             order_id,
@@ -141,7 +240,14 @@ impl sdk::ZkContract for Orderbook {
                         if self.orders.contains_key(&order.order_id) {
                             return Err(format!("Order with id {} already exists", order.order_id));
                         }
-                        self.execute_order(user, order, create_order_private_data.order_user_map)?
+
+                        self.execute_order(
+                            user_info,
+                            order,
+                            create_order_private_input.order_user_map,
+                            &create_order_private_input.balances,
+                            &create_order_private_input.balances_proof,
+                        )?
                     }
                     PermissionnedOrderbookAction::Cancel { order_id } => {
                         let cancel_order_private_data =
@@ -157,18 +263,52 @@ impl sdk::ZkContract for Orderbook {
                             })?;
 
                         // Verify user signature authorization
-                        let user_nonce = self.get_nonce(user);
+                        let user_info = &cancel_order_private_data.user_info;
+                        let nonce = user_info.nonce + 1;
                         utils::verify_user_signature_authorization(
                             user,
                             &cancel_order_private_data.public_key,
-                            &self.get_session_keys(user),
-                            &format!("{user}:{user_nonce}:cancel:{order_id}"),
+                            user_info.session_keys.as_slice(),
+                            &format!("{user}:{nonce}:cancel:{order_id}"),
                             &cancel_order_private_data.signature,
                         )?;
-                        // User's action has been validated, increment user's nonce
-                        self.increment_nonce(user);
 
-                        self.cancel_order(order_id, user)?
+                        // Verify that balances are correct
+                        let order = self
+                            .orders
+                            .get(&order_id)
+                            .ok_or(format!("Order {order_id} not found"))?
+                            .clone();
+
+                        let token = match &order.order_side {
+                            OrderSide::Bid => order.pair.1.clone(),
+                            OrderSide::Ask => order.pair.0.clone(),
+                        };
+                        self.verify_balances_proof(
+                            &token,
+                            &BTreeMap::from([(
+                                user_info.clone(),
+                                cancel_order_private_data.balance.clone(),
+                            )]),
+                            &cancel_order_private_data.balance_proof,
+                        )?;
+
+                        // Increment user's nonce
+                        let new_user_info = UserInfo {
+                            nonce,
+                            ..user_info.clone()
+                        };
+                        self.update_users_info_merkle_root(
+                            &BTreeSet::from([new_user_info]),
+                            &cancel_order_private_data.user_info_proof,
+                        )?;
+
+                        self.cancel_order(
+                            order_id,
+                            user_info,
+                            &cancel_order_private_data.balance,
+                            &cancel_order_private_data.balance_proof,
+                        )?
                     }
                     PermissionnedOrderbookAction::Withdraw { token, amount } => {
                         // TODO: assert there is a transfer blob for that token
@@ -185,18 +325,40 @@ impl sdk::ZkContract for Orderbook {
                         })?;
 
                         // Verify user signature authorization
-                        let user_nonce = self.get_nonce(user);
+                        let user_info = &withdraw_private_data.user_info;
+                        let nonce = user_info.nonce + 1;
                         utils::verify_user_signature_authorization(
                             user,
                             &withdraw_private_data.public_key,
-                            &self.get_session_keys(user),
-                            &format!("{user}:{user_nonce}:withdraw:{token}:{amount}"),
+                            user_info.session_keys.as_slice(),
+                            &format!("{user}:{nonce}:withdraw:{token}:{amount}"),
                             &withdraw_private_data.signature,
                         )?;
-                        // User's action has been validated, increment user's nonce
-                        self.increment_nonce(user);
 
-                        self.withdraw(token, amount, user)?
+                        // Verify that balances are correct
+                        self.verify_balances_proof(
+                            &token,
+                            &withdraw_private_data.balances,
+                            &withdraw_private_data.balances_proof,
+                        )?;
+
+                        // Increment user's nonce
+                        let new_user_info = UserInfo {
+                            nonce,
+                            ..user_info.clone()
+                        };
+                        self.update_users_info_merkle_root(
+                            &BTreeSet::from([new_user_info]),
+                            &withdraw_private_data.user_info_proof,
+                        )?;
+
+                        self.withdraw(
+                            token,
+                            amount,
+                            user_info,
+                            &withdraw_private_data.balances,
+                            &withdraw_private_data.balances_proof,
+                        )?
                     }
                 };
 
@@ -236,16 +398,42 @@ pub struct PermissionnedPrivateInput {
 /// Structure to deserialize private data during order creation
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct AddSessionKeyPrivateInput {
-    pub public_key: Vec<u8>,
+    pub user_info: UserInfo,
+    pub user_info_proof: BorshableMerkleProof,
+    pub new_public_key: Vec<u8>,
+}
+
+/// Structure to deserialize private data during order creation
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub struct DepositPrivateInput {
+    // Used to assert and increment user's nonce
+    pub user_info: UserInfo,
+    pub user_info_proof: BorshableMerkleProof,
+    // Used to assert and increment user's balance
+    pub balance: Balance,
+    pub balance_proof: BorshableMerkleProof,
 }
 
 /// Structure to deserialize private data during order creation
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct CreateOrderPrivateInput {
+    // Used to assert user approval of that action
     pub signature: Vec<u8>,
     pub public_key: Vec<u8>,
+
     // Owners of order_ids that the processed order will impact (to be able to fund balances)
-    pub order_user_map: BTreeMap<orderbook::OrderId, String>,
+    pub order_user_map: BTreeMap<OrderId, UserInfo>,
+
+    // Used to assert all users' info that the processed order will impact
+    pub users_info: BTreeSet<UserInfo>,
+    // Proof for all user_info used
+    pub user_info_proof: BorshableMerkleProof,
+
+    // For each token, for each user, the balance used
+    // token -> user: balance
+    pub balances: BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
+    // For each token, the proof for all balances used
+    pub balances_proof: BTreeMap<TokenName, BorshableMerkleProof>,
 }
 
 /// Structure to deserialize private data during order cancellation
@@ -253,6 +441,12 @@ pub struct CreateOrderPrivateInput {
 pub struct CancelOrderPrivateInput {
     pub signature: Vec<u8>,
     pub public_key: Vec<u8>,
+    // Used to assert and increment user's nonce
+    pub user_info: UserInfo,
+    pub user_info_proof: BorshableMerkleProof,
+    // Used to assert and increment user's balance
+    pub balance: Balance,
+    pub balance_proof: BorshableMerkleProof,
 }
 
 /// Structure to deserialize private data during withdraw
@@ -260,7 +454,12 @@ pub struct CancelOrderPrivateInput {
 pub struct WithdrawPrivateInput {
     pub signature: Vec<u8>,
     pub public_key: Vec<u8>,
-    pub nonce: u32,
+    // Used to assert and increment user's nonce
+    pub user_info: UserInfo,
+    pub user_info_proof: BorshableMerkleProof,
+    // Used to assert and increment user's and orderbook's balance
+    pub balances: BTreeMap<UserInfo, Balance>,
+    pub balances_proof: BorshableMerkleProof,
 }
 
 /// Enum representing possible calls to the contract functions.

@@ -53,11 +53,11 @@ describe('Security & Anti-Replay Attack Tests', () => {
       
       await runTxSenderCommand('deposit', ['--token', 'HYLLAR', '--amount', '5000'], replayTestUser);
       
-      // Get initial nonce
+      // Get initial nonce (should be 1 after session key addition, deposit doesn't increment nonce)
       const initialNonce = await getNonce(replayTestUser);
-      expect(initialNonce).toBe(0);
+      expect(initialNonce).toBe(1);
       
-      // Create an order (this will increment nonce to 1)
+      // Create an order (this will increment nonce to 2)
       const orderId = `replay_test_${orderCounter++}`;
       const orderResult = await runTxSenderCommand('create-order', [
         '--order-id', orderId,
@@ -73,7 +73,7 @@ describe('Security & Anti-Replay Attack Tests', () => {
       
       // Verify nonce has incremented
       const nonceAfterOrder = await getNonce(replayTestUser);
-      expect(nonceAfterOrder).toBe(1);
+      expect(nonceAfterOrder).toBe(2);
       
       // Try to create another order with the same ID (should fail due to duplicate ID, not nonce)
       const duplicateOrderResult = await runTxSenderCommand('create-order', [

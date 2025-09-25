@@ -190,7 +190,8 @@ async fn main() -> Result<()> {
 
     // TODO: make a proper secret management
     let secret = vec![1, 2, 3];
-    let default_state = Orderbook::init(validator_lane_id.clone(), true, secret);
+    let default_state =
+        Orderbook::init(validator_lane_id.clone(), true, secret).map_err(anyhow::Error::msg)?;
 
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
@@ -222,8 +223,8 @@ async fn main() -> Result<()> {
         orderbook_cn: args.orderbook_cn.clone().into(),
         lane_id: validator_lane_id.clone(),
         default_state: default_state.clone(),
-        book_writer_service: book_writer_service,
-        asset_service: asset_service,
+        book_writer_service,
+        asset_service,
     });
 
     let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {

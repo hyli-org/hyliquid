@@ -109,25 +109,24 @@ async fn main() -> Result<()> {
 
     let client = Client::new();
 
-    let nonce = {
+    let mut nonce: u32 = {
         let response = client
             .get(format!("{}/nonce", args.server_url))
-            // TODO: add correct headers for authentication
             .header("x-identity", args.identity.clone())
-            // .header("x-public-key", &public_key_hex)
-            // .header("x-signature", &signature)
             .send()
             .await
             .context("Failed to send request to server")?;
 
         if response.status().is_success() {
-            response.text().await?
+            let nonce_str = response.text().await?;
+            nonce_str.trim().parse::<u32>().unwrap_or_default()
         } else {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             anyhow::bail!("Server returned error {status}: {error_text}");
         }
     };
+    nonce += 1;
 
     match args.command {
         Commands::CreatePair {
@@ -152,62 +151,6 @@ async fn main() -> Result<()> {
             if response.status().is_success() {
                 let response_text = response.text().await?;
                 println!("Pair created successfully! Response: {response_text}");
-            } else {
-                let status = response.status();
-                let error_text = response.text().await.unwrap_or_default();
-                anyhow::bail!("Server returned error {status}: {error_text}");
-            }
-        }
-        Commands::CreateOrder {
-            order_id,
-            order_side,
-            order_type,
-            price,
-            pair_token1,
-            pair_token2,
-            quantity,
-        } => {
-            let order_side = match order_side.to_lowercase().as_str() {
-                "bid" => OrderSide::Bid,
-                "ask" => OrderSide::Ask,
-                _ => anyhow::bail!("Invalid order side. Must be 'bid' or 'ask'"),
-            };
-
-            let order_type = match order_type.to_lowercase().as_str() {
-                "limit" => OrderType::Limit,
-                "market" => OrderType::Market,
-                _ => anyhow::bail!("Invalid order type. Must be 'limit' or 'market'"),
-            };
-
-            let request = CreateOrderRequest {
-                order_id: order_id.clone(),
-                order_side,
-                order_type,
-                price,
-                pair: (pair_token1, pair_token2),
-                quantity,
-            };
-
-            tracing::info!("Sending create order request: {:?}", request);
-
-            // Create signature using the format: {user}:{nonce}:create_order:{order_id}
-            let data_to_sign = format!("{}:{}:create_order:{}", args.identity, nonce, order_id);
-            let signature = create_signature(&signing_key, &data_to_sign)?;
-
-            let response = client
-                .post(format!("{}/create_order", args.server_url))
-                .header("x-identity", args.identity)
-                .header("x-public-key", &public_key_hex)
-                .header("x-signature", &signature)
-                .header("Content-Type", "application/json")
-                .json(&request)
-                .send()
-                .await
-                .context("Failed to send request to server")?;
-
-            if response.status().is_success() {
-                let response_text = response.text().await?;
-                println!("Order created successfully! Response: {response_text}");
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();
@@ -257,6 +200,63 @@ async fn main() -> Result<()> {
             if response.status().is_success() {
                 let response_text = response.text().await?;
                 println!("Deposit successful! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+        }
+        Commands::CreateOrder {
+            order_id,
+            order_side,
+            order_type,
+            price,
+            pair_token1,
+            pair_token2,
+            quantity,
+        } => {
+            let order_side = match order_side.to_lowercase().as_str() {
+                "bid" => OrderSide::Bid,
+                "ask" => OrderSide::Ask,
+                _ => anyhow::bail!("Invalid order side. Must be 'bid' or 'ask'"),
+            };
+
+            let order_type = match order_type.to_lowercase().as_str() {
+                "limit" => OrderType::Limit,
+                "market" => OrderType::Market,
+                _ => anyhow::bail!("Invalid order type. Must be 'limit' or 'market'"),
+            };
+
+            let request = CreateOrderRequest {
+                order_id: order_id.clone(),
+                order_side,
+                order_type,
+                price,
+                pair: (pair_token1, pair_token2),
+                quantity,
+            };
+
+            tracing::info!("Sending create order request: {:?}", request);
+
+            // Create signature using the format: {user}:{nonce}:create_order:{order_id}
+            let data_to_sign = format!("{}:{}:create_order:{}", args.identity, nonce, order_id);
+            tracing::info!("Data to sign: {}", data_to_sign);
+            let signature = create_signature(&signing_key, &data_to_sign)?;
+
+            let response = client
+                .post(format!("{}/create_order", args.server_url))
+                .header("x-identity", args.identity)
+                .header("x-public-key", &public_key_hex)
+                .header("x-signature", &signature)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Order created successfully! Response: {response_text}");
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();

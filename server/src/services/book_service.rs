@@ -68,8 +68,8 @@ impl BookWriterService {
                             ON CONFLICT DO NOTHING"
                         )
                         .bind(format!("{}/{}", pair.0, pair.1))
-                        .bind(1 as i64)
-                        .bind(1 as i64)
+                        .bind(1_i64)
+                        .bind(1_i64)
                         .bind(base_asset.asset_id)
                         .bind(quote_asset.asset_id)
                         .bind(MarketStatus::Active)
@@ -90,7 +90,7 @@ impl BookWriterService {
                     let asset_service = self.asset_service.read().await;
                     let asset = asset_service.get_asset(&token).await.ok_or(AppError(
                         StatusCode::NOT_FOUND,
-                        anyhow::anyhow!("Asset not found: {}", token),
+                        anyhow::anyhow!("Asset not found: {token}"),
                     ))?;
                     let user_id = self.user_service.read().await.get_user_id(&user).await?;
 
@@ -117,13 +117,13 @@ impl BookWriterService {
                     )?;
                 }
                 OrderbookEvent::OrderCreated { order } => {
-                    let user_id = self.user_service.read().await.get_user_id(&user).await?;
+                    let user_id = self.user_service.read().await.get_user_id(user).await?;
                     let symbol = format!("{}/{}", order.pair.0, order.pair.1);
                     let asset_service = self.asset_service.read().await;
                     let instrument =
                         asset_service.get_instrument(&symbol).await.ok_or(AppError(
                             StatusCode::NOT_FOUND,
-                            anyhow::anyhow!("Instrument not found: {}", symbol),
+                            anyhow::anyhow!("Instrument not found: {symbol}"),
                         ))?;
 
                     info!(
@@ -209,17 +209,14 @@ impl BookWriterService {
                         user, order_id, taker_order_id, pair
                     );
 
-                    let user_id = self.user_service.read().await.get_user_id(&user).await?;
+                    let user_id = self.user_service.read().await.get_user_id(user).await?;
                     let asset_service = self.asset_service.read().await;
                     let instrument = asset_service
                         .get_instrument(&format!("{}/{}", pair.0, pair.1))
                         .await
                         .ok_or(AppError(
                             StatusCode::NOT_FOUND,
-                            anyhow::anyhow!(
-                                "Instrument not found: {}",
-                                format!("{}/{}", pair.0, pair.1)
-                            ),
+                            anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1),
                         ))?;
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
@@ -277,14 +274,14 @@ impl BookWriterService {
                         user, order_id, taker_order_id, pair
                     );
 
-                    let user_id = self.user_service.read().await.get_user_id(&user).await?;
+                    let user_id = self.user_service.read().await.get_user_id(user).await?;
                     let asset_service = self.asset_service.read().await;
                     let instrument = asset_service
                         .get_instrument(&format!("{}/{}", pair.0, pair.1))
                         .await
                         .ok_or(AppError(
                             StatusCode::NOT_FOUND,
-                            anyhow::anyhow!("Instrument not found: {}", format!("{}/{}", pair.0, pair.1)),
+                            anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1),
                         ))?;
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
