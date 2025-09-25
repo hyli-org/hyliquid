@@ -7,10 +7,7 @@ use sdk::{merkle_utils::BorshableMerkleProof, RunResult};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    orderbook::{
-        Order, OrderId, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenName,
-        TokenPair,
-    },
+    orderbook::{Order, OrderId, OrderSide, OrderType, Orderbook, PairInfo, TokenName, TokenPair},
     smt_values::{Balance, UserInfo},
 };
 
@@ -51,7 +48,7 @@ impl sdk::ZkContract for Orderbook {
             }
         }
 
-        match action {
+        let (res, mut user_info, user_info_proof) = match action {
             OrderbookAction::PermissionnedOrderbookAction(action) => {
                 if tx_ctx.lane_id != self.lane_id {
                     return Err("Invalid lane id".to_string());
@@ -112,7 +109,6 @@ impl sdk::ZkContract for Orderbook {
 
                         self.add_session_key(
                             user_info,
-                            user_info_proof,
                             &add_session_key_private_input.new_public_key,
                         )?
                     }
@@ -213,6 +209,7 @@ impl sdk::ZkContract for Orderbook {
                                     panic!("Order with id {order_id} does not exist");
                                 }
                             }
+                            // We previously verified create_order_private_input.users_info
                             if !create_order_private_input.users_info.contains(user_info) {
                                 if self.server_execution {
                                     return Err(format!(
@@ -224,9 +221,6 @@ impl sdk::ZkContract for Orderbook {
                                 }
                             }
                         }
-
-                        // Increment user's nonce
-                        user_info.nonce += 1;
 
                         // Verify user signature authorization
                         // On this step, signature is provided in private_input and hence is never public.
@@ -248,23 +242,6 @@ impl sdk::ZkContract for Orderbook {
                                 panic!("Failed to verify user signature authorization: {err}")
                             }
                         })?;
-
-                        // Update the user_info set with the user's info containing the incremented nonce
-                        // create_order_private_input
-                        //     .users_info
-                        //     .insert(user_info.clone());
-
-                        // self.update_users_info_merkle_root(
-                        //     &create_order_private_input.users_info,
-                        //     &create_order_private_input.users_info_proof,
-                        // )
-                        // .map_err(|err| {
-                        //     if self.server_execution {
-                        //         format!("Failed to update users info merkle root: {err}")
-                        //     } else {
-                        //         panic!("Failed to update users info merkle root: {err}")
-                        //     }
-                        // })?;
 
                         let order = Order {
                             order_id,
@@ -324,9 +301,6 @@ impl sdk::ZkContract for Orderbook {
                             }
                         })?;
 
-                        // Increment user's nonce
-                        user_info.nonce += 1;
-
                         // Verify user signature authorization
                         utils::verify_user_signature_authorization(
                             user_info,
@@ -341,15 +315,6 @@ impl sdk::ZkContract for Orderbook {
                                 panic!("Failed to verify user signature authorization: {err}")
                             }
                         })?;
-
-                        self.update_user_info_merkle_root(user_info, user_info_proof)
-                            .map_err(|err| {
-                                if self.server_execution {
-                                    format!("Failed to update users info merkle root: {err}")
-                                } else {
-                                    panic!("Failed to update users info merkle root: {err}")
-                                }
-                            })?;
 
                         self.cancel_order(
                             order_id,
@@ -371,9 +336,6 @@ impl sdk::ZkContract for Orderbook {
                                 panic!("Failed to deserialize WithdrawPrivateInput")
                             }
                         })?;
-
-                        // Increment user's nonce
-                        user_info.nonce += 1;
 
                         // Verify user signature authorization
                         utils::verify_user_signature_authorization(
@@ -407,15 +369,6 @@ impl sdk::ZkContract for Orderbook {
                             }
                         })?;
 
-                        self.update_user_info_merkle_root(user_info, user_info_proof)
-                            .map_err(|err| {
-                                if self.server_execution {
-                                    format!("Failed to update users info merkle root: {err}")
-                                } else {
-                                    panic!("Failed to update users info merkle root: {err}")
-                                }
-                            })?;
-
                         self.withdraw(
                             token,
                             amount,
@@ -429,20 +382,62 @@ impl sdk::ZkContract for Orderbook {
                 let res = borsh::to_vec(&events)
                     .map_err(|_| "Failed to encode OrderbookEvents".to_string())?;
 
-                Ok((res, ctx, vec![]))
+                (res, user_info.clone(), user_info_proof.clone())
             }
             OrderbookAction::PermissionlessOrderbookAction(action) => {
                 // Execute the given action
-                let events: Vec<OrderbookEvent> = match action {
-                    PermissionlessOrderbookAction::Escape { user } => self.escape(tx_ctx, user)?,
+                let (events, user_info, user_info_proof) = match action {
+                    PermissionlessOrderbookAction::Escape { user_key } => {
+                        let escape_private_input: EscapePrivateInput =
+                            borsh::from_slice(&calldata.private_input).map_err(|_| {
+                                if self.server_execution {
+                                    "Failed to deserialize PermissionnedPrivateInput".to_string()
+                                } else {
+                                    panic!("Failed to deserialize PermissionnedPrivateInput")
+                                }
+                            })?;
+
+                        let user_info = escape_private_input.user_info.clone();
+                        let user_info_proof = escape_private_input.user_info_proof.clone();
+
+                        // Verify that user info proof is correct
+                        self.verify_user_info_proof(&user_info, &user_info_proof)
+                            .map_err(|err| {
+                                if self.server_execution {
+                                    format!("Failed to verify user info proof: {err}")
+                                } else {
+                                    panic!("Failed to verify user info proof: {err}")
+                                }
+                            })?;
+
+                        if user_key != std::convert::Into::<[u8; 32]>::into(user_info.get_key()) {
+                            if self.server_execution {
+                                return Err(
+                                    "User info does not correspond with user_key used".to_string()
+                                );
+                            } else {
+                                panic!("User info does not correspond with user_key used")
+                            }
+                        }
+                        let events = self.escape(tx_ctx, &user_info, &user_info_proof)?;
+
+                        (events, user_info, user_info_proof)
+                    }
                 };
 
                 let res = borsh::to_vec(&events)
                     .map_err(|_| "Failed to encode OrderbookEvents".to_string())?;
 
-                Ok((res, ctx, vec![]))
+                (res, user_info, user_info_proof)
             }
-        }
+        };
+
+        // Increment user's nonce
+        user_info.nonce += 1;
+        // Update users merkle tree
+        self.update_user_info_merkle_root(&user_info, &user_info_proof)?;
+
+        Ok((res, ctx, vec![]))
     }
 
     /// In this example, we serialize the full state on-chain.
@@ -520,6 +515,14 @@ pub struct WithdrawPrivateInput {
     pub balances_proof: BorshableMerkleProof,
 }
 
+/// Structure to deserialize private data during escape
+#[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
+pub struct EscapePrivateInput {
+    // Used to assert and increment user's nonce
+    pub user_info: UserInfo,
+    pub user_info_proof: BorshableMerkleProof,
+}
+
 /// Enum representing possible calls to the contract functions.
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub enum OrderbookAction {
@@ -557,7 +560,7 @@ pub enum PermissionnedOrderbookAction {
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub enum PermissionlessOrderbookAction {
-    Escape { user: String },
+    Escape { user_key: [u8; 32] },
 }
 
 impl OrderbookAction {

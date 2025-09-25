@@ -205,7 +205,6 @@ impl Orderbook {
     pub fn add_session_key(
         &mut self,
         user_info: &mut UserInfo,
-        user_info_proof: &BorshableMerkleProof,
         pubkey: &Vec<u8>,
     ) -> Result<Vec<OrderbookEvent>, String> {
         if user_info.session_keys.contains(pubkey) {
@@ -214,10 +213,6 @@ impl Orderbook {
 
         // Add the session key to the user's list of session keys
         user_info.session_keys.push(pubkey.clone());
-        user_info.nonce += 1;
-
-        // Update the users_info_merkle_root
-        self.update_users_info_merkle_root(&BTreeSet::from([user_info.clone()]), user_info_proof)?;
 
         if self.server_execution {
             // If the user is unknown, add a salt for them
@@ -367,7 +362,8 @@ impl Orderbook {
     pub fn escape(
         &mut self,
         _tx_ctx: &TxContext,
-        _user: String,
+        _user_info: &UserInfo,
+        _user_info_proof: &BorshableMerkleProof,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Logic to allow user to escape with their funds
         // This could involve transferring all their balances to a safe contract or address
@@ -836,44 +832,6 @@ impl Orderbook {
                 .0
                 .clone()
                 .compute_root::<SHA256Hasher>(vec![(user_info.get_key(), user_info.to_h256())])
-                .unwrap_or_else(|e| {
-                    panic!("Failed to compute new root on user_info merkle tree: {e}")
-                })
-                .into()
-        };
-
-        self.users_info_merkle_root = new_users_info_merkle_root;
-        Ok(())
-    }
-
-    pub fn update_users_info_merkle_root(
-        &mut self,
-        users_info: &BTreeSet<UserInfo>,
-        user_info_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        let new_users_info_merkle_root = if self.server_execution {
-            // Update the users_info the root *and the merkle tree* only for server execution
-            (*self
-                .users_info_mt
-                .update_all(
-                    users_info
-                        .iter()
-                        .map(|user_info| (user_info.get_key(), user_info.clone()))
-                        .collect(),
-                )
-                .map_err(|e| format!("Failed to update user info in SMT: {e}"))?)
-            .into()
-        } else {
-            // Update the only users_info_merkle_root
-            user_info_proof
-                .0
-                .clone()
-                .compute_root::<SHA256Hasher>(
-                    users_info
-                        .iter()
-                        .map(|user_info| (user_info.get_key(), user_info.to_h256()))
-                        .collect(),
-                )
                 .unwrap_or_else(|e| {
                     panic!("Failed to compute new root on user_info merkle tree: {e}")
                 })

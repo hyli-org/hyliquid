@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
 
     let client = Client::new();
 
-    let mut nonce: u32 = {
+    let nonce: u32 = {
         let response = client
             .get(format!("{}/nonce", args.server_url))
             .header("x-identity", args.identity.clone())
@@ -126,7 +126,6 @@ async fn main() -> Result<()> {
             anyhow::bail!("Server returned error {status}: {error_text}");
         }
     };
-    nonce += 1;
 
     match args.command {
         Commands::CreatePair {
