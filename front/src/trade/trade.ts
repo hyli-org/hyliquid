@@ -1,10 +1,11 @@
 import { reactive } from "vue";
-import { fetchInstruments, fetchOrderbook, fetchPositions, fetchOrdersForInstrument, fetchFills, fetchBalances, type PaginationInfo, type PaginationParams } from "./api";
+import { fetchInstruments, fetchPositions, fetchOrdersForInstrument, fetchFills, fetchBalances, type PaginationInfo, type PaginationParams } from "./api";
 import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
 import { ref } from "vue";
 import { v7 as uuidv7 } from 'uuid';
+import { websocketManager } from "./websocket";
 
 // Re-export types for components
 export type { PaginationInfo, PaginationParams } from "./api";
@@ -147,33 +148,20 @@ export function selectInstrumentBySymbol(symbol: string): boolean {
     return false;
 }
 
-// Orderbook state via SWRV
-const orderbook = useSWR(() => {
-    if (!instrumentsState.selected) throw new Error("No instrument selected");
-    return fetchOrderbook(instrumentsState.selected!.symbol);
-});
-
+// Orderbook state using WebSocket manager
 export const orderbookState = reactive({
-    bids: [] as OrderbookEntry[],
-    asks: [] as OrderbookEntry[],
-    mid: 0,
-    fetching: orderbook.fetching,
-    error: orderbook.error,
+    get bids() { return websocketManager.state.bids; },
+    get asks() { return websocketManager.state.asks; },
+    get mid() { return websocketManager.state.mid; },
+    get connected() { return websocketManager.state.connected; },
+    get error() { return websocketManager.state.error; },
+    fetching: false, // Keep for compatibility
 });
 
 watchEffect(() => {
-    // Clear the orderbook when changing instrument
-    instrumentsState.selected;
-    orderbookState.bids = [];
-    orderbookState.asks = [];
-});
-
-watchEffect(() => {
-    const v = orderbook.data.value;
-    if (v) {
-        orderbookState.bids = v.bids;
-        orderbookState.asks = v.asks;
-        orderbookState.mid = v.mid;
+    // Subscribe to new instrument when selection changes
+    if (instrumentsState.selected && websocketManager.state.connected) {
+        websocketManager.subscribeToOrderbook(instrumentsState.selected.symbol);
     }
 });
 

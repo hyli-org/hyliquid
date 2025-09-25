@@ -212,7 +212,7 @@ export class WebSocketService {
       const bookData = await this.bookService.getOrderBook(
         baseAsset,
         quoteAsset,
-        20, // default levels
+        10, // default levels
         groupTicks
       );
       

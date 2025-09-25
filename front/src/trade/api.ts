@@ -192,35 +192,35 @@ export async function fetchInstruments(): Promise<{instruments: Instrument[], as
   return {instruments, assets};
 }
 
-export async function fetchOrderbook(symbol: string) {
-  // Parse symbol to get base and quote assets
-  const [baseAsset, quoteAsset] = symbol.split("/");
+// export async function fetchOrderbook(symbol: string) {
+//   // Parse symbol to get base and quote assets
+//   const [baseAsset, quoteAsset] = symbol.split("/");
   
-  const response = await fetch(
-    `${API_BASE_URL}/api/book/${baseAsset}/${quoteAsset}?levels=10&group_ticks=1`
-  );
+//   const response = await fetch(
+//     `${API_BASE_URL}/api/book/${baseAsset}/${quoteAsset}?levels=10&group_ticks=1`
+//   );
   
-  if (!response.ok) {
-    throw new Error(`Failed to fetch orderbook: ${response.status} ${response.statusText}`);
-  }
+//   if (!response.ok) {
+//     throw new Error(`Failed to fetch orderbook: ${response.status} ${response.statusText}`);
+//   }
   
-  const data: ApiOrderbookResponse = await response.json();
+//   const data: ApiOrderbookResponse = await response.json();
   
-  // Calculate mid price
-  const mid = data.bids.length > 0 && data.asks.length > 0 
-    ? (data.bids[0]!.price + data.asks[0]!.price) / 2 
-    : 0;
+//   // Calculate mid price
+//   const mid = data.bids.length > 0 && data.asks.length > 0 
+//     ? (data.bids[0]!.price + data.asks[0]!.price) / 2 
+//     : 0;
 
-  console.log("mid", mid);
-  console.log("bids", data.bids);
-  console.log("asks", data.asks);
+//   console.log("mid", mid);
+//   console.log("bids", data.bids);
+//   console.log("asks", data.asks);
   
-  return {
-    mid,
-    bids: data.bids,
-    asks: data.asks,
-  };
-}
+//   return {
+//     mid,
+//     bids: data.bids,
+//     asks: data.asks,
+//   };
+// }
 
 export async function fetchPositions(): Promise<PerpPosition[]> {
   return [];
