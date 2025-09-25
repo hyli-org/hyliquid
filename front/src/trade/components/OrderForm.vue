@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import { activityState, assetsState, instrumentsState, submitOrder, useOrderFormState } from "../trade";
+import { v7 as uuidv7 } from 'uuid';
 
 const { price, size, side, orderType, orderSubmit } = useOrderFormState();
 
@@ -8,7 +9,14 @@ const baseSymbol = computed(() => (instrumentsState.selected ? instrumentsState.
 const quoteSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.quote_asset : "")!);
 
 const consumedSymbol = computed(() => (side.value === 'Ask' ? baseSymbol.value : quoteSymbol.value));
-const consumedAsset = computed(() => assetsState.list.find((a) => a.symbol === consumedSymbol.value));
+
+const neededBalance = computed(() => {
+    if (side.value === 'Bid') {
+        return (size.value ?? 0) * (price.value ?? 0);
+    } else {
+        return size.value ?? 0;
+    }
+});
 
 const availableBalance = computed(() => {
     if (side.value === 'Ask') {
@@ -70,9 +78,7 @@ const availableBalance = computed(() => {
             <div class="text-xs text-neutral-400">
                 <div class="mb-1">Needed balance</div>
                 <div class="text-sm text-neutral-400">
-                    {{ ((size ?? 0) * (price ?? 0)).toLocaleString(undefined, {
-                        minimumFractionDigits: 0,
-                        maximumFractionDigits: consumedAsset?.scale ?? 0 }) }} {{ consumedSymbol }}
+                    {{ neededBalance }} {{ consumedSymbol }}
                 </div>
             </div>
         </div>
@@ -80,7 +86,10 @@ const availableBalance = computed(() => {
             <div class="mb-1 text-xs text-neutral-400">Available Balance</div>
             <div class="text-sm text-neutral-400">
                 {{ assetsState.toRealQty(consumedSymbol, availableBalance) }}
-                {{ consumedSymbol }}</div>
+                {{ consumedSymbol }}<br/>
+                integer: {{ availableBalance.toLocaleString() }}
+            </div>
+
         </div>
 
         <button
@@ -93,6 +102,22 @@ const availableBalance = computed(() => {
         </button>
         <div v-if="orderSubmit?.error" class="mb-2 text-xs text-rose-400">
             {{ orderSubmit.error }}
+        </div>
+        <div>
+            Side: {{ side }}<br/> 
+            Order type: {{ orderType }}<br/>
+            Integer price: {{ instrumentsState.toIntPrice(instrumentsState.selected?.symbol, price ?? 0) }}<br/>
+            Integer quantity: {{ instrumentsState.toIntQty(instrumentsState.selected?.symbol, size ?? 0) }}<br/>
+
+            <code>
+            create-order --order-id {{ uuidv7() }} --order-side {{ side.toLowerCase() }} --order-type {{ orderType.toLowerCase() }} --pair-token1 {{ baseSymbol }} --pair-token2 {{ quoteSymbol }} --quantity {{ instrumentsState.toIntQty(instrumentsState.selected?.symbol, size ?? 0) }} --price {{ instrumentsState.toIntPrice(instrumentsState.selected?.symbol, price ?? 0) }}
+            </code>
+        </div>
+        <div v-if="orderSubmit?.data" class="mb-2 text-xs text-emerald-400">
+            Order submitted successfully
+            <a :href="`https://explorer.hyli.com/tx/${orderSubmit.data.tx_hash}`" target="_blank">
+                See tx on explorer
+            </a>
         </div>
     </section>
 </template>

@@ -14,7 +14,6 @@ interface ApiInstrument {
   symbol: string;
   tick_size: number;
   qty_step: number;
-  price_scale: number;
   base_asset_id: number;
   quote_asset_id: number;
   status: string;
@@ -106,7 +105,6 @@ function transformInstrument(apiInstrument: ApiInstrument, marketPrice?: number,
     price: marketPrice || 0,
     change: priceChange || 0,
     vol: vol || 0,
-    price_scale: apiInstrument.price_scale,
     qty_step: apiInstrument.qty_step,
     base_asset: apiInstrument.symbol.split("/")[0] || "?",
     quote_asset: apiInstrument.symbol.split("/")[1] || "?",

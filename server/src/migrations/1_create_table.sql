@@ -25,16 +25,12 @@ CREATE TABLE instruments (
     instrument_id bigserial PRIMARY KEY,
     symbol text UNIQUE NOT NULL, -- 'BTC/USDT'
     -- Smallest price increment
-    -- ex: for BTC/USDT with price_scale=2, tick_size=5 means min price increment = 0.05 USDT
     -- requires: price % tick_size = 0
-    tick_size bigint NOT NULL, -- ex: 1 = 0.01 si scale=2
+    tick_size bigint NOT NULL,
     -- Smallest tradeable quantity
     -- ex: for BTC with scale=8, qty_step=1000 means min trade qty = 1000 satoshis = 0.0001 BTC
     -- requires: order.qty % qty_step = 0
     qty_step bigint NOT NULL,
-    -- number of decimals for price
-    -- defines the fixed-point representation (integer = real * 10^price_scale)
-    price_scale smallint NOT NULL,
     -- eg. BTC/USDT => base=BTC, quote=USDT
     base_asset_id bigserial NOT NULL REFERENCES assets (asset_id),
     quote_asset_id bigserial NOT NULL REFERENCES assets (asset_id),

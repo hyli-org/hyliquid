@@ -16,7 +16,6 @@ export interface Instrument {
   symbol: string;
   tick_size: number;
   qty_step: number;
-  price_scale: number;
   base_asset_id: number;
   quote_asset_id: number;
   status: MarketStatus;

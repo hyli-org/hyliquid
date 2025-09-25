@@ -11,7 +11,7 @@ use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::services::asset_service::AssetService;
+use crate::services::asset_service::{AssetService, MarketStatus};
 use crate::services::user_service::UserService;
 
 pub struct BookWriterService {
@@ -44,10 +44,41 @@ impl BookWriterService {
         // Transactionnaly write all events & update balances
 
         let mut symbol_book_updated = HashSet::<String>::new();
+        let mut reload_instrument_map = false;
 
         let mut tx = self.pool.begin().await?;
         for event in _events {
             match event {
+                OrderbookEvent::PairCreated { pair, info: _ } => {
+                    let asset_service = self.asset_service.read().await;
+                    let base_asset = asset_service.get_asset(&pair.0).await.ok_or(AppError(
+                        StatusCode::NOT_FOUND,
+                        anyhow::anyhow!("Base asset not found: {}", pair.0),
+                    ))?;
+                    let quote_asset = asset_service.get_asset(&pair.1).await.ok_or(AppError(
+                        StatusCode::NOT_FOUND,
+                        anyhow::anyhow!("Quote asset not found: {}", pair.1),
+                    ))?;
+                    log_error!(
+                        sqlx::query(
+                            "INSERT INTO instruments 
+                                (symbol, tick_size, qty_step, base_asset_id, quote_asset_id, status) 
+                                VALUES 
+                                ($1, $2, $3, $4, $5, $6) 
+                            ON CONFLICT DO NOTHING"
+                        )
+                        .bind(format!("{}/{}", pair.0, pair.1))
+                        .bind(1 as i64)
+                        .bind(1 as i64)
+                        .bind(base_asset.asset_id)
+                        .bind(quote_asset.asset_id)
+                        .bind(MarketStatus::Active)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to create pair"
+                    )?;
+                    reload_instrument_map = true;
+                }
                 OrderbookEvent::BalanceUpdated {
                     user,
                     token,
@@ -319,6 +350,11 @@ impl BookWriterService {
             }
         }
         tx.commit().await?;
+
+        if reload_instrument_map {
+            let mut asset_service = self.asset_service.write().await;
+            asset_service.reload_instrument_map().await?;
+        }
 
         self.send_order_book_update(symbol_book_updated).await?;
 

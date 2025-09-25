@@ -22,7 +22,6 @@ export interface Asset {
 export interface Instrument {
     symbol: string;
     price: number;
-    price_scale: number;
     qty_step: number;
     base_asset: string;
     quote_asset: string;
@@ -83,31 +82,31 @@ export const instrumentsState = reactive({
     error: instrumentsAndAssets.error,
     toRealPrice: (instrument_symbol: string | undefined, price: number) => {
         if (!instrument_symbol) return price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-        const quoteAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.quote_asset;
-        const priceScale = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.price_scale ?? 0;
+        const quoteAsset = instrument_symbol.split("/")[1];
         const quoteAssetScale = assetsState.list.find(a => a.symbol === quoteAsset)?.scale ?? 0;
-        const real = price / 10 ** (quoteAssetScale + priceScale);
+        const real = price  / 10 ** quoteAssetScale;
         return real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: quoteAssetScale });
     },
     toRealQty: (instrument_symbol: string | undefined, qty: number) => {
         if (!instrument_symbol) return qty.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-        const baseAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.base_asset;
+        const baseAsset = instrument_symbol.split("/")[0];
         const baseAssetScale = assetsState.list.find(a => a.symbol === baseAsset)?.scale ?? 0;
-        const real = qty / 10 ** baseAssetScale;
-        return real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: baseAssetScale });
+        const qty_real = qty / 10 ** baseAssetScale;
+        return qty_real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: baseAssetScale });
     },
-    fromRealPrice: (instrument_symbol: string | undefined, price: number) => {
+    toIntPrice: (instrument_symbol: string | undefined, price: number) => {
         if (!instrument_symbol) return price;
-        const quoteAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.quote_asset;
-        const priceScale = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.price_scale ?? 0;
+        const quoteAsset = instrument_symbol.split("/")[1];
         const quoteAssetScale = assetsState.list.find(a => a.symbol === quoteAsset)?.scale ?? 0;
-        return price * 10 ** (quoteAssetScale + priceScale);
+        const int_price =  price * 10 ** quoteAssetScale;
+        return int_price
     },
-    fromRealQty: (instrument_symbol: string | undefined, qty: number) => {
+    toIntQty: (instrument_symbol: string | undefined, qty: number) => {
         if (!instrument_symbol) return qty;
-        const baseAsset = instrumentsState.list.find(i => i.symbol === instrument_symbol)?.base_asset;
+        const baseAsset = instrument_symbol.split("/")[0];
         const baseAssetScale = assetsState.list.find(a => a.symbol === baseAsset)?.scale ?? 0;
-        return qty * 10 ** baseAssetScale;
+        const int_qty = qty * 10 ** baseAssetScale;
+        return int_qty
     },
 });
 
@@ -247,7 +246,7 @@ const orderFormState = {
     size: ref<number | null>(null),
     side: ref<Side>("Bid"),
     leverage: ref(10),
-    orderSubmit: ref<SWRResponse<void> | null>(null),
+    orderSubmit: ref<SWRResponse<{ tx_hash: string }> | null>(null),
 };
 
 // Composable for order form state
@@ -313,9 +312,9 @@ export async function submitOrder() {
     const created = placeOrder({
         symbol: instrumentsState.selected!.symbol,
         side: orderFormState.side.value,
-        size: instrumentsState.fromRealQty(instrumentsState.selected!.symbol, orderFormState.size.value ?? 0),
+        size: instrumentsState.toIntQty(instrumentsState.selected!.symbol, orderFormState.size.value ?? 0),
         type: orderFormState.orderType.value,
-        price: instrumentsState.fromRealPrice(instrumentsState.selected!.symbol, orderFormState.price.value ?? 0),
+        price: instrumentsState.toIntPrice(instrumentsState.selected!.symbol, orderFormState.price.value ?? 0),
     });
     orderFormState.orderSubmit.value = created;
     // TODO: should we do this?
@@ -328,12 +327,12 @@ export function placeOrder(input: {
     size: number; // integer amount
     type: OrderType;
     price: number | null; // integer price
-}): SWRResponse<void> {
+}): SWRResponse<{ tx_hash: string }> {
     return useSWR(async () => {
         if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");
 
-        await fetch("http://localhost:9002/create_order", {
+        const res = await fetch("http://localhost:9002/create_order", {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -350,5 +349,13 @@ export function placeOrder(input: {
                 quantity: input.size,
             }),
         });
+
+        if (res.ok) {
+            return {
+                tx_hash: await res.json() as string,
+            };
+        } else {
+            throw new Error(`Failed to create order: ${res.status} ${res.statusText}`);
+        }
     });
 }

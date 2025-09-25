@@ -8,7 +8,7 @@ use k256::{
 use orderbook::orderbook::{OrderSide, OrderType};
 use reqwest::Client;
 use server::{
-    app::{CancelOrderRequest, CreateOrderRequest, DepositRequest},
+    app::{CancelOrderRequest, CreateOrderRequest, CreatePairRequest, DepositRequest},
     conf::Conf,
 };
 use sha2::{Digest, Sha256};
@@ -31,6 +31,13 @@ pub struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Create a new pair
+    CreatePair {
+        #[arg(long)]
+        pair_token1: String,
+        #[arg(long)]
+        pair_token2: String,
+    },
     /// Create a new order
     CreateOrder {
         #[arg(long)]
@@ -123,6 +130,34 @@ async fn main() -> Result<()> {
     };
 
     match args.command {
+        Commands::CreatePair {
+            pair_token1,
+            pair_token2,
+        } => {
+            let request = CreatePairRequest {
+                pair: (pair_token1, pair_token2),
+            };
+
+            tracing::info!("Sending create pair request: {:?}", request);
+
+            let response = client
+                .post(format!("{}/create_pair", args.server_url))
+                .header("x-identity", args.identity)
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Pair created successfully! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+        }
         Commands::CreateOrder {
             order_id,
             order_side,

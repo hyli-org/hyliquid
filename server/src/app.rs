@@ -26,17 +26,22 @@ use hyli_modules::{
     },
 };
 use orderbook::{
-    orderbook::{Order, OrderSide, OrderType, Orderbook, OrderbookEvent, TokenPair, UserInfo},
+    orderbook::{
+        Order, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair, UserInfo,
+    },
     AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, PermissionnedPrivateInput, WithdrawPrivateInput,
 };
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, Calldata, ContractName, LaneId, TxContext, TxHash, ZkContract};
 use serde::{Deserialize, Serialize};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
-use crate::{prover::OrderbookProverRequest, services::book_service::BookWriterService};
+use crate::{
+    prover::OrderbookProverRequest, services::asset_service::AssetService,
+    services::book_service::BookWriterService,
+};
 
 pub struct OrderbookModule {
     bus: OrderbookModuleBusClient,
@@ -48,7 +53,8 @@ pub struct OrderbookModuleCtx {
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
     pub default_state: Orderbook,
-    pub book_service: Arc<Mutex<BookWriterService>>,
+    pub book_writer_service: Arc<Mutex<BookWriterService>>,
+    pub asset_service: Arc<RwLock<AssetService>>,
 }
 
 /// Messages received from WebSocket clients that will be processed by the system
@@ -80,7 +86,8 @@ impl Module for OrderbookModule {
             bus: bus.clone(),
             orderbook: orderbook.clone(),
             lane_id: ctx.lane_id.clone(),
-            book_service: ctx.book_service.clone(),
+            book_writer_service: ctx.book_writer_service.clone(),
+            asset_service: ctx.asset_service.clone(),
         };
 
         let cors = CorsLayer::new()
@@ -90,6 +97,7 @@ impl Module for OrderbookModule {
 
         let api = Router::new()
             .route("/create_order", post(create_order))
+            .route("/create_pair", post(create_pair))
             .route("/add_session_key", post(add_session_key))
             .route("/deposit", post(deposit))
             .route("/cancel_order", post(cancel_order))
@@ -131,7 +139,8 @@ struct RouterCtx {
     pub default_state: Orderbook,
     pub orderbook: Arc<Mutex<Orderbook>>,
     pub lane_id: LaneId,
-    pub book_service: Arc<Mutex<BookWriterService>>,
+    pub book_writer_service: Arc<Mutex<BookWriterService>>,
+    pub asset_service: Arc<RwLock<AssetService>>,
 }
 
 // --------------------------------------------------------
@@ -188,6 +197,11 @@ pub struct CreateOrderRequest {
     pub price: Option<u64>,
     pub pair: TokenPair,
     pub quantity: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreatePairRequest {
+    pub pair: TokenPair,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -312,6 +326,76 @@ async fn create_order(
         )
         .as_blob(ctx.orderbook_cn.clone())]
         .into(),
+        tx_blob_count: 1,
+        tx_hash: TxHash::default(),
+        tx_ctx: Some(tx_ctx),
+        private_input,
+    };
+
+    execute_orderbook_action(&user, &calldata, &ctx).await
+}
+
+async fn create_pair(
+    State(ctx): State<RouterCtx>,
+    headers: HeaderMap,
+    Json(request): Json<CreatePairRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let auth = AuthHeaders::from_headers(&headers)?;
+    let user = auth.identity;
+    let tx_ctx = TxContext {
+        lane_id: ctx.lane_id.clone(),
+        ..Default::default()
+    };
+
+    let asset_service = ctx.asset_service.read().await;
+    let base_asset = asset_service
+        .get_asset(&request.pair.0)
+        .await
+        .ok_or(AppError(
+            StatusCode::NOT_FOUND,
+            anyhow::anyhow!("Base asset not found: {}", request.pair.0),
+        ))?;
+    let quote_asset = asset_service
+        .get_asset(&request.pair.1)
+        .await
+        .ok_or(AppError(
+            StatusCode::NOT_FOUND,
+            anyhow::anyhow!("Quote asset not found: {}", request.pair.1),
+        ))?;
+
+
+    if base_asset.scale >= 20 {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow::anyhow!(
+                "Unsupported pair scale: base_scale >= 20: {}",
+                base_asset.scale
+            ),
+        ));
+    }
+
+    let info = PairInfo {
+        base_scale: base_asset.scale as u64,
+        quote_scale: quote_asset.scale as u64,
+    };
+    drop(asset_service);
+
+    let private_input = create_permissioned_private_input(
+        user.to_string(), &Vec::<u8>::new()
+    )
+    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+    let orderbook_blob =
+        OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::CreatePair {
+            pair: request.pair,
+            info,
+        })
+        .as_blob(ctx.orderbook_cn.clone());
+
+    let calldata = Calldata {
+        identity: "orderbook@orderbook".into(),
+        index: sdk::BlobIndex(0),
+        blobs: vec![orderbook_blob].into(),
         tx_blob_count: 1,
         tx_hash: TxHash::default(),
         tx_ctx: Some(tx_ctx),
@@ -487,7 +571,7 @@ async fn execute_orderbook_action(
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
     let mut orderbook = ctx.orderbook.lock().await;
-    let book_service = ctx.book_service.lock().await;
+    let book_service = ctx.book_writer_service.lock().await;
 
     // FIXME: This is not optimal. We should have a way to send the orderbook commitment metadata without blocking the entire process here
     let commitment_metadata = orderbook.as_bytes()?;

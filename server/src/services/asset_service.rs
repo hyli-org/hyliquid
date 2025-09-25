@@ -26,7 +26,6 @@ pub struct Instrument {
     pub symbol: String,
     pub tick_size: i64,
     pub qty_step: i64,
-    pub price_scale: i16,
     pub base_asset_id: i64,
     pub quote_asset_id: i64,
     pub status: MarketStatus,
@@ -75,7 +74,6 @@ impl AssetService {
                         symbol: row.get("symbol"),
                         tick_size: row.get("tick_size"),
                         qty_step: row.get("qty_step"),
-                        price_scale: row.get("price_scale"),
                         base_asset_id: row.get("base_asset_id"),
                         quote_asset_id: row.get("quote_asset_id"),
                         status: row.get("status"),
@@ -93,16 +91,36 @@ impl AssetService {
         }
     }
 
+    pub async fn reload_instrument_map(&mut self) -> Result<(), AppError> {
+        self.instrument_map = sqlx::query("SELECT * FROM instruments")
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(|row| {
+                (row.get("symbol"), Instrument {
+                    instrument_id: row.get("instrument_id"),
+                    symbol: row.get("symbol"),
+                    tick_size: row.get("tick_size"),
+                    qty_step: row.get("qty_step"),
+                    base_asset_id: row.get("base_asset_id"),
+                    quote_asset_id: row.get("quote_asset_id"),
+                    status: row.get("status"),
+                })
+            })
+            .collect();
+
+        Ok(())
+    }
+
     pub async fn get_instrument<'a>(&'a self, symbol: &str) -> Option<&'a Instrument> {
         self.instrument_map.get(symbol)
     }
 
     pub async fn add_instrument(&mut self, instrument: Instrument) -> Result<(), AppError> {
-        sqlx::query("INSERT INTO instruments (symbol, tick_size, qty_step, price_scale, base_asset_id, quote_asset_id, status) VALUES ($1, $2, $3, $4, $5, $6, $7)")
+        sqlx::query("INSERT INTO instruments (symbol, tick_size, qty_step, base_asset_id, quote_asset_id, status) VALUES ($1, $2, $3, $4, $5, $6, $7)")
             .bind(instrument.symbol.clone())
             .bind(instrument.tick_size)
             .bind(instrument.qty_step)
-            .bind(instrument.price_scale)
             .bind(instrument.base_asset_id)
             .bind(instrument.quote_asset_id)
             .bind(instrument.status.clone())

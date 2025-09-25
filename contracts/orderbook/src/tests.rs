@@ -10,6 +10,12 @@ mod orderbook_tests {
 
     fn setup() -> (String, String, Orderbook) {
         let mut orderbook = Orderbook::init(LaneId::default(), true, vec![]);
+
+        orderbook.create_pair(("ETH".to_string(), "USD".to_string()), PairInfo {
+            base_scale: 0,
+            quote_scale: 0,
+        }).unwrap();
+
         let eth_user = "eth_user".to_string();
         let usd_user = "usd_user".to_string();
 

@@ -8,6 +8,8 @@ use sdk::{ContractName, LaneId, TxContext};
 pub struct Orderbook {
     // Server secret for authentication on permissionned actions
     pub secret: Vec<u8>,
+    // Registered token pairs with asset scales
+    pub pairs_info: BTreeMap<TokenPair, PairInfo>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
     // User balances per token: token -> (user -> balance))
@@ -28,6 +30,12 @@ pub struct Orderbook {
     /// These fields are not committed on-chain
     #[borsh(skip)]
     pub server_execution: bool,
+}
+
+#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
+pub struct PairInfo {
+    pub base_scale: u64,
+    pub quote_scale: u64,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
@@ -76,6 +84,10 @@ pub type TokenPair = (TokenName, TokenName);
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
 pub enum OrderbookEvent {
+    PairCreated {
+        pair: TokenPair,
+        info: PairInfo,
+    },
     OrderCreated {
         order: Order,
     },
@@ -105,6 +117,18 @@ pub enum OrderbookEvent {
 }
 
 impl Orderbook {
+    pub fn create_pair(
+        &mut self,
+        pair: TokenPair,
+        info: PairInfo,
+    ) -> Result<Vec<OrderbookEvent>, String> {
+        if info.base_scale >= 20 {
+            return Err(format!("Base scale too large: {}. Maximum is 19", info.base_scale));
+        }
+        self.pairs_info.insert(pair.clone(), info.clone());
+        Ok(vec![OrderbookEvent::PairCreated { pair: pair, info }])
+    }
+
     pub fn add_session_key(
         &mut self,
         user: &str,
@@ -259,10 +283,16 @@ impl Orderbook {
         let mut transfers_to_process: Vec<(String, String, String, u64)> = vec![];
         let mut order_to_insert: Option<Order> = None;
 
+        let base_scale = POW10[self
+            .pairs_info
+            .get(&order.pair)
+            .ok_or(format!("Pair {}/{} not found", order.pair.0, order.pair.1))?
+            .base_scale as usize];
+
         let (required_token, required_amount) = match order.order_side {
             OrderSide::Bid => (
                 order.pair.1.clone(),
-                order.price.map(|p| order.quantity * p),
+                order.price.map(|p| order.quantity * p / base_scale),
             ),
             OrderSide::Ask => (order.pair.0.clone(), Some(order.quantity)),
         };
@@ -296,20 +326,20 @@ impl Orderbook {
                         events.push(OrderbookEvent::BalanceUpdated {
                             user: user.to_string(),
                             token: required_token.clone(),
-                            amount: user_balance - order.quantity * order.price.unwrap(),
+                            amount: user_balance - order.quantity * order.price.unwrap() / base_scale,
                         });
                         let orderbook_balance = self.get_balance("orderbook", &required_token);
                         events.push(OrderbookEvent::BalanceUpdated {
                             user: "orderbook".into(),
                             token: required_token.clone(),
-                            amount: orderbook_balance + order.quantity * order.price.unwrap(),
+                            amount: orderbook_balance + order.quantity * order.price.unwrap() / base_scale,
                         });
                     }
                     self.transfer_tokens(
                         user,
                         "orderbook",
                         &required_token,
-                        order.quantity * order.price.unwrap(),
+                        order.quantity * order.price.unwrap() / base_scale,
                     )?;
 
                     return Ok(events);
@@ -369,7 +399,7 @@ impl Orderbook {
                                 user.to_string(),
                                 existing_order_user.clone(),
                                 order.pair.1.clone(),
-                                existing_order.price.unwrap() * order.quantity,
+                                existing_order.price.unwrap() * order.quantity / base_scale,
                             ));
                             // Send token to the user
                             transfers_to_process.push((
@@ -398,7 +428,7 @@ impl Orderbook {
                                 user.to_string(),
                                 existing_order_user.clone(),
                                 order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity,
+                                existing_order.price.unwrap() * existing_order.quantity / base_scale,
                             ));
 
                             // Send token to the user
@@ -423,7 +453,7 @@ impl Orderbook {
                                 user.to_string(),
                                 existing_order_user.clone(),
                                 order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity,
+                                existing_order.price.unwrap() * existing_order.quantity / base_scale,
                             ));
                             transfers_to_process.push((
                                 "orderbook".to_string(),
@@ -530,7 +560,7 @@ impl Orderbook {
                                 "orderbook".to_string(),
                                 user.to_string(),
                                 order.pair.1.clone(),
-                                existing_order.price.unwrap() * order.quantity,
+                                existing_order.price.unwrap() * order.quantity / base_scale,
                             ));
                             break;
                         }
@@ -552,7 +582,7 @@ impl Orderbook {
                                 "orderbook".to_string(),
                                 user.to_string(),
                                 order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity,
+                                existing_order.price.unwrap() * existing_order.quantity / base_scale,
                             ));
 
                             self.orders.remove(&order_id);
@@ -575,7 +605,7 @@ impl Orderbook {
                                 "orderbook".to_string(),
                                 user.to_string(),
                                 order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity,
+                                existing_order.price.unwrap() * existing_order.quantity / base_scale,
                             ));
                             order.quantity -= existing_order.quantity;
 
@@ -597,7 +627,7 @@ impl Orderbook {
                 self.insert_order(order.clone(), user.to_string())?;
                 // Remove liquidity from the user balance
                 let quantity = match order.order_side {
-                    OrderSide::Bid => order.quantity * order.price.unwrap(),
+                    OrderSide::Bid => order.quantity * order.price.unwrap() / base_scale,
                     OrderSide::Ask => order.quantity,
                 };
 
@@ -643,6 +673,7 @@ impl Orderbook {
 
         Orderbook {
             secret,
+            pairs_info: BTreeMap::new(),
             lane_id,
             orders: BTreeMap::new(),
             balances: BTreeMap::new(),
@@ -780,3 +811,27 @@ impl Orderbook {
         borsh::to_vec(self)
     }
 }
+
+// To avoid recomputing powers of 10
+const POW10: [u64; 20] = [
+    1,
+    10,
+    100,
+    1_000,
+    10_000,
+    100_000,
+    1_000_000,
+    10_000_000,
+    100_000_000,
+    1_000_000_000,
+    10_000_000_000,
+    100_000_000_000,
+    1_000_000_000_000,
+    10_000_000_000_000,
+    100_000_000_000_000,
+    1_000_000_000_000_000,
+    10_000_000_000_000_000,
+    100_000_000_000_000_000,
+    1_000_000_000_000_000_000,
+    10_000_000_000_000_000_000,
+];

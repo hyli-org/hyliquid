@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use sdk::RunResult;
 
-use crate::orderbook::{Order, OrderSide, OrderType, Orderbook, OrderbookEvent, TokenPair};
+use crate::orderbook::{Order, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair};
 
 #[cfg(feature = "client")]
 pub mod client;
@@ -72,6 +72,9 @@ impl sdk::ZkContract for Orderbook {
 
                 // Execute the given action
                 let events = match action {
+                    PermissionnedOrderbookAction::CreatePair { pair, info } => {
+                        self.create_pair(pair, info)?
+                    }
                     PermissionnedOrderbookAction::AddSessionKey => {
                         // On this step, the public key is provided in private_input and hence is never public.
                         // The orderbook server knows the public key as user informed it offchain.
@@ -270,6 +273,10 @@ pub enum OrderbookAction {
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub enum PermissionnedOrderbookAction {
     AddSessionKey,
+    CreatePair {
+        pair: TokenPair,
+        info: PairInfo,
+    },
     Deposit {
         token: String,
         amount: u64,
