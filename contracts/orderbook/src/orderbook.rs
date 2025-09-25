@@ -385,8 +385,42 @@ impl Orderbook {
     ) -> Result<Vec<OrderbookEvent>, String> {
         let mut events = Vec::new();
 
-        let mut transfers_to_process: Vec<(UserInfo, UserInfo, TokenName, u64)> = vec![];
-        let mut funding_to_process: Vec<(UserInfo, TokenName, u64)> = vec![];
+        // New balance aggregation system: tracks net balance changes per user per token
+        let mut balance_changes: BTreeMap<TokenName, BTreeMap<UserInfo, Balance>> =
+            balances.clone();
+
+        // Helper function to record balance changes
+        fn record_balance_change(
+            balance_changes: &mut BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
+            user_info: UserInfo,
+            token: &TokenName,
+            amount: i128,
+        ) -> Result<(), String> {
+            let user = user_info.user.clone();
+            let token_balances = balance_changes.entry(token.clone()).or_default();
+            let balance = token_balances.entry(user_info).or_default();
+
+            let new_value: u64 = ((balance.0 as i128) + amount).try_into().map_err(|e| {
+                format!(
+                    "User {user} cannot perform token {token} exchange: balance is {}, attempted to add {amount}: {e}", balance.0
+                )
+            })?;
+            *balance = Balance(new_value);
+            Ok(())
+        }
+
+        // Helper function to record transfers between users
+        fn record_transfer(
+            balance_changes: &mut BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
+            from: UserInfo,
+            to: UserInfo,
+            token: &TokenName,
+            amount: i128,
+        ) -> Result<(), String> {
+            record_balance_change(balance_changes, from, token, -amount)?;
+            record_balance_change(balance_changes, to, token, amount)?;
+            Ok(())
+        }
 
         let mut order_to_insert: Option<Order> = None;
 
@@ -396,43 +430,11 @@ impl Orderbook {
             .ok_or(format!("Pair {}/{} not found", order.pair.0, order.pair.1))?
             .base_scale as usize];
 
-        let (required_token, required_amount) = match order.order_side {
-            OrderSide::Bid => (
-                order.pair.1.clone(),
-                order.price.map(|p| order.quantity * p / base_scale),
-            ),
-            OrderSide::Ask => (order.pair.0.clone(), Some(order.quantity)),
-        };
-
-        let required_balances = balances.get(&required_token).ok_or(format!(
-            "No balances provided for token {required_token} during order execution"
-        ))?;
-
-        let required_balances_proof = balances_proof.get(&required_token).ok_or(format!(
-            "No balance proof provided for token {required_token} during transfer from {} to orderbook", user_info.user
-        ))?;
-
-        let user_balance = required_balances
-            .get(user_info)
-            .ok_or(format!(
-                "No balance found for user {} and token {required_token}",
-                user_info.user
-            ))?
-            .clone();
-
-        // For limit orders, verify sufficient balance
-        if let Some(amount) = required_amount {
-            if user_balance.0 < amount {
-                return Err(format!(
-                    "Insufficient balance for {:?} order: user {} has {} {} tokens, requires {}",
-                    order.order_side, user_info.user, user_balance.0, required_token, amount
-                ));
-            }
-        }
-
         // Try to fill already existing orders
         match &order.order_side {
             OrderSide::Bid => {
+                let required_token = order.pair.1.clone();
+
                 let sell_orders_option = self.sell_orders.get_mut(&order.pair);
 
                 if sell_orders_option.is_none() && order.order_type == OrderType::Limit {
@@ -443,20 +445,11 @@ impl Orderbook {
                     });
 
                     // Remove liquitidy from the user balance
-                    if self.server_execution {
-                        events.push(OrderbookEvent::BalanceUpdated {
-                            user: user_info.user.clone(),
-                            token: required_token.clone(),
-                            amount: user_balance.0 - order.quantity * order.price.unwrap(),
-                        });
-                    }
-
-                    self.deduct_from_account(
+                    record_balance_change(
+                        &mut balance_changes,
+                        user_info.clone(),
                         &required_token,
-                        user_info,
-                        order.quantity * order.price.unwrap(),
-                        required_balances,
-                        required_balances_proof,
+                        -((order.quantity * order.price.unwrap()) as i128),
                     )?;
 
                     return Ok(events);
@@ -512,18 +505,21 @@ impl Orderbook {
                             });
 
                             // Send token from user to the order owner
-                            transfers_to_process.push((
+                            record_transfer(
+                                &mut balance_changes,
                                 user_info.clone(),
                                 existing_order_user.clone(),
-                                order.pair.1.clone(),
-                                existing_order.price.unwrap() * order.quantity / base_scale,
-                            ));
+                                &order.pair.1,
+                                (existing_order.price.unwrap() * order.quantity / base_scale)
+                                    as i128,
+                            )?;
                             // Send token to the user
-                            funding_to_process.push((
+                            record_balance_change(
+                                &mut balance_changes,
                                 user_info.clone(),
-                                order.pair.0.clone(),
-                                order.quantity,
-                            ));
+                                &order.pair.0,
+                                order.quantity as i128,
+                            )?;
 
                             break;
                         }
@@ -541,20 +537,22 @@ impl Orderbook {
                             });
 
                             // Send token to the order owner
-                            transfers_to_process.push((
+                            record_transfer(
+                                &mut balance_changes,
                                 user_info.clone(),
                                 existing_order_user.clone(),
-                                order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale,
-                            ));
+                                &order.pair.1,
+                                (existing_order.price.unwrap() * existing_order.quantity
+                                    / base_scale) as i128,
+                            )?;
 
                             // Send token to the user
-                            funding_to_process.push((
+                            record_balance_change(
+                                &mut balance_changes,
                                 user_info.clone(),
-                                order.pair.0.clone(),
-                                existing_order.quantity,
-                            ));
+                                &order.pair.0,
+                                existing_order.quantity as i128,
+                            )?;
 
                             self.orders.remove(&order_id);
                             break;
@@ -566,18 +564,21 @@ impl Orderbook {
                                 taker_order_id: order.order_id.clone(),
                                 pair: order.pair.clone(),
                             });
-                            transfers_to_process.push((
+                            record_transfer(
+                                &mut balance_changes,
                                 user_info.clone(),
                                 existing_order_user.clone(),
-                                order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale,
-                            ));
-                            funding_to_process.push((
+                                &order.pair.1,
+                                (existing_order.price.unwrap() * existing_order.quantity
+                                    / base_scale) as i128,
+                            )?;
+                            record_balance_change(
+                                &mut balance_changes,
                                 user_info.clone(),
-                                order.pair.0.clone(),
-                                existing_order.quantity,
-                            ));
+                                &order.pair.0,
+                                existing_order.quantity as i128,
+                            )?;
+
                             order.quantity -= existing_order.quantity;
 
                             // We DO NOT push bash the order_id back to the sell orders
@@ -590,6 +591,7 @@ impl Orderbook {
                 }
             }
             OrderSide::Ask => {
+                let required_token = order.pair.0.clone();
                 let buy_orders_option = self.buy_orders.get_mut(&order.pair);
 
                 if buy_orders_option.is_none() && order.order_type == OrderType::Limit {
@@ -600,19 +602,11 @@ impl Orderbook {
                     });
 
                     // Remove liquitidy from the user balance
-                    if self.server_execution {
-                        events.push(OrderbookEvent::BalanceUpdated {
-                            user: user_info.user.clone(),
-                            token: required_token.clone(),
-                            amount: user_balance.0 - order.quantity,
-                        });
-                    }
-                    self.deduct_from_account(
+                    record_balance_change(
+                        &mut balance_changes,
+                        user_info.clone(),
                         &required_token,
-                        user_info,
-                        order.quantity,
-                        required_balances,
-                        required_balances_proof,
+                        -(order.quantity as i128),
                     )?;
 
                     return Ok(events);
@@ -666,18 +660,21 @@ impl Orderbook {
                             });
 
                             // Send token to the order owner
-                            transfers_to_process.push((
+                            record_transfer(
+                                &mut balance_changes,
                                 user_info.clone(),
                                 existing_order_user.clone(),
-                                order.pair.0.clone(),
-                                order.quantity,
-                            ));
+                                &order.pair.0,
+                                order.quantity as i128,
+                            )?;
                             // Send token to the user
-                            funding_to_process.push((
+                            record_balance_change(
+                                &mut balance_changes,
                                 user_info.clone(),
-                                order.pair.1.clone(),
-                                existing_order.price.unwrap() * order.quantity / base_scale,
-                            ));
+                                &order.pair.1,
+                                (existing_order.price.unwrap() * order.quantity / base_scale)
+                                    as i128,
+                            )?;
                             break;
                         }
                         std::cmp::Ordering::Equal => {
@@ -687,19 +684,23 @@ impl Orderbook {
                                 taker_order_id: order.order_id.clone(),
                                 pair: order.pair.clone(),
                             });
+
                             // Send token to the order owner
-                            transfers_to_process.push((
+                            record_transfer(
+                                &mut balance_changes,
                                 user_info.clone(),
                                 existing_order_user.clone(),
-                                order.pair.0.clone(),
-                                existing_order.quantity,
-                            ));
-                            funding_to_process.push((
+                                &order.pair.0,
+                                existing_order.quantity as i128,
+                            )?;
+                            // Send token to the user
+                            record_balance_change(
+                                &mut balance_changes,
                                 user_info.clone(),
-                                order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale,
-                            ));
+                                &order.pair.1,
+                                (existing_order.price.unwrap() * existing_order.quantity
+                                    / base_scale) as i128,
+                            )?;
 
                             self.orders.remove(&order_id);
                             break;
@@ -711,18 +712,20 @@ impl Orderbook {
                                 taker_order_id: order.order_id.clone(),
                                 pair: order.pair.clone(),
                             });
-                            transfers_to_process.push((
+                            record_transfer(
+                                &mut balance_changes,
                                 user_info.clone(),
                                 existing_order_user.clone(),
-                                order.pair.0.clone(),
-                                existing_order.quantity,
-                            ));
-                            funding_to_process.push((
+                                &order.pair.0,
+                                existing_order.quantity as i128,
+                            )?;
+                            record_balance_change(
+                                &mut balance_changes,
                                 user_info.clone(),
-                                order.pair.1.clone(),
-                                existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale,
-                            ));
+                                &order.pair.1,
+                                (existing_order.price.unwrap() * existing_order.quantity
+                                    / base_scale) as i128,
+                            )?;
                             order.quantity -= existing_order.quantity;
 
                             // We DO NOT push bash the order_id back to the buy orders
@@ -743,93 +746,45 @@ impl Orderbook {
                 self.insert_order(&order, user_info)?;
 
                 // Remove liquidity from the user balance
-                let quantity = match order.order_side {
-                    OrderSide::Bid => order.quantity * order.price.unwrap() / base_scale,
-                    OrderSide::Ask => order.quantity,
+                let (quantity, required_token) = match order.order_side {
+                    OrderSide::Bid => (
+                        order.quantity * order.price.unwrap() / base_scale,
+                        order.pair.1.clone(),
+                    ),
+                    OrderSide::Ask => (order.quantity, order.pair.0.clone()),
                 };
                 events.push(OrderbookEvent::OrderCreated { order });
 
-                self.deduct_from_account(
+                record_balance_change(
+                    &mut balance_changes,
+                    user_info.clone(),
                     &required_token,
-                    user_info,
-                    quantity,
-                    required_balances,
-                    required_balances_proof,
+                    -(quantity as i128),
                 )?;
-                if self.server_execution {
-                    let user_balance = self.get_balance(user_info, &required_token);
-                    events.push(OrderbookEvent::BalanceUpdated {
-                        user: user_info.user.clone(),
-                        token: required_token.clone(),
-                        amount: user_balance.0,
-                    });
-                }
             }
         }
 
-        // TODO: optimize the way we handle events and balances updates
         // Updating balances
-        let mut ids: BTreeSet<(String, UserInfo)> = BTreeSet::new();
-        // Funding account
-        for (user_info, token, amount) in funding_to_process {
-            let token_balances = balances
-                .get(&token)
-                .ok_or_else(|| format!("No balances provided for token {token} during funding"))?;
-            let token_balances_proof = balances_proof.get(&token).ok_or_else(|| {
-                format!("No balance proof provided for token {token} during funding")
-            })?;
-            self.fund_account(
-                &token,
-                &user_info,
-                &Balance(amount),
-                token_balances,
-                token_balances_proof,
-            )?;
+        for (token, user_balances) in balance_changes {
+            let balances_to_update: Vec<(&UserInfo, Balance)> = user_balances
+                .iter()
+                .map(|(user_info, amount)| {
+                    if self.server_execution {
+                        events.push(OrderbookEvent::BalanceUpdated {
+                            user: user_info.user.clone(),
+                            token: token.clone(),
+                            amount: amount.0,
+                        });
+                    }
+                    (user_info, amount.clone())
+                })
+                .collect();
 
-            if self.server_execution {
-                ids.insert((token.clone(), user_info.clone()));
-            }
-        }
-
-        // Transfers between users
-        for (from, to, token, amount) in transfers_to_process {
-            let token_balances = balances.get(&token).ok_or_else(|| {
-                format!(
-                    "No balances provided for token {token} during transfer from {} to {}",
-                    from.user, to.user
-                )
-            })?;
-            let token_balances_proof = balances_proof.get(&token).ok_or_else(|| {
-                format!(
-                    "No balance proof provided for token {token} during transfer from {} to {}",
-                    from.user, to.user
-                )
+            let balances_proof = balances_proof.get(&token).ok_or_else(|| {
+                format!("No balance proof provided for token {token} during update")
             })?;
 
-            self.transfer_tokens(
-                &from,
-                &to,
-                &token,
-                token_balances,
-                token_balances_proof,
-                amount,
-            )?;
-
-            if self.server_execution {
-                ids.insert((token.clone(), from.clone()));
-                ids.insert((token, to.clone()));
-            }
-        }
-
-        if self.server_execution {
-            for (token, user_info) in ids {
-                let user_balance = self.get_balance(&user_info, &token);
-                events.push(OrderbookEvent::BalanceUpdated {
-                    user: user_info.user.clone(),
-                    token,
-                    amount: user_balance.0,
-                });
-            }
+            self.update_balances(&token, balances_to_update, balances_proof)?;
         }
 
         Ok(events)
@@ -854,47 +809,6 @@ impl Orderbook {
             balances_merkle_roots: BTreeMap::new(),
             ..Default::default()
         })
-    }
-
-    fn transfer_tokens(
-        &mut self,
-        from: &UserInfo,
-        to: &UserInfo,
-        token: &str,
-        balances: &BTreeMap<UserInfo, Balance>,
-        balances_proof: &BorshableMerkleProof,
-        amount: u64,
-    ) -> Result<(), String> {
-        let from_balance = balances.get(from).ok_or(format!(
-            "No balance found for user {} during transfer of token {token}",
-            from.user
-        ))?;
-        let to_balance = balances.get(to).ok_or(format!(
-            "No balance found for user {} during transfer of token {token}",
-            to.user
-        ))?;
-
-        if from_balance.0 < amount {
-            return Err(format!(
-                "Could not transfer: Insufficient balance: user {} has {:?} {} tokens, trying to transfer {}",
-                from.user,
-                from_balance,
-                token,
-                amount
-            ));
-        }
-
-        let balances_to_update = vec![
-            // Deduct from sender
-            (from, Balance(from_balance.0 - amount)),
-            // Add to receiver
-            (to, Balance(to_balance.0 + amount)),
-        ];
-
-        self.update_balances(token, balances_to_update, balances_proof)
-            .map_err(|e| e.to_string())?;
-
-        Ok(())
     }
 
     pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
