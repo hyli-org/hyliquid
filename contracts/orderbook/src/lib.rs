@@ -57,7 +57,7 @@ impl sdk::ZkContract for Orderbook {
                     return Err("Invalid lane id".to_string());
                 }
 
-                let permissionned_private_input: PermissionnedPrivateInput =
+                let mut permissionned_private_input: PermissionnedPrivateInput =
                     borsh::from_slice(&calldata.private_input).map_err(|_| {
                         if self.server_execution {
                             "Failed to deserialize PermissionnedPrivateInput".to_string()
@@ -66,8 +66,18 @@ impl sdk::ZkContract for Orderbook {
                         }
                     })?;
 
-                // Investigate if still relevant. Investigate if there are security implications to remove it
-                let user = &permissionned_private_input.user;
+                let user_info = &mut permissionned_private_input.user_info;
+                let user_info_proof = &permissionned_private_input.user_info_proof;
+
+                // Verify that user info proof is correct
+                self.verify_user_info_proof(user_info, user_info_proof)
+                    .map_err(|err| {
+                        if self.server_execution {
+                            format!("Failed to verify user info proof: {err}")
+                        } else {
+                            panic!("Failed to verify user info proof: {err}")
+                        }
+                    })?;
 
                 let hashed_secret = Sha256::digest(&permissionned_private_input.secret)
                     .as_slice()
@@ -88,7 +98,7 @@ impl sdk::ZkContract for Orderbook {
                     PermissionnedOrderbookAction::AddSessionKey => {
                         // On this step, the public key is provided in private_input and hence is never public.
                         // The orderbook server knows the public key as user informed it offchain.
-                        let mut add_session_key_private_input =
+                        let add_session_key_private_input =
                             borsh::from_slice::<AddSessionKeyPrivateInput>(
                                 &permissionned_private_input.private_input,
                             )
@@ -100,22 +110,9 @@ impl sdk::ZkContract for Orderbook {
                                 }
                             })?;
 
-                        // Verify that user info proof is correct
-                        self.verify_user_info_proof(
-                            &add_session_key_private_input.user_info,
-                            &add_session_key_private_input.user_info_proof,
-                        )
-                        .map_err(|err| {
-                            if self.server_execution {
-                                format!("Failed to verify user info proof: {err}")
-                            } else {
-                                panic!("Failed to verify user info proof: {err}")
-                            }
-                        })?;
-
                         self.add_session_key(
-                            &mut add_session_key_private_input.user_info,
-                            &add_session_key_private_input.user_info_proof,
+                            user_info,
+                            user_info_proof,
                             &add_session_key_private_input.new_public_key,
                         )?
                     }
@@ -132,23 +129,10 @@ impl sdk::ZkContract for Orderbook {
                             }
                         })?;
 
-                        // Verify that user info proof is correct
-                        self.verify_user_info_proof(
-                            &deposit_private_input.user_info,
-                            &deposit_private_input.user_info_proof,
-                        )
-                        .map_err(|err| {
-                            if self.server_execution {
-                                format!("Failed to verify user info proof: {err}")
-                            } else {
-                                panic!("Failed to verify user info proof: {err}")
-                            }
-                        })?;
-
                         // Verify the balance is correct
                         self.verify_balance_proof(
                             &token,
-                            &deposit_private_input.user_info,
+                            user_info,
                             &deposit_private_input.balance,
                             &deposit_private_input.balance_proof,
                         )
@@ -163,7 +147,7 @@ impl sdk::ZkContract for Orderbook {
                         self.deposit(
                             token,
                             amount,
-                            &deposit_private_input.user_info,
+                            user_info,
                             &mut deposit_private_input.balance,
                             &deposit_private_input.balance_proof,
                         )?
@@ -191,7 +175,7 @@ impl sdk::ZkContract for Orderbook {
                         // Verify that users info proof are correct for all users
                         self.verify_users_info_proof(
                             &create_order_private_input.users_info,
-                            &create_order_private_input.user_info_proof,
+                            &create_order_private_input.users_info_proof,
                         )
                         .map_err(|err| {
                             if self.server_execution {
@@ -241,21 +225,6 @@ impl sdk::ZkContract for Orderbook {
                             }
                         }
 
-                        let old_user_info = create_order_private_input
-                            .users_info
-                            .iter()
-                            .find(|u| u.user == *user)
-                            .ok_or_else(|| format!("Missing user info for user {user}"))
-                            .map_err(|err| {
-                                if self.server_execution {
-                                    format!("Failed to get user info: {err}")
-                                } else {
-                                    panic!("Failed to get user info: {err}")
-                                }
-                            })?
-                            .clone();
-
-                        let mut user_info = old_user_info.clone();
                         // Increment user's nonce
                         user_info.nonce += 1;
 
@@ -264,10 +233,12 @@ impl sdk::ZkContract for Orderbook {
                         // The orderbook server knows the signature as user informed it offchain.
                         // As the public key has been registered, only the user can create that signature and hence allow this order creation
                         utils::verify_user_signature_authorization(
-                            user,
+                            user_info,
                             &create_order_private_input.public_key,
-                            user_info.session_keys.as_slice(),
-                            &format!("{user}:{}:create_order:{order_id}", user_info.nonce),
+                            &format!(
+                                "{}:{}:create_order:{order_id}",
+                                user_info.user, user_info.nonce
+                            ),
                             &create_order_private_input.signature,
                         )
                         .map_err(|err| {
@@ -279,24 +250,21 @@ impl sdk::ZkContract for Orderbook {
                         })?;
 
                         // Update the user_info set with the user's info containing the incremented nonce
-                        let updated_users_info: BTreeSet<UserInfo> = create_order_private_input
-                            .users_info
-                            .iter()
-                            .filter(|&u| u.user != *user)
-                            .cloned()
-                            .chain(std::iter::once(user_info.clone()))
-                            .collect();
-                        self.update_users_info_merkle_root(
-                            &updated_users_info,
-                            &create_order_private_input.user_info_proof,
-                        )
-                        .map_err(|err| {
-                            if self.server_execution {
-                                format!("Failed to update users info merkle root: {err}")
-                            } else {
-                                panic!("Failed to update users info merkle root: {err}")
-                            }
-                        })?;
+                        // create_order_private_input
+                        //     .users_info
+                        //     .insert(user_info.clone());
+
+                        // self.update_users_info_merkle_root(
+                        //     &create_order_private_input.users_info,
+                        //     &create_order_private_input.users_info_proof,
+                        // )
+                        // .map_err(|err| {
+                        //     if self.server_execution {
+                        //         format!("Failed to update users info merkle root: {err}")
+                        //     } else {
+                        //         panic!("Failed to update users info merkle root: {err}")
+                        //     }
+                        // })?;
 
                         let order = Order {
                             order_id,
@@ -311,7 +279,7 @@ impl sdk::ZkContract for Orderbook {
                         }
 
                         self.execute_order(
-                            &old_user_info,
+                            user_info,
                             order,
                             create_order_private_input.order_user_map,
                             &create_order_private_input.balances,
@@ -342,11 +310,9 @@ impl sdk::ZkContract for Orderbook {
                             OrderSide::Ask => &order.pair.0,
                         };
 
-                        let mut user_info = cancel_order_private_data.user_info;
-
                         self.verify_balance_proof(
                             token,
-                            &user_info,
+                            user_info,
                             &cancel_order_private_data.balance,
                             &cancel_order_private_data.balance_proof,
                         )
@@ -363,10 +329,9 @@ impl sdk::ZkContract for Orderbook {
 
                         // Verify user signature authorization
                         utils::verify_user_signature_authorization(
-                            user,
+                            user_info,
                             &cancel_order_private_data.public_key,
-                            user_info.session_keys.as_slice(),
-                            &format!("{user}:{}:cancel:{order_id}", user_info.nonce),
+                            &format!("{}:{}:cancel:{order_id}", user_info.user, user_info.nonce),
                             &cancel_order_private_data.signature,
                         )
                         .map_err(|err| {
@@ -377,21 +342,18 @@ impl sdk::ZkContract for Orderbook {
                             }
                         })?;
 
-                        self.update_user_info_merkle_root(
-                            &user_info,
-                            &cancel_order_private_data.user_info_proof,
-                        )
-                        .map_err(|err| {
-                            if self.server_execution {
-                                format!("Failed to update users info merkle root: {err}")
-                            } else {
-                                panic!("Failed to update users info merkle root: {err}")
-                            }
-                        })?;
+                        self.update_user_info_merkle_root(user_info, user_info_proof)
+                            .map_err(|err| {
+                                if self.server_execution {
+                                    format!("Failed to update users info merkle root: {err}")
+                                } else {
+                                    panic!("Failed to update users info merkle root: {err}")
+                                }
+                            })?;
 
                         self.cancel_order(
                             order_id,
-                            &user_info,
+                            user_info,
                             &cancel_order_private_data.balance,
                             &cancel_order_private_data.balance_proof,
                         )?
@@ -410,17 +372,17 @@ impl sdk::ZkContract for Orderbook {
                             }
                         })?;
 
-                        let mut user_info = withdraw_private_data.user_info;
-
                         // Increment user's nonce
                         user_info.nonce += 1;
 
                         // Verify user signature authorization
                         utils::verify_user_signature_authorization(
-                            user,
+                            user_info,
                             &withdraw_private_data.public_key,
-                            user_info.session_keys.as_slice(),
-                            &format!("{user}:{}:withdraw:{token}:{amount}", user_info.nonce),
+                            &format!(
+                                "{}:{}:withdraw:{token}:{amount}",
+                                user_info.user, user_info.nonce
+                            ),
                             &withdraw_private_data.signature,
                         )
                         .map_err(|err| {
@@ -445,22 +407,19 @@ impl sdk::ZkContract for Orderbook {
                             }
                         })?;
 
-                        self.update_user_info_merkle_root(
-                            &user_info,
-                            &withdraw_private_data.user_info_proof,
-                        )
-                        .map_err(|err| {
-                            if self.server_execution {
-                                format!("Failed to update users info merkle root: {err}")
-                            } else {
-                                panic!("Failed to update users info merkle root: {err}")
-                            }
-                        })?;
+                        self.update_user_info_merkle_root(user_info, user_info_proof)
+                            .map_err(|err| {
+                                if self.server_execution {
+                                    format!("Failed to update users info merkle root: {err}")
+                                } else {
+                                    panic!("Failed to update users info merkle root: {err}")
+                                }
+                            })?;
 
                         self.withdraw(
                             token,
                             amount,
-                            &user_info,
+                            user_info,
                             &withdraw_private_data.balances,
                             &withdraw_private_data.balances_proof,
                         )?
@@ -496,24 +455,24 @@ impl sdk::ZkContract for Orderbook {
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct PermissionnedPrivateInput {
     pub secret: Vec<u8>,
-    pub user: String,
+
+    // Used to assert and increment user's nonce
+    pub user_info: UserInfo,
+    pub user_info_proof: BorshableMerkleProof,
+
+    // Used to execute the specific action for the user
     pub private_input: Vec<u8>,
 }
 
 /// Structure to deserialize private data during order creation
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct AddSessionKeyPrivateInput {
-    pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
     pub new_public_key: Vec<u8>,
 }
 
 /// Structure to deserialize private data during order creation
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
 pub struct DepositPrivateInput {
-    // Used to assert and increment user's nonce
-    pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
     // Used to assert and increment user's balance
     pub balance: Balance,
     pub balance_proof: BorshableMerkleProof,
@@ -532,7 +491,7 @@ pub struct CreateOrderPrivateInput {
     // Used to assert all users' info that the processed order will impact
     pub users_info: BTreeSet<UserInfo>,
     // Proof for all user_info used
-    pub user_info_proof: BorshableMerkleProof,
+    pub users_info_proof: BorshableMerkleProof,
 
     // For each token, for each user, the balance used
     // token -> user: balance
@@ -546,9 +505,6 @@ pub struct CreateOrderPrivateInput {
 pub struct CancelOrderPrivateInput {
     pub signature: Vec<u8>,
     pub public_key: Vec<u8>,
-    // Used to assert and increment user's nonce
-    pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
     // Used to assert and increment user's balance
     pub balance: Balance,
     pub balance_proof: BorshableMerkleProof,
@@ -559,9 +515,6 @@ pub struct CancelOrderPrivateInput {
 pub struct WithdrawPrivateInput {
     pub signature: Vec<u8>,
     pub public_key: Vec<u8>,
-    // Used to assert and increment user's nonce
-    pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
     // Used to assert and increment user's and orderbook's balance
     pub balances: BTreeMap<UserInfo, Balance>,
     pub balances_proof: BorshableMerkleProof,

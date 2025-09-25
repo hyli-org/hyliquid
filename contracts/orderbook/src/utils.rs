@@ -4,20 +4,21 @@ use k256::{
 };
 use sha2::{Digest, Sha256};
 
+use crate::smt_values::UserInfo;
+
 /// Verifies that the signature provided in private_input was made with the private key
 /// of the specified user by validating:
 /// 1. That the public key exists for this user
 /// 2. That the signature is valid for the order_id with this public key
 pub fn verify_user_signature_authorization(
-    user: &str,
+    user_info: &UserInfo,
     pubkey: &Vec<u8>,
-    user_session_keys: &[Vec<u8>],
     msg: &str,
     signature: &Vec<u8>,
 ) -> Result<(), String> {
     // Verify that the public key exists for this user
-    if !user_session_keys.contains(pubkey) {
-        return Err(format!("Public key not found for user {user}"));
+    if !user_info.session_keys.contains(pubkey) {
+        return Err(format!("Public key not found for user {}", user_info.user));
     }
 
     // Verify the signature of the order_id with the public key

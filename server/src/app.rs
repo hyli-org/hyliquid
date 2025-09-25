@@ -325,8 +325,26 @@ async fn create_pair(
     };
     drop(asset_service);
 
-    let private_input = create_permissioned_private_input(user.to_string(), &Vec::<u8>::new())
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+    let (user_info, user_info_proof) = {
+        let orderbook = ctx.orderbook.lock().await;
+
+        // Get user_info if exists, otherwise create a new one with random salt
+        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|| {
+            let mut salt = [0u8; 32];
+            rand::rng().fill_bytes(&mut salt);
+            UserInfo::new(user.clone(), salt.to_vec())
+        });
+
+        let user_info_proof = orderbook
+            .users_info_mt
+            .merkle_proof(vec![user_info.get_key()])
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        (user_info, BorshableMerkleProof::from(user_info_proof))
+    };
+
+    let private_input =
+        create_permissioned_private_input(user_info, user_info_proof, &Vec::<u8>::new())
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
     let orderbook_blob =
         OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::CreatePair {
@@ -382,11 +400,10 @@ async fn add_session_key(
     };
 
     let private_input = create_permissioned_private_input(
-        user.to_string(),
+        user_info,
+        user_info_proof,
         &AddSessionKeyPrivateInput {
             new_public_key: auth.public_key.expect("Missing public key in headers"),
-            user_info,
-            user_info_proof,
         },
     )
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
@@ -463,10 +480,9 @@ async fn deposit(
     };
 
     let private_input = create_permissioned_private_input(
-        user.to_string(),
+        user_info,
+        user_info_proof,
         &DepositPrivateInput {
-            user_info,
-            user_info_proof,
             balance,
             balance_proof,
         },
@@ -501,7 +517,15 @@ async fn create_order(
 
     // FIXME: locking here makes locking another time in execute_orderbook_action ...
     // TODO: make it a function for readability
-    let (order_user_map, users_info, user_info_proof, balances, balances_proof) = {
+    let (
+        order_user_map,
+        users_info,
+        users_info_proof,
+        user_info,
+        user_info_proof,
+        balances,
+        balances_proof,
+    ) = {
         let orderbook = ctx.orderbook.lock().await;
         let order_user_map = orderbook
             .get_order_user_map(&request.order_side, &request.pair)
@@ -518,11 +542,12 @@ async fn create_order(
                 anyhow::anyhow!("Unknown user: please add a session key first"),
             )
         })?;
+        let user_info_proof = orderbook.get_users_info_proofs(&BTreeSet::from([user_info.clone()]));
 
         let mut users_info: BTreeSet<_> = order_user_map.values().cloned().collect();
         users_info.insert(user_info.clone());
 
-        let user_info_proof = orderbook.get_users_info_proofs(&users_info);
+        let users_info_proof = orderbook.get_users_info_proofs(&users_info);
 
         // Determine which token to fetch balances for, based on order_side
         let [token_all_users, token_only_user] = match &request.order_side {
@@ -530,14 +555,14 @@ async fn create_order(
             OrderSide::Ask => [&request.pair.0, &request.pair.1], // For sell, interested in quote token
         };
 
-        // user + impacted users
+        // impacted users
         let users_info_vec: Vec<_> = users_info.iter().cloned().collect();
         let (balances_all_users, balances_proof_all_users) =
             orderbook.get_balances_with_proofs(&users_info_vec, token_all_users);
 
         // user
         let (balances_only_user, balances_proof_only_user) =
-            orderbook.get_balances_with_proofs(&[user_info], token_only_user);
+            orderbook.get_balances_with_proofs(&[user_info.clone()], token_only_user);
 
         let balances = BTreeMap::from([
             (token_all_users.clone(), balances_all_users),
@@ -551,6 +576,8 @@ async fn create_order(
         (
             order_user_map,
             users_info,
+            users_info_proof,
+            user_info,
             user_info_proof,
             balances,
             balances_proof,
@@ -558,13 +585,14 @@ async fn create_order(
     };
 
     let private_input = create_permissioned_private_input(
-        user.to_string(),
+        user_info,
+        user_info_proof,
         &CreateOrderPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
             signature: auth.signature.expect("Missing signature in headers"),
             order_user_map,
             users_info,
-            user_info_proof,
+            users_info_proof,
             balances,
             balances_proof,
         },
@@ -652,12 +680,11 @@ async fn cancel_order(
     };
 
     let private_input = create_permissioned_private_input(
-        user.to_string(),
+        user_info,
+        user_info_proof,
         &CancelOrderPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
             signature: auth.signature.expect("Missing signature in headers"),
-            user_info,
-            user_info_proof,
             balance,
             balance_proof,
         },
@@ -715,12 +742,11 @@ async fn withdraw(
     };
 
     let private_input = create_permissioned_private_input(
-        user.to_string(),
+        user_info,
+        user_info_proof,
         &WithdrawPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
             signature: auth.signature.expect("Missing signature in headers"),
-            user_info,
-            user_info_proof,
             balances,
             balances_proof,
         },
@@ -799,12 +825,14 @@ async fn execute_orderbook_action(
 }
 
 fn create_permissioned_private_input<T: BorshSerialize>(
-    user: String,
+    user_info: UserInfo,
+    user_info_proof: BorshableMerkleProof,
     private_input: &T,
 ) -> Result<Vec<u8>> {
     let permissioned_private_input = PermissionnedPrivateInput {
         secret: vec![1, 2, 3],
-        user: user.to_string(),
+        user_info,
+        user_info_proof,
         private_input: borsh::to_vec(&private_input)?,
     };
     Ok(borsh::to_vec(&permissioned_private_input)?)
