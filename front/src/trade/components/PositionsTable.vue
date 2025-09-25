@@ -24,7 +24,7 @@ defineProps<{ positions: PerpPosition[]; loading?: boolean; error?: string | nul
                 </tr>
                 <tr v-for="p in positions" :key="p.symbol" class="border-t border-neutral-900">
                     <td class="px-3 py-2">{{ p.symbol }}</td>
-                    <td class="px-3 py-2" :class="p.side === 'Long' ? 'text-emerald-400' : 'text-rose-400'">
+                    <td class="px-3 py-2" :class="p.side === 'Bid' ? 'text-emerald-400' : 'text-rose-400'">
                         {{ p.side }}
                     </td>
                     <td class="px-3 py-2 tabular-nums">{{ p.size }}</td>

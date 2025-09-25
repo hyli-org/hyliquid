@@ -17,10 +17,10 @@ const route = useRoute();
 
 // Map hash values to tab names
 const hashToTab: Record<string, "Positions" | "Orders" | "Fills" | "Balances"> = {
-    '#positions': 'Positions',
-    '#orders': 'Orders',
-    '#fills': 'Fills', 
-    '#balances': 'Balances'
+    "#positions": "Positions",
+    "#orders": "Orders",
+    "#fills": "Fills",
+    "#balances": "Balances",
 };
 
 // Initialize tab from URL hash on page load
@@ -57,42 +57,33 @@ watchEffect(() => {
                     <div class="flex h-150 flex-col p-3">
                         <BottomTabs v-model="activityState.bottomTab" />
 
-                        <component
-                            :is="
-                                activityState.bottomTab === 'Positions'
-                                    ? PositionsTable
-                                    : activityState.bottomTab === 'Orders'
-                                      ? OrdersTable
-                                      : activityState.bottomTab === 'Fills'
-                                        ? FillsTable
-                                        : BalancesTable
-                            "
-                            v-bind="
-                                activityState.bottomTab === 'Positions'
-                                    ? {
-                                          positions: activityState.positions,
-                                          loading: activityState.positionsLoading,
-                                          error: activityState.positionsError,
-                                      }
-                                    : activityState.bottomTab === 'Orders'
-                                      ? {
-                                            orders: activityState.orders,
-                                            loading: activityState.ordersLoading,
-                                            error: activityState.ordersError,
-                                            pagination: activityState.ordersPagination,
-                                        }
-                                      : activityState.bottomTab === 'Fills'
-                                        ? {
-                                              fills: activityState.fills,
-                                              loading: activityState.fillsLoading,
-                                              error: activityState.fillsError,
-                                          }
-                                        : {
-                                              balances: activityState.balances,
-                                              loading: activityState.balancesLoading,
-                                              error: activityState.balancesError,
-                                          }
-                            "
+                        <PositionsTable
+                            v-if="activityState.bottomTab === 'Positions'"
+                            :positions="activityState.positions"
+                            :loading="activityState.positionsLoading"
+                            :error="activityState.positionsError"
+                        />
+
+                        <OrdersTable
+                            v-else-if="activityState.bottomTab === 'Orders'"
+                            :orders="activityState.orders"
+                            :loading="activityState.ordersLoading"
+                            :error="activityState.ordersError"
+                            :pagination="activityState.ordersPagination"
+                        />
+
+                        <FillsTable
+                            v-else-if="activityState.bottomTab === 'Fills'"
+                            :fills="activityState.fills"
+                            :loading="activityState.fillsLoading"
+                            :error="activityState.fillsError"
+                        />
+
+                        <BalancesTable
+                            v-else
+                            :balances="activityState.balances"
+                            :loading="activityState.balancesLoading"
+                            :error="activityState.balancesError"
                         />
                     </div>
                 </section>
