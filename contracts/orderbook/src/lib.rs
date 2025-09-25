@@ -104,7 +104,14 @@ impl sdk::ZkContract for Orderbook {
                         self.verify_users_info_proof(
                             &[add_session_key_private_input.user_info.clone()],
                             &add_session_key_private_input.user_info_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify user info proof: {err}")
+                            } else {
+                                panic!("Failed to verify user info proof: {err}")
+                            }
+                        })?;
 
                         self.add_session_key(
                             &mut add_session_key_private_input.user_info,
@@ -129,7 +136,14 @@ impl sdk::ZkContract for Orderbook {
                         self.verify_users_info_proof(
                             &[deposit_private_input.user_info.clone()],
                             &deposit_private_input.user_info_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify user info proof: {err}")
+                            } else {
+                                panic!("Failed to verify user info proof: {err}")
+                            }
+                        })?;
 
                         // Verify the balance is correct
                         self.verify_balances_proof(
@@ -139,7 +153,14 @@ impl sdk::ZkContract for Orderbook {
                                 deposit_private_input.balance.clone(), // FIXME: remove useless clone
                             )]),
                             &deposit_private_input.balance_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify balance proof: {err}")
+                            } else {
+                                panic!("Failed to verify balance proof: {err}")
+                            }
+                        })?;
 
                         self.deposit(
                             token,
@@ -173,7 +194,14 @@ impl sdk::ZkContract for Orderbook {
                             .users_info
                             .iter()
                             .find(|u| u.user == *user)
-                            .ok_or_else(|| format!("Missing user info for user {user}"))?;
+                            .ok_or_else(|| format!("Missing user info for user {user}"))
+                            .map_err(|err| {
+                                if self.server_execution {
+                                    format!("Failed to get user info: {err}")
+                                } else {
+                                    panic!("Failed to get user info: {err}")
+                                }
+                            })?;
 
                         // Verify that users info proof are correct for all users
                         self.verify_users_info_proof(
@@ -184,7 +212,14 @@ impl sdk::ZkContract for Orderbook {
                                 .collect::<Vec<_>>()
                                 .as_slice(),
                             &create_order_private_input.user_info_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify users info proof: {err}")
+                            } else {
+                                panic!("Failed to verify users info proof: {err}")
+                            }
+                        })?;
 
                         // Verify all balances proofs
                         for (token, balances) in &create_order_private_input.balances {
@@ -194,7 +229,13 @@ impl sdk::ZkContract for Orderbook {
                                 return Err(format!("Missing balance proof for token {token}"));
                             };
 
-                            self.verify_balances_proof(token, balances, balance_proof)?;
+                            self.verify_balances_proof(token, balances, balance_proof).map_err(|err| {
+                                if self.server_execution {
+                                    format!("Failed to verify balance proof for token {token}: {err}")
+                                } else {
+                                    panic!("Failed to verify balance proof for token {token}: {err}")
+                                }
+                            })?;
                         }
 
                         // Verify user signature authorization
@@ -208,7 +249,14 @@ impl sdk::ZkContract for Orderbook {
                             user_info.session_keys.as_slice(),
                             &format!("{user}:{nonce}:create_order:{order_id}"),
                             &create_order_private_input.signature,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify user signature authorization: {err}")
+                            } else {
+                                panic!("Failed to verify user signature authorization: {err}")
+                            }
+                        })?;
 
                         // Increment user's nonce
                         let new_user_info = UserInfo {
@@ -227,7 +275,14 @@ impl sdk::ZkContract for Orderbook {
                         self.update_users_info_merkle_root(
                             &updated_users_info,
                             &create_order_private_input.user_info_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to update users info merkle root: {err}")
+                            } else {
+                                panic!("Failed to update users info merkle root: {err}")
+                            }
+                        })?;
 
                         let order = Order {
                             order_id,
@@ -271,7 +326,14 @@ impl sdk::ZkContract for Orderbook {
                             user_info.session_keys.as_slice(),
                             &format!("{user}:{nonce}:cancel:{order_id}"),
                             &cancel_order_private_data.signature,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify user signature authorization: {err}")
+                            } else {
+                                panic!("Failed to verify user signature authorization: {err}")
+                            }
+                        })?;
 
                         // Verify that balances are correct
                         let order = self
@@ -291,7 +353,14 @@ impl sdk::ZkContract for Orderbook {
                                 cancel_order_private_data.balance.clone(),
                             )]),
                             &cancel_order_private_data.balance_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify balance proof: {err}")
+                            } else {
+                                panic!("Failed to verify balance proof: {err}")
+                            }
+                        })?;
 
                         // Increment user's nonce
                         let new_user_info = UserInfo {
@@ -301,7 +370,14 @@ impl sdk::ZkContract for Orderbook {
                         self.update_users_info_merkle_root(
                             &BTreeSet::from([new_user_info]),
                             &cancel_order_private_data.user_info_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to update users info merkle root: {err}")
+                            } else {
+                                panic!("Failed to update users info merkle root: {err}")
+                            }
+                        })?;
 
                         self.cancel_order(
                             order_id,
@@ -333,14 +409,28 @@ impl sdk::ZkContract for Orderbook {
                             user_info.session_keys.as_slice(),
                             &format!("{user}:{nonce}:withdraw:{token}:{amount}"),
                             &withdraw_private_data.signature,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify user signature authorization: {err}")
+                            } else {
+                                panic!("Failed to verify user signature authorization: {err}")
+                            }
+                        })?;
 
                         // Verify that balances are correct
                         self.verify_balances_proof(
                             &token,
                             &withdraw_private_data.balances,
                             &withdraw_private_data.balances_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to verify balance proof: {err}")
+                            } else {
+                                panic!("Failed to verify balance proof: {err}")
+                            }
+                        })?;
 
                         // Increment user's nonce
                         let new_user_info = UserInfo {
@@ -350,7 +440,14 @@ impl sdk::ZkContract for Orderbook {
                         self.update_users_info_merkle_root(
                             &BTreeSet::from([new_user_info]),
                             &withdraw_private_data.user_info_proof,
-                        )?;
+                        )
+                        .map_err(|err| {
+                            if self.server_execution {
+                                format!("Failed to update users info merkle root: {err}")
+                            } else {
+                                panic!("Failed to update users info merkle root: {err}")
+                            }
+                        })?;
 
                         self.withdraw(
                             token,
