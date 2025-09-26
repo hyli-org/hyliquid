@@ -47,7 +47,7 @@ limited AS (
 SELECT side, price, qty
 FROM limited
 WHERE rn <= p_levels
-ORDER BY side, CASE WHEN side='bid' THEN -price ELSE price END;
+ORDER BY side, -price;
 $$;
 
 CREATE INDEX IF NOT EXISTS idx_orders_active_instr_status_price
