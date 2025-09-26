@@ -107,8 +107,8 @@ export class DatabaseCallbacks {
           const payload = {
             trade_id: row.trade_id,
             instrument_id: row.instrument_id,
-            price: row.price,
-            qty: row.qty,
+            price: parseInt(row.price, 10),
+            qty: parseInt(row.qty, 10),
             trade_time: row.trade_time,
             side: row.side,
           };
@@ -156,10 +156,11 @@ export class DatabaseCallbacks {
               user_id: row.user_id,
               side: row.side,
               type: row.type,
-              price: row.price,
-              qty: row.qty,
-              qty_filled: row.qty_filled,
-              qty_remaining: row.qty - row.qty_filled,
+              price: parseInt(row.price, 10),
+              qty: parseInt(row.qty, 10),
+              qty_filled: parseInt(row.qty_filled, 10),
+              qty_remaining:
+                parseInt(row.qty, 10) - parseInt(row.qty_filled, 10),
               status: row.status,
               created_at: new Date(row.event_time), // TODO: fix this
               updated_at: new Date(row.event_time),

@@ -58,6 +58,7 @@ export interface PerpPosition {
 }
 
 export interface Order {
+    id: string;
     symbol: string;
     side: Side;
     type: OrderType;
@@ -265,11 +266,29 @@ watchEffect(() => {
 
 // Add new fills to the state when they are received
 watchEffect(() => {
+    let updateBalances = websocketManager.state.fills.length > 0 || websocketManager.state.orders.length > 0;
     if (websocketManager.state.fills) {
         activityState.fills.push(...websocketManager.state.fills);
+        websocketManager.state.fills = [];
     }
     if (websocketManager.state.orders) {
-        activityState.orders = websocketManager.state.orders;
+        let newOrders = [...websocketManager.state.orders];
+        // Update existing orders with new ones
+        // and add new orders
+        activityState.orders = activityState.orders.map((order) => {
+            // Find the new order with the same id and remove it from the new orders
+            const newOrder = newOrders.find((o) => o.id === order.id);
+            if (newOrder) {
+                newOrders = newOrders.filter((o) => o.id !== order.id);
+                return newOrder;
+            }
+            return order;
+        });
+        activityState.orders.push(...newOrders);
+        websocketManager.state.orders = [];
+    }
+    if (updateBalances) {
+        swBalances.revalidate();
     }
 });
 

@@ -114,6 +114,7 @@ export function transformOrder(apiOrder: ApiOrder): Order {
     const instrument = instrumentsState.list.find((i) => i.instrument_id === apiOrder.instrument_id);
 
     return {
+        id: apiOrder.order_signed_id,
         symbol: instrument?.symbol || "UNKNOWN",
         side: apiOrder.side === "bid" ? "Bid" : "Ask",
         qty: apiOrder.qty,
