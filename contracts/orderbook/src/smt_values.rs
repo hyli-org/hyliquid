@@ -27,30 +27,14 @@ impl Value for Balance {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, Eq, PartialEq)]
+#[derive(
+    BorshSerialize, BorshDeserialize, Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd,
+)]
 pub struct UserInfo {
     pub user: String,
     pub salt: Vec<u8>,
     pub nonce: u32,
     pub session_keys: Vec<Vec<u8>>,
-}
-
-/// Custom implementation of Ord and PartialOrd
-/// WARNING: This does not consider nonce or session_keys. Beware of unexpected behaviours
-/// FIXME: Is this shit ? yes
-impl Ord for UserInfo {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.user.cmp(&other.user) {
-            std::cmp::Ordering::Equal => self.salt.cmp(&other.salt),
-            ord => ord,
-        }
-    }
-}
-
-impl PartialOrd for UserInfo {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl UserInfo {

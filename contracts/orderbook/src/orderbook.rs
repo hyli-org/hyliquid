@@ -379,6 +379,10 @@ impl Orderbook {
         balances: &BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
         balances_proof: &BTreeMap<TokenName, BorshableMerkleProof>,
     ) -> Result<Vec<OrderbookEvent>, String> {
+        if self.orders.contains_key(&order.order_id) {
+            return Err(format!("Order with id {} already exists", order.order_id));
+        }
+
         let mut events = Vec::new();
 
         // New balance aggregation system: tracks net balance changes per user per token
