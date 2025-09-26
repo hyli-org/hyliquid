@@ -5,8 +5,9 @@ use sha2::{Digest, Sha256};
 use sparse_merkle_tree::default_store::DefaultStore;
 use sparse_merkle_tree::traits::Value;
 use sparse_merkle_tree::{SparseMerkleTree, H256};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet};
 
+use crate::order_manager::OrderManager;
 use crate::smt_values::{Balance, UserInfo};
 use sdk::{ContractName, LaneId, TxContext};
 
@@ -24,19 +25,16 @@ pub struct Orderbook {
     // Users info merkle root
     pub users_info_merkle_root: [u8; 32],
 
-    // All orders indexed by order_id
-    pub orders: BTreeMap<OrderId, Order>,
-    // Buy orders sorted by price (highest first) for each token pair
-    pub buy_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
-    // Sell orders sorted by price (lowest first) for each token pair
-    pub sell_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
+    // Order manager handling all orders
+    pub order_manager: OrderManager,
 
     /// These fields are not committed on-chain
     #[borsh(skip)]
+    // TODO: use a new enum ExecutionType: full-mt-server, light-server, zkvm
     pub server_execution: bool,
     // User balances per token: token -> smt(hash(user) -> user_account))
     #[borsh(skip)]
-    pub balances:
+    pub balances_mt:
         BTreeMap<TokenName, SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>>,
     #[borsh(skip)]
     // Users info merkle tree
@@ -44,10 +42,6 @@ pub struct Orderbook {
     #[borsh(skip)]
     // Users info salts. user -> salt
     pub users_info_salt: BTreeMap<String, Vec<u8>>,
-    #[borsh(skip)]
-    // Mapping of order IDs to their owners
-    // TODO: Use the mt_key instead of user
-    pub orders_owner: BTreeMap<OrderId, String>,
 }
 
 #[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
@@ -61,7 +55,7 @@ pub struct PairInfo {
     feature = "sqlx",
     sqlx(type_name = "order_side", rename_all = "lowercase")
 )]
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub enum OrderSide {
     Bid, // Buy
     Ask, // Sell
@@ -78,6 +72,18 @@ pub enum OrderType {
     Limit,
     Stop,
     StopLimit,
+}
+
+/// Context struct for creating an order, containing all necessary proofs and mappings.
+#[derive(Debug, Clone)]
+pub struct CreateOrderCtx {
+    pub order_user_map: BTreeMap<OrderId, UserInfo>,
+    pub users_info: BTreeSet<UserInfo>,
+    pub users_info_proof: BorshableMerkleProof,
+    pub user_info: UserInfo,
+    pub user_info_proof: BorshableMerkleProof,
+    pub balances: BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
+    pub balances_proof: BTreeMap<TokenName, BorshableMerkleProof>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
@@ -115,6 +121,7 @@ pub enum OrderbookEvent {
     OrderUpdate {
         order_id: OrderId,
         taker_order_id: OrderId,
+        executed_quantity: u64,
         remaining_quantity: u64,
         pair: TokenPair,
     },
@@ -139,7 +146,7 @@ impl Clone for Orderbook {
             TokenName,
             SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>,
         > = BTreeMap::new();
-        for (token_name, tree) in &self.balances {
+        for (token_name, tree) in &self.balances_mt {
             let root = *tree.root();
             let store = tree.store().clone();
             let new_tree = SparseMerkleTree::new(root, store);
@@ -155,12 +162,9 @@ impl Clone for Orderbook {
             balances_merkle_roots: self.balances_merkle_roots.clone(),
             users_info_mt: users_info,
             users_info_salt: self.users_info_salt.clone(),
-            orders: self.orders.clone(),
-            buy_orders: self.buy_orders.clone(),
-            sell_orders: self.sell_orders.clone(),
-            orders_owner: self.orders_owner.clone(),
+            order_manager: self.order_manager.clone(),
             server_execution: self.server_execution,
-            balances,
+            balances_mt: balances,
         }
     }
 }
@@ -182,21 +186,17 @@ impl Orderbook {
         self.pairs_info.insert(pair.clone(), info.clone());
 
         // Initialize a new SparseMerkleTree for the token pair if not already present
-        if !self.balances.contains_key(&pair.0) {
-            self.balances.insert(
-                pair.0.clone(),
-                SparseMerkleTree::new(H256::zero(), Default::default()),
-            );
-            self.balances_merkle_roots
-                .insert(pair.0.clone(), H256::zero().into());
-        }
-        if !self.balances.contains_key(&pair.1) {
-            self.balances.insert(
-                pair.1.clone(),
-                SparseMerkleTree::new(H256::zero(), Default::default()),
-            );
-            self.balances_merkle_roots
-                .insert(pair.1.clone(), H256::zero().into());
+        for token in &[&pair.0, &pair.1] {
+            if !self.balances_merkle_roots.contains_key(*token) {
+                if self.server_execution {
+                    self.balances_mt.insert(
+                        (*token).clone(),
+                        SparseMerkleTree::new(H256::zero(), Default::default()),
+                    );
+                }
+                self.balances_merkle_roots
+                    .insert((*token).clone(), H256::zero().into());
+            }
         }
 
         Ok(vec![OrderbookEvent::PairCreated { pair, info }])
@@ -305,6 +305,7 @@ impl Orderbook {
         balance_proof: &BorshableMerkleProof,
     ) -> Result<Vec<OrderbookEvent>, String> {
         let order = self
+            .order_manager
             .orders
             .get(&order_id)
             .ok_or(format!("Order {order_id} not found"))?
@@ -325,38 +326,19 @@ impl Orderbook {
         )
         .map_err(|e| e.to_string())?;
 
-        // Now that all operations have succeeded, remove the order from storage
-        self.orders.remove(&order_id);
-
-        // Remove from orders list
-        match order.order_side {
-            OrderSide::Bid => {
-                if let Some(orders) = self.buy_orders.get_mut(&order.pair) {
-                    orders.retain(|id| id != &order_id);
-                }
-            }
-            OrderSide::Ask => {
-                if let Some(orders) = self.sell_orders.get_mut(&order.pair) {
-                    orders.retain(|id| id != &order_id);
-                }
-            }
-        }
-
-        let mut events = vec![OrderbookEvent::OrderCancelled {
-            order_id,
-            pair: order.pair,
-        }];
+        // Cancel order through order manager
+        let mut cancel_events = self.order_manager.cancel_order(&order_id)?;
 
         if self.server_execution {
             let user_balance = self.get_balance(user_info, &required_token);
 
-            events.push(OrderbookEvent::BalanceUpdated {
+            cancel_events.push(OrderbookEvent::BalanceUpdated {
                 user: user_info.user.clone(),
                 token: required_token.to_string(),
                 amount: user_balance.0,
             });
         }
-        Ok(events)
+        Ok(cancel_events)
     }
 
     pub fn escape(
@@ -374,18 +356,29 @@ impl Orderbook {
     pub fn execute_order(
         &mut self,
         user_info: &UserInfo,
-        mut order: Order,
+        order: Order,
         order_user_map: BTreeMap<OrderId, UserInfo>,
         balances: &BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
         balances_proof: &BTreeMap<TokenName, BorshableMerkleProof>,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        if self.orders.contains_key(&order.order_id) {
+        if self.order_manager.orders.contains_key(&order.order_id) {
             return Err(format!("Order with id {} already exists", order.order_id));
         }
 
         let mut events = Vec::new();
 
-        // New balance aggregation system: tracks net balance changes per user per token
+        // Use OrderManager to handle order logic
+        let base_scale = POW10[self
+            .pairs_info
+            .get(&order.pair)
+            .ok_or(format!("Pair {}/{} not found", order.pair.0, order.pair.1))?
+            .base_scale as usize];
+
+        // Delegate order execution to the manager
+        let order_events = self.order_manager.execute_order(user_info, &order)?;
+        events.extend(order_events);
+
+        // Balance change aggregation system based on events
         let mut balance_changes: BTreeMap<TokenName, BTreeMap<UserInfo, Balance>> =
             balances.clone();
 
@@ -405,6 +398,7 @@ impl Orderbook {
                     "User {user} cannot perform token {token} exchange: balance is {}, attempted to add {amount}: {e}", balance.0
                 )
             })?;
+
             *balance = Balance(new_value);
             Ok(())
         }
@@ -422,345 +416,154 @@ impl Orderbook {
             Ok(())
         }
 
-        let mut order_to_insert: Option<Order> = None;
+        // Process events to calculate balance changes
+        for event in &events {
+            match event {
+                OrderbookEvent::OrderCreated {
+                    order: created_order,
+                } => {
+                    // Deduct liquidity for created order
+                    let (quantity, token) = match created_order.order_side {
+                        OrderSide::Bid => (
+                            -((created_order.quantity * created_order.price.unwrap()) as i128),
+                            created_order.pair.1.clone(),
+                        ),
+                        OrderSide::Ask => {
+                            (created_order.quantity as i128, created_order.pair.0.clone())
+                        }
+                    };
 
-        let base_scale = POW10[self
-            .pairs_info
-            .get(&order.pair)
-            .ok_or(format!("Pair {}/{} not found", order.pair.0, order.pair.1))?
-            .base_scale as usize];
-
-        // Try to fill already existing orders
-        match &order.order_side {
-            OrderSide::Bid => {
-                let required_token = order.pair.1.clone();
-
-                let sell_orders_option = self.sell_orders.get_mut(&order.pair);
-
-                if sell_orders_option.is_none() && order.order_type == OrderType::Limit {
-                    // If there are no sell orders and this is a limit order, add it to the orderbook
-                    self.insert_order(&order, user_info)?;
-                    events.push(OrderbookEvent::OrderCreated {
-                        order: order.clone(),
-                    });
-
-                    // Remove liquitidy from the user balance
                     record_balance_change(
                         &mut balance_changes,
                         user_info.clone(),
-                        &required_token,
-                        -((order.quantity * order.price.unwrap() / base_scale) as i128),
+                        &token,
+                        quantity,
                     )?;
-
-                    return Ok(events);
-                } else if sell_orders_option.is_none() {
-                    // If there are no sell orders and this is a market order, we cannot proceed
-                    return Err(format!(
-                        "No matching sell orders for market order {}",
-                        order.order_id
-                    ));
                 }
+                OrderbookEvent::OrderExecuted {
+                    order_id,
+                    taker_order_id,
+                    pair,
+                } => {
+                    let base_token = &pair.0;
+                    let quote_token = &pair.1;
 
-                let sell_orders = sell_orders_option.unwrap();
+                    // Special case: the current order has been fully executed.
+                    if taker_order_id == &order.order_id {
+                        // We don't process it as it would be counted twice with other matching executed orders
+                        continue;
+                    };
 
-                // Get the lowest price sell order
-                while let Some(order_id) = sell_orders.pop_front() {
-                    let existing_order = self
-                        .orders
-                        .get_mut(&order_id)
-                        .ok_or(format!("Order {order_id} not found"))?;
+                    let executed_order_user_info =
+                        order_user_map.get(taker_order_id).ok_or_else(|| {
+                            format!(
+                                "Executed order owner info (order_id: {taker_order_id}) not provided",
+                            )
+                        })?;
 
-                    let existing_order_user = order_user_map
-                        .get(&order_id)
-                        .ok_or(format!("Order user not found for order {order_id}"))?;
-
-                    // If the order is a limit order, check if the *selling* price is lower than the limit price
-                    if let Some(price) = order.price {
-                        let existing_order_price = existing_order.price.expect(
-                        "An order has been stored without a price limit. This should never happen",
-                        );
-                        if existing_order_price > price {
-                            // Place the order in buy_orders
-                            order_to_insert = Some(order);
-
-                            // Put back the sell order we popped
-                            sell_orders.push_front(order_id);
-                            break;
+                    // Transfer token logic for executed orders
+                    if let Some(executed_order) = self.order_manager.orders.get(order_id) {
+                        match executed_order.order_side {
+                            OrderSide::Bid => {
+                                // Executed order owner receives base token deducted to user
+                                record_transfer(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    executed_order_user_info.clone(),
+                                    base_token,
+                                    executed_order.quantity as i128,
+                                )?;
+                                // User receives quote token
+                                record_balance_change(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    quote_token,
+                                    (executed_order.price.unwrap() * executed_order.quantity
+                                        / base_scale) as i128,
+                                )?;
+                            }
+                            OrderSide::Ask => {
+                                // Executed order owner receives quote token deducted to user
+                                record_transfer(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    executed_order_user_info.clone(),
+                                    quote_token,
+                                    (executed_order.price.unwrap() * executed_order.quantity
+                                        / base_scale) as i128,
+                                )?;
+                                // User receives base token
+                                record_balance_change(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    base_token,
+                                    executed_order.quantity as i128,
+                                )?;
+                            }
                         }
-                    }
-
-                    // There is an order that can be filled
-                    match existing_order.quantity.cmp(&order.quantity) {
-                        std::cmp::Ordering::Greater => {
-                            // The existing order do not fully cover this order
-                            existing_order.quantity -= order.quantity;
-
-                            sell_orders.push_front(order_id);
-
-                            events.push(OrderbookEvent::OrderUpdate {
-                                order_id: existing_order.order_id.clone(),
-                                taker_order_id: order.order_id.clone(),
-                                remaining_quantity: existing_order.quantity,
-                                pair: order.pair.clone(),
-                            });
-
-                            // Send token from user to the order owner
-                            record_transfer(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                existing_order_user.clone(),
-                                &order.pair.1,
-                                (existing_order.price.unwrap() * order.quantity / base_scale)
-                                    as i128,
-                            )?;
-                            // Send token to the user
-                            record_balance_change(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                &order.pair.0,
-                                order.quantity as i128,
-                            )?;
-
-                            break;
-                        }
-                        std::cmp::Ordering::Equal => {
-                            // The two orders are executed
-                            events.push(OrderbookEvent::OrderExecuted {
-                                order_id: order_id.clone(),
-                                taker_order_id: order.order_id.clone(),
-                                pair: order.pair.clone(),
-                            });
-                            events.push(OrderbookEvent::OrderExecuted {
-                                order_id: order.order_id.clone(),
-                                taker_order_id: order_id.clone(),
-                                pair: order.pair.clone(),
-                            });
-
-                            // Send token to the order owner
-                            record_transfer(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                existing_order_user.clone(),
-                                &order.pair.1,
-                                (existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale) as i128,
-                            )?;
-
-                            // Send token to the user
-                            record_balance_change(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                &order.pair.0,
-                                existing_order.quantity as i128,
-                            )?;
-
-                            self.orders.remove(&order_id);
-                            break;
-                        }
-                        std::cmp::Ordering::Less => {
-                            // The existing order is fully filled
-                            events.push(OrderbookEvent::OrderExecuted {
-                                order_id: existing_order.order_id.clone(),
-                                taker_order_id: order.order_id.clone(),
-                                pair: order.pair.clone(),
-                            });
-                            record_transfer(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                existing_order_user.clone(),
-                                &order.pair.1,
-                                (existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale) as i128,
-                            )?;
-                            record_balance_change(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                &order.pair.0,
-                                existing_order.quantity as i128,
-                            )?;
-
-                            order.quantity -= existing_order.quantity;
-
-                            // We DO NOT push bash the order_id back to the sell orders
-                            self.orders.remove(&order_id);
-
-                            // Update the order to insert
-                            order_to_insert = Some(order.clone());
-                        }
+                    } else {
+                        return Err(format!("Could not find {order_id}"));
                     }
                 }
-            }
-            OrderSide::Ask => {
-                let required_token = order.pair.0.clone();
-                let buy_orders_option = self.buy_orders.get_mut(&order.pair);
+                OrderbookEvent::OrderUpdate {
+                    order_id,
+                    pair,
+                    executed_quantity,
+                    ..
+                } => {
+                    let executed_order_user_info =
+                        order_user_map.get(order_id).ok_or_else(|| {
+                            format!("Updated order owner info (order_id: {order_id}) not provided",)
+                        })?;
 
-                if buy_orders_option.is_none() && order.order_type == OrderType::Limit {
-                    // If there are no buy orders and this is a limit order, add it to the orderbook
-                    self.insert_order(&order, user_info)?;
-                    events.push(OrderbookEvent::OrderCreated {
-                        order: order.clone(),
-                    });
+                    let base_token = &pair.0;
+                    let quote_token = &pair.1;
 
-                    // Remove liquitidy from the user balance
-                    record_balance_change(
-                        &mut balance_changes,
-                        user_info.clone(),
-                        &required_token,
-                        -(order.quantity as i128),
-                    )?;
-
-                    return Ok(events);
-                } else if buy_orders_option.is_none() {
-                    // If there are no buy orders and this is a market order, we cannot proceed
-                    return Err(format!(
-                        "No matching buy orders for market order {}",
-                        order.order_id
-                    ));
-                }
-
-                let buy_orders = buy_orders_option.unwrap();
-
-                while let Some(order_id) = buy_orders.pop_front() {
-                    let existing_order = self
-                        .orders
-                        .get_mut(&order_id)
-                        .ok_or(format!("Order {order_id} not found"))?;
-
-                    let existing_order_user = order_user_map
-                        .get(&order_id)
-                        .ok_or(format!("Order user not found for order {order_id}"))?;
-
-                    // If the ordrer is a limit order, check if the *buying* price is higher than the limit price
-                    if let Some(price) = order.price {
-                        let existing_order_price = existing_order.price.expect(
-                        "An order has been stored without a price limit. This should never happen",
-                        );
-                        if existing_order_price < price {
-                            // Place the order in sell_orders
-                            order_to_insert = Some(order.clone());
-
-                            // Put back the buy order we popped
-                            buy_orders.push_front(order_id);
-                            break;
+                    // Transfer token logic for executed orders
+                    if let Some(updated_order) = self.order_manager.orders.get(order_id) {
+                        match updated_order.order_side {
+                            OrderSide::Bid => {
+                                // Executed order owner receives base token deducted to user
+                                record_transfer(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    executed_order_user_info.clone(),
+                                    base_token,
+                                    *executed_quantity as i128,
+                                )?;
+                                // User receives quote token
+                                record_balance_change(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    quote_token,
+                                    (updated_order.price.unwrap() * executed_quantity / base_scale)
+                                        as i128,
+                                )?;
+                            }
+                            OrderSide::Ask => {
+                                // Executed order owner receives quote token deducted to user
+                                record_transfer(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    executed_order_user_info.clone(),
+                                    quote_token,
+                                    (updated_order.price.unwrap() * executed_quantity / base_scale)
+                                        as i128,
+                                )?;
+                                // User receives base token
+                                record_balance_change(
+                                    &mut balance_changes,
+                                    user_info.clone(),
+                                    base_token,
+                                    *executed_quantity as i128,
+                                )?;
+                            }
                         }
-                    }
-
-                    match existing_order.quantity.cmp(&order.quantity) {
-                        std::cmp::Ordering::Greater => {
-                            // The existing order do not fully cover this order
-                            existing_order.quantity -= order.quantity;
-
-                            buy_orders.push_front(order_id);
-
-                            events.push(OrderbookEvent::OrderUpdate {
-                                order_id: existing_order.order_id.clone(),
-                                taker_order_id: order.order_id.clone(),
-                                remaining_quantity: existing_order.quantity,
-                                pair: order.pair.clone(),
-                            });
-
-                            // Send token to the order owner
-                            record_transfer(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                existing_order_user.clone(),
-                                &order.pair.0,
-                                order.quantity as i128,
-                            )?;
-                            // Send token to the user
-                            record_balance_change(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                &order.pair.1,
-                                (existing_order.price.unwrap() * order.quantity / base_scale)
-                                    as i128,
-                            )?;
-                            break;
-                        }
-                        std::cmp::Ordering::Equal => {
-                            // The existing order fully covers this order
-                            events.push(OrderbookEvent::OrderExecuted {
-                                order_id: existing_order.order_id.clone(),
-                                taker_order_id: order.order_id.clone(),
-                                pair: order.pair.clone(),
-                            });
-
-                            // Send token to the order owner
-                            record_transfer(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                existing_order_user.clone(),
-                                &order.pair.0,
-                                existing_order.quantity as i128,
-                            )?;
-                            // Send token to the user
-                            record_balance_change(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                &order.pair.1,
-                                (existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale) as i128,
-                            )?;
-
-                            self.orders.remove(&order_id);
-                            break;
-                        }
-                        std::cmp::Ordering::Less => {
-                            // The existing order is fully filled
-                            events.push(OrderbookEvent::OrderExecuted {
-                                order_id: existing_order.order_id.clone(),
-                                taker_order_id: order.order_id.clone(),
-                                pair: order.pair.clone(),
-                            });
-                            record_transfer(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                existing_order_user.clone(),
-                                &order.pair.0,
-                                existing_order.quantity as i128,
-                            )?;
-                            record_balance_change(
-                                &mut balance_changes,
-                                user_info.clone(),
-                                &order.pair.1,
-                                (existing_order.price.unwrap() * existing_order.quantity
-                                    / base_scale) as i128,
-                            )?;
-                            order.quantity -= existing_order.quantity;
-
-                            // We DO NOT push bash the order_id back to the buy orders
-                            self.orders.remove(&order_id);
-
-                            // Update the order to insert
-                            order_to_insert = Some(order.clone());
-                        }
+                    } else {
+                        return Err(format!("Could not find {order_id}"));
                     }
                 }
-            }
-        }
-
-        // If there is still some quantity left, we need to insert the order in the orderbook
-        if let Some(order) = order_to_insert {
-            if order.order_type == OrderType::Limit {
-                // Insert order
-                self.insert_order(&order, user_info)?;
-
-                // Remove liquidity from the user balance
-                let (quantity, required_token) = match order.order_side {
-                    OrderSide::Bid => (
-                        order.quantity * order.price.unwrap() / base_scale,
-                        order.pair.1.clone(),
-                    ),
-                    OrderSide::Ask => (order.quantity, order.pair.0.clone()),
-                };
-                events.push(OrderbookEvent::OrderCreated { order });
-
-                record_balance_change(
-                    &mut balance_changes,
-                    user_info.clone(),
-                    &required_token,
-                    -(quantity as i128),
-                )?;
+                _ => {} // Ignore other events for balance changes
             }
         }
 
@@ -805,7 +608,7 @@ impl Orderbook {
             server_execution,
             users_info_mt,
             users_info_merkle_root,
-            balances: BTreeMap::new(),
+            balances_mt: BTreeMap::new(),
             balances_merkle_roots: BTreeMap::new(),
             ..Default::default()
         })
@@ -901,7 +704,7 @@ impl Orderbook {
         let new_balance_merkle_root = if self.server_execution {
             // Update the balances root *and the merkle tree* for server execution
             let tree = self
-                .balances
+                .balances_mt
                 .entry(token.to_string())
                 .or_insert_with(|| SparseMerkleTree::new(H256::zero(), Default::default()));
             let leaves = balances_to_update
@@ -1030,37 +833,6 @@ impl Orderbook {
         Ok(())
     }
 
-    fn insert_order(&mut self, order: &Order, user_info: &UserInfo) -> Result<(), String> {
-        // Function only called for Limit orders
-        let price = order.price.unwrap();
-        if price == 0 {
-            return Err("Price cannot be zero".to_string());
-        }
-        let order_list = match order.order_side {
-            OrderSide::Bid => self.buy_orders.entry(order.pair.clone()).or_default(),
-            OrderSide::Ask => self.sell_orders.entry(order.pair.clone()).or_default(),
-        };
-
-        let insert_pos = order_list
-            .iter()
-            .position(|id| {
-                let other_order = self.orders.get(id).unwrap();
-                // To be inserted, the order must be <> than the current one
-                match order.order_side {
-                    OrderSide::Bid => other_order.price.unwrap_or(0) < price,
-                    OrderSide::Ask => other_order.price.unwrap_or(0) > price,
-                }
-            })
-            .unwrap_or(order_list.len());
-
-        order_list.insert(insert_pos, order.order_id.clone());
-        self.orders.insert(order.order_id.clone(), order.clone());
-        // Keep track of the order owner
-        self.orders_owner
-            .insert(order.order_id.clone(), user_info.user.clone());
-        Ok(())
-    }
-
     pub fn is_blob_whitelisted(&self, contract_name: &ContractName) -> bool {
         if contract_name.0 == "orderbook" {
             return true;
@@ -1079,7 +851,7 @@ impl Orderbook {
 /// Implementation of functions that are only used by the server.
 impl Orderbook {
     pub fn get_orders(&self) -> BTreeMap<String, Order> {
-        self.orders.clone()
+        self.order_manager.orders.clone()
     }
 
     pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
@@ -1156,27 +928,18 @@ impl Orderbook {
         pair: &TokenPair,
     ) -> Result<BTreeMap<OrderId, UserInfo>, String> {
         let mut map = BTreeMap::new();
-        let (base_token, quote_token) = pair.clone();
-        let pair_key = (base_token.clone(), quote_token.clone());
+        let user_map = self.order_manager.get_order_user_map(order_side, pair);
 
-        let relevant_orders = match order_side {
-            OrderSide::Bid => self.sell_orders.get(&pair_key),
-            OrderSide::Ask => self.buy_orders.get(&pair_key),
-        };
-
-        if let Some(order_ids) = relevant_orders {
-            for order_id in order_ids {
-                if let Some(user) = self.orders_owner.get(order_id) {
-                    let user_info = self.get_user_info(user)?;
-                    map.insert(order_id.clone(), user_info);
-                }
-            }
+        for (order_id, username) in user_map {
+            let user_info = self.get_user_info(&username)?;
+            map.insert(order_id, user_info);
         }
+
         Ok(map)
     }
 
     pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
-        self.balances
+        self.balances_mt
             .get(token)
             .and_then(|tree| tree.get(&user.get_key()).ok())
             .unwrap_or_default()
@@ -1191,7 +954,7 @@ impl Orderbook {
         }
 
         let mut balances = BTreeMap::new();
-        for (token, balances_mt) in self.balances.iter() {
+        for (token, balances_mt) in self.balances_mt.iter() {
             let token_store = balances_mt.store();
             let token_balances = balances.entry(token.clone()).or_insert_with(BTreeMap::new);
             for (user_info_key, balance) in token_store.leaves_map().iter() {
@@ -1218,7 +981,7 @@ impl Orderbook {
         let user_key = UserInfo::compute_key(user, user_salt);
 
         let mut balances = BTreeMap::new();
-        for (token, balances_mt) in self.balances.iter() {
+        for (token, balances_mt) in self.balances_mt.iter() {
             let token_store = balances_mt.store();
             let user_balance = token_store
                 .leaves_map()
@@ -1242,7 +1005,7 @@ impl Orderbook {
         }
 
         let users: Vec<UserInfo> = balances_map.keys().cloned().collect();
-        let tree = self.balances.get(token).unwrap();
+        let tree = self.balances_mt.get(token).unwrap();
         let proof = BorshableMerkleProof(
             tree.merkle_proof(users.iter().map(|u| u.get_key()).collect::<Vec<_>>())
                 .map_err(|e| {
@@ -1266,7 +1029,7 @@ impl Orderbook {
     ) -> Result<(Balance, BorshableMerkleProof), String> {
         let balance = self.get_balance(user_info, token);
 
-        let tree = self.balances.get(token).unwrap();
+        let tree = self.balances_mt.get(token).unwrap();
         let proof =
             BorshableMerkleProof(tree.merkle_proof(vec![user_info.get_key()]).map_err(|e| {
                 format!(
@@ -1275,6 +1038,56 @@ impl Orderbook {
                 )
             })?);
         Ok((balance, proof))
+    }
+
+    pub fn get_create_order_ctx(
+        &self,
+        user: &str,
+        order: &Order,
+    ) -> Result<CreateOrderCtx, String> {
+        let order_user_map = self.get_order_user_map(&order.order_side, &order.pair)?;
+
+        let user_info = self.get_user_info(user)?;
+        let user_info_proof = self.get_user_info_proofs(&user_info.clone())?;
+
+        let mut users_info: BTreeSet<_> = order_user_map.values().cloned().collect();
+        users_info.insert(user_info.clone());
+
+        let users_info_proof = self.get_users_info_proofs(&users_info)?;
+
+        // Determine which token to fetch balances for, based on order_side
+        let [token_all_users, token_only_user] = match &order.order_side {
+            OrderSide::Bid => [&order.pair.1, &order.pair.0], // For buy, interested in base token
+            OrderSide::Ask => [&order.pair.0, &order.pair.1], // For sell, interested in quote token
+        };
+
+        // impacted users
+        let users_info_vec: Vec<_> = users_info.iter().cloned().collect();
+        let (balances_all_users, balances_proof_all_users) =
+            self.get_balances_with_proof(&users_info_vec, token_all_users)?;
+
+        // user
+        let (balances_only_user, balances_proof_only_user) =
+            self.get_balances_with_proof(&[user_info.clone()], token_only_user)?;
+
+        let balances = BTreeMap::from([
+            (token_all_users.clone(), balances_all_users),
+            (token_only_user.clone(), balances_only_user),
+        ]);
+        let balances_proof = BTreeMap::from([
+            (token_all_users.clone(), balances_proof_all_users),
+            (token_only_user.clone(), balances_proof_only_user),
+        ]);
+
+        Ok(CreateOrderCtx {
+            order_user_map,
+            users_info,
+            users_info_proof,
+            user_info,
+            user_info_proof,
+            balances,
+            balances_proof,
+        })
     }
 }
 

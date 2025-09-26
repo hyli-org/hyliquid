@@ -285,6 +285,7 @@ impl BookWriterService {
                     order_id,
                     taker_order_id,
                     remaining_quantity,
+                    executed_quantity: _,
                     pair,
                 } => {
                     info!(
@@ -305,7 +306,7 @@ impl BookWriterService {
                         ))?;
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
-                    
+
                     log_error!(
                         sqlx::query(
                             "
@@ -318,7 +319,6 @@ impl BookWriterService {
                         .await,
                         "Failed to update order as partially filled"
                     )?;
-
 
                     // log_error!(
                     //     sqlx::query(
@@ -364,7 +364,6 @@ impl BookWriterService {
                         .await,
                         "Failed to insert trade event"
                     )?;
-
                 }
                 OrderbookEvent::SessionKeyAdded { user } => {
                     info!("Creating user {}", user);

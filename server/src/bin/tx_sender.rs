@@ -2,16 +2,16 @@ use anyhow::{Context, Result};
 use clap::{command, Parser, Subcommand};
 use hyli_modules::utils::logger::setup_tracing;
 use k256::{
-    ecdsa::{signature::Signer, Signature, SigningKey},
+    ecdsa::{signature::DigestSigner, Signature, SigningKey},
     SecretKey,
 };
-use orderbook::orderbook::{OrderSide, OrderType};
+use orderbook::orderbook::{Order, OrderSide, OrderType};
 use reqwest::Client;
 use server::{
-    app::{CancelOrderRequest, CreateOrderRequest, CreatePairRequest, DepositRequest},
+    app::{CancelOrderRequest, CreatePairRequest, DepositRequest},
     conf::Conf,
 };
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Send transactions to a server", long_about = None)]
@@ -80,11 +80,10 @@ enum Commands {
 
 // Helper function to create a signature for the given data
 fn create_signature(signing_key: &SigningKey, data: &str) -> Result<String> {
-    let mut hasher = Sha256::new();
+    let mut hasher = Sha3_256::new();
     hasher.update(data.as_bytes());
-    let hash = hasher.finalize();
 
-    let signature: Signature = signing_key.sign(&hash);
+    let signature: Signature = signing_key.sign_digest(hasher);
     Ok(hex::encode(signature.to_bytes()))
 }
 
@@ -96,7 +95,7 @@ async fn main() -> Result<()> {
     setup_tracing(&config.log_format, "tx_sender".to_string()).context("setting up tracing")?;
 
     // Generate the key pair once for all operations
-    let mut hasher = Sha256::new();
+    let mut hasher = Sha3_256::new();
     hasher.update(args.identity.as_bytes());
     let derived_key = hasher.finalize();
     let private_key_bytes = derived_key.to_vec();
@@ -226,7 +225,7 @@ async fn main() -> Result<()> {
                 _ => anyhow::bail!("Invalid order type. Must be 'limit' or 'market'"),
             };
 
-            let request = CreateOrderRequest {
+            let request = Order {
                 order_id: order_id.clone(),
                 order_side,
                 order_type,

@@ -82,7 +82,11 @@ impl AssetService {
             })
             .collect();
 
-        info!("Loaded {} assets and {} instruments into memory", asset_map.len(), instrument_map.len());
+        info!(
+            "Loaded {} assets and {} instruments into memory",
+            asset_map.len(),
+            instrument_map.len()
+        );
 
         AssetService {
             pool,
@@ -97,15 +101,18 @@ impl AssetService {
             .await?
             .iter()
             .map(|row| {
-                (row.get("symbol"), Instrument {
-                    instrument_id: row.get("instrument_id"),
-                    symbol: row.get("symbol"),
-                    tick_size: row.get("tick_size"),
-                    qty_step: row.get("qty_step"),
-                    base_asset_id: row.get("base_asset_id"),
-                    quote_asset_id: row.get("quote_asset_id"),
-                    status: row.get("status"),
-                })
+                (
+                    row.get("symbol"),
+                    Instrument {
+                        instrument_id: row.get("instrument_id"),
+                        symbol: row.get("symbol"),
+                        tick_size: row.get("tick_size"),
+                        qty_step: row.get("qty_step"),
+                        base_asset_id: row.get("base_asset_id"),
+                        quote_asset_id: row.get("quote_asset_id"),
+                        status: row.get("status"),
+                    },
+                )
             })
             .collect();
 

@@ -147,7 +147,6 @@ async fn get_info(State(_ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
     Ok(Json(info))
 }
 
-
 async fn get_book(
     State(ctx): State<RouterCtx>,
     Path((base_asset_symbol, quote_asset_symbol)): Path<(String, String)>,
@@ -155,8 +154,14 @@ async fn get_book(
 ) -> Result<impl IntoResponse, AppError> {
     let book_service = ctx.book_service.read().await;
 
-    let levels = query.get("levels").map(|v| v.parse::<u32>().unwrap_or(20)).unwrap_or(20);
-    let group_ticks = query.get("group_ticks").map(|v| v.parse::<u32>().unwrap_or(10)).unwrap_or(10);
+    let levels = query
+        .get("levels")
+        .map(|v| v.parse::<u32>().unwrap_or(20))
+        .unwrap_or(20);
+    let group_ticks = query
+        .get("group_ticks")
+        .map(|v| v.parse::<u32>().unwrap_or(10))
+        .unwrap_or(10);
     let book = book_service
         .get_order_book(&base_asset_symbol, &quote_asset_symbol, levels, group_ticks)
         .await?;

@@ -1,8 +1,4 @@
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    sync::Arc,
-    vec,
-};
+use std::{sync::Arc, vec};
 
 use anyhow::Result;
 use axum::{
@@ -26,7 +22,7 @@ use hyli_modules::{
     },
 };
 use orderbook::{
-    orderbook::{OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair},
+    orderbook::{Order, OrderSide, Orderbook, OrderbookEvent, PairInfo, TokenPair},
     smt_values::UserInfo,
     AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
     DepositPrivateInput, OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput,
@@ -189,16 +185,6 @@ impl AuthHeaders {
             signature,
         })
     }
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct CreateOrderRequest {
-    pub order_id: String,
-    pub order_side: OrderSide,
-    pub order_type: OrderType,
-    pub price: Option<u64>,
-    pub pair: TokenPair,
-    pub quantity: u64,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -452,7 +438,7 @@ async fn deposit(
         let user_balance = orderbook.get_balance(&user_info, &request.token);
 
         let balance_proof = orderbook
-            .balances
+            .balances_mt
             .get(&request.token)
             .ok_or_else(|| {
                 AppError(
@@ -497,7 +483,7 @@ async fn deposit(
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
-    Json(request): Json<CreateOrderRequest>,
+    Json(request): Json<Order>,
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
@@ -508,107 +494,31 @@ async fn create_order(
     };
 
     // FIXME: locking here makes locking another time in execute_orderbook_action ...
-    // TODO: make it a function for readability
-    let (
-        order_user_map,
-        users_info,
-        users_info_proof,
-        user_info,
-        user_info_proof,
-        balances,
-        balances_proof,
-    ) = {
+    let create_order_ctx = {
         let orderbook = ctx.orderbook.lock().await;
-        let order_user_map = orderbook
-            .get_order_user_map(&request.order_side, &request.pair)
+
+        let create_order_ctx = orderbook
+            .get_create_order_ctx(&user, &request)
             .map_err(|e| {
                 AppError(
                     StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not get order user map: {e}"),
+                    anyhow::anyhow!("Could not generate create_order context: {e}"),
                 )
             })?;
-
-        let user_info = orderbook.get_user_info(&user).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Could not get user info: {e}"),
-            )
-        })?;
-        let user_info_proof = orderbook
-            .get_user_info_proofs(&user_info.clone())
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not get user proof: {e}"),
-                )
-            })?;
-
-        let mut users_info: BTreeSet<_> = order_user_map.values().cloned().collect();
-        users_info.insert(user_info.clone());
-
-        let users_info_proof = orderbook.get_users_info_proofs(&users_info).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Could not generate merkle proof for users: {e}"),
-            )
-        })?;
-
-        // Determine which token to fetch balances for, based on order_side
-        let [token_all_users, token_only_user] = match &request.order_side {
-            OrderSide::Bid => [&request.pair.1, &request.pair.0], // For buy, interested in base token
-            OrderSide::Ask => [&request.pair.0, &request.pair.1], // For sell, interested in quote token
-        };
-
-        // impacted users
-        let users_info_vec: Vec<_> = users_info.iter().cloned().collect();
-        let (balances_all_users, balances_proof_all_users) =
-            orderbook.get_balances_with_proof(&users_info_vec, token_all_users).map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not generate merkle proof of balance of token {token_all_users} for user {user}: {e}"),
-                )
-            })?;
-
-        // user
-        let (balances_only_user, balances_proof_only_user) =
-            orderbook.get_balances_with_proof(&[user_info.clone()], token_only_user).map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not generate merkle proof of balance of token {token_only_user} for user {user}: {e}"),
-                )
-            })?;
-
-        let balances = BTreeMap::from([
-            (token_all_users.clone(), balances_all_users),
-            (token_only_user.clone(), balances_only_user),
-        ]);
-        let balances_proof = BTreeMap::from([
-            (token_all_users.clone(), balances_proof_all_users),
-            (token_only_user.clone(), balances_proof_only_user),
-        ]);
-
-        (
-            order_user_map,
-            users_info,
-            users_info_proof,
-            user_info,
-            user_info_proof,
-            balances,
-            balances_proof,
-        )
+        create_order_ctx
     };
 
     let private_input = create_permissioned_private_input(
-        user_info,
-        user_info_proof,
+        create_order_ctx.user_info,
+        create_order_ctx.user_info_proof,
         &CreateOrderPrivateInput {
             public_key: auth.public_key.expect("Missing public key in headers"),
             signature: auth.signature.expect("Missing signature in headers"),
-            order_user_map,
-            users_info,
-            users_info_proof,
-            balances,
-            balances_proof,
+            order_user_map: create_order_ctx.order_user_map,
+            users_info: create_order_ctx.users_info,
+            users_info_proof: create_order_ctx.users_info_proof,
+            balances: create_order_ctx.balances,
+            balances_proof: create_order_ctx.balances_proof,
         },
     )
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
@@ -661,7 +571,7 @@ async fn cancel_order(
         let orderbook = ctx.orderbook.lock().await;
 
         // Verify that user is the owner of the order
-        if orderbook.orders_owner.get(&request.order_id) != Some(&user) {
+        if orderbook.order_manager.get_order_owner(&request.order_id) != Some(&user) {
             return Err(AppError(
                 StatusCode::BAD_REQUEST,
                 anyhow::anyhow!("User is not the owner of the order"),
@@ -677,12 +587,15 @@ async fn cancel_order(
             })?;
 
         // Get the token name out of the order
-        let order = orderbook.orders.get(&request.order_id).ok_or_else(|| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Unknown order: {}", request.order_id),
-            )
-        })?;
+        let order = orderbook
+            .order_manager
+            .get_order(&request.order_id)
+            .ok_or_else(|| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Unknown order: {}", request.order_id),
+                )
+            })?;
         let token = match order.order_side {
             OrderSide::Bid => order.pair.1.clone(),
             OrderSide::Ask => order.pair.0.clone(),
