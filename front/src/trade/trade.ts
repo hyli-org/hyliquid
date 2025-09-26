@@ -189,8 +189,8 @@ watchEffect(() => {
     // Subscribe to new instrument when selection changes
     if (instrumentsState.selected && websocketManager.state.connected) {
         websocketManager.subscribeToOrderbook(instrumentsState.selected.symbol);
-        websocketManager.subscribeToTrades(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender"); // TODO: get user from session
-        websocketManager.subscribeToOrders(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender"); // TODO: get user from session
+        websocketManager.subscribeToTrades(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender");
+        websocketManager.subscribeToOrders(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender");
     }
 });
 
@@ -272,20 +272,27 @@ watchEffect(() => {
         websocketManager.state.fills = [];
     }
     if (websocketManager.state.orders) {
-        let newOrders = [...websocketManager.state.orders];
-        // Update existing orders with new ones
-        // and add new orders
-        activityState.orders = activityState.orders.map((order) => {
-            // Find the new order with the same id and remove it from the new orders
-            const newOrder = newOrders.find((o) => o.id === order.id);
-            if (newOrder) {
-                newOrders = newOrders.filter((o) => o.id !== order.id);
-                return newOrder;
-            }
-            return order;
-        });
-        activityState.orders.push(...newOrders);
-        websocketManager.state.orders = [];
+        let incomingOrders = [...websocketManager.state.orders];
+        if (incomingOrders.length > 0) {
+            let updatedOrders = [...activityState.orders];
+
+            updatedOrders = updatedOrders.map((order) => {
+                const incomingOrder = incomingOrders.find((o) => o.id === order.id);
+                if (incomingOrder) {
+                    incomingOrders = incomingOrders.filter((o) => o.id !== order.id);
+                    return incomingOrder;
+                }
+                return order;
+            });
+            updatedOrders = [
+                ...updatedOrders,
+                ...incomingOrders.filter((o) => !updatedOrders.some((u) => u.id === o.id)),
+            ];
+
+            // Clear and replace the orders array to ensure reactivity
+            activityState.orders.splice(0, activityState.orders.length, ...updatedOrders);
+            websocketManager.state.orders = [];
+        }
     }
     if (updateBalances) {
         swBalances.revalidate();

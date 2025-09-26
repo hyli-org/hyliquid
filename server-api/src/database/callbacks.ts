@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { L2BookData, Order, Trade } from "@/types";
+import { L2BookData, L2BookSubscription, Order, Trade } from "@/types";
 import { DatabaseConfig } from "@/config/database";
 import { UserService } from "@/services/user-service";
 import { DatabaseQueries } from "./queries";
@@ -7,23 +7,25 @@ import { DatabaseQueries } from "./queries";
 export class DatabaseCallbacks {
   private static instance: DatabaseCallbacks;
   private pool: Pool;
+  private notificationClient: any = null; // Dedicated connection for notifications
   private tradeNotifCallbacks: Map<string, (payload: Trade[]) => void> =
     new Map();
   private orderNotifCallbacks: Map<string, (payload: Order[]) => void> =
     new Map();
-  private bookNotifCallbacks: Map<string, (payload: L2BookData[]) => void> =
-    new Map();
+  private bookNotifCallbacks: Array<(instrument: string) => void> = new Array();
   private notificationChannels = ["book", "orders", "trades"];
   // TODO: store this in db to be retrieved when restarting the server
   private last_seen_trade_id: number = 0;
   private last_seen_order_id: number = 0;
   private last_seen_instrument_id: number = 0;
   private userService: UserService;
+  private queries: DatabaseQueries;
 
   private constructor(pool: Pool) {
     this.pool = pool;
     this.userService = new UserService(new DatabaseQueries(this.pool));
-    this.registerNotificationListeners();
+    this.queries = new DatabaseQueries(this.pool);
+    this.initializeNotificationConnection();
     this.initializeLastSeenIds();
   }
 
@@ -36,9 +38,14 @@ export class DatabaseCallbacks {
     return DatabaseCallbacks.instance;
   }
 
-  private registerNotificationListeners() {
-    this.pool.on("connect", (client) => {
-      client.on("notification", (message) => {
+  private async initializeNotificationConnection() {
+    try {
+      // Create a dedicated connection for notifications
+      this.notificationClient = await this.pool.connect();
+      console.log("Dedicated notification connection established");
+
+      // Set up notification listener on the dedicated connection
+      this.notificationClient.on("notification", (message: any) => {
         console.log("Database notification received", {
           channel: message.channel,
           payload: message.payload,
@@ -50,16 +57,35 @@ export class DatabaseCallbacks {
           this.handleNewOrders();
         }
         if (message.channel === "book") {
-          this.handleNewBook();
+          this.handleL2BookUpdate(message.payload);
         }
       });
-    });
 
-    for (const channel of this.notificationChannels) {
-      console.log(`LISTENING on channel ${channel}`);
-      this.pool.query(`LISTEN ${channel}`).catch((error: Error) => {
-        console.error(`Failed to LISTEN on channel ${channel}`, error);
+      // Start listening on all channels with the dedicated connection
+      for (const channel of this.notificationChannels) {
+        console.log(
+          `LISTENING on channel ${channel} with dedicated connection`
+        );
+        await this.notificationClient.query(`LISTEN ${channel}`);
+      }
+
+      // Handle connection errors
+      this.notificationClient.on("error", (err: Error) => {
+        console.error("Notification connection error:", err);
+        // Attempt to reconnect
+        setTimeout(() => this.initializeNotificationConnection(), 1000);
       });
+
+      this.notificationClient.on("end", () => {
+        console.log(
+          "Notification connection ended, attempting to reconnect..."
+        );
+        setTimeout(() => this.initializeNotificationConnection(), 1000);
+      });
+    } catch (error) {
+      console.error("Failed to initialize notification connection:", error);
+      // Retry after a delay
+      setTimeout(() => this.initializeNotificationConnection(), 1000);
     }
   }
 
@@ -175,22 +201,10 @@ export class DatabaseCallbacks {
       });
   }
 
-  private handleNewBook() {
-    this.pool
-      .query(
-        "SELECT instrument_id, price, qty FROM book_events WHERE instrument_id > $1",
-        [this.last_seen_instrument_id]
-      )
-      .then(async (result) => {
-        console.log("New book", result.rows);
-        for (const row of result.rows) {
-          const user = await this.userService.getUserById(row.user_id);
-          if (user) {
-            console.log("Notifying book callback for user", user.identity, row);
-            this.bookNotifCallbacks.get(user.identity)?.([row]);
-          }
-        }
-      });
+  private handleL2BookUpdate(instrument: string) {
+    for (const callback of this.bookNotifCallbacks) {
+      callback(instrument);
+    }
   }
 
   addTradeNotificationCallback(
@@ -205,10 +219,18 @@ export class DatabaseCallbacks {
   ) {
     this.orderNotifCallbacks.set(user, callback);
   }
-  addBookNotificationCallback(
-    user: string,
-    callback: (payload: L2BookData[]) => void
-  ) {
-    this.bookNotifCallbacks.set(user, callback);
+  addBookNotificationCallback(callback: (instrument: string) => void) {
+    this.bookNotifCallbacks.push(callback);
+  }
+
+  async close() {
+    if (this.notificationClient) {
+      try {
+        await this.notificationClient.release();
+        console.log("Notification connection released");
+      } catch (error) {
+        console.error("Error releasing notification connection:", error);
+      }
+    }
   }
 }

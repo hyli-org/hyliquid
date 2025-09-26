@@ -9,6 +9,7 @@ import {
   L2BookSubscription,
   TradesSubscription,
   OrdersSubscription,
+  L2BookData,
 } from "../types/websocket";
 import { BookService } from "./book-service";
 import { Order, Trade } from "@/types";
@@ -111,34 +112,6 @@ export class WebSocketService {
             };
           }
         })
-        // Trigger endpoint for manual L2 book updates
-        .post(
-          "/api/websocket/trigger",
-          async ({ body }: { body: { instruments: string[] } }) => {
-            try {
-              let { instruments } = body;
-              instruments = instruments.map((instrument: string) =>
-                instrument.toUpperCase()
-              );
-
-              for (const instrument of instruments) {
-                await this.triggerL2BookUpdate(instrument);
-              }
-
-              return {
-                success: true,
-                message: `L2 book update triggered for ${instruments}`,
-                timestamp: Date.now(),
-              };
-            } catch (error) {
-              throw new Error(
-                `Failed to trigger L2 book update: ${
-                  error instanceof Error ? error.message : "Unknown error"
-                }`
-              );
-            }
-          }
-        )
     );
   }
 
@@ -337,6 +310,10 @@ export class WebSocketService {
       throw new Error(`Instrument not found: ${instrument}`);
     }
 
+    this.databaseCallbacks.addBookNotificationCallback((instrument: string) => {
+      this.triggerL2BookUpdate(instrument);
+    });
+
     // Send initial data
     try {
       const bookData = await this.bookService.getOrderBook(
@@ -403,6 +380,7 @@ export class WebSocketService {
    * Trigger L2 book update for all subscribed clients
    */
   public async triggerL2BookUpdate(instrument: string) {
+    console.log("Triggering L2 book update for", instrument);
     const [baseAsset, quoteAsset] = instrument.split("/");
 
     // Group clients by their groupTicks value to minimize SQL calls
