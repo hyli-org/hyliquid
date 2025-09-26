@@ -807,13 +807,6 @@ impl Orderbook {
         })
     }
 
-    pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
-        self.balances
-            .get(token)
-            .and_then(|tree| tree.get(&user.get_key()).ok())
-            .unwrap_or_default()
-    }
-
     pub fn update_user_info_merkle_root(
         &mut self,
         user_info: &UserInfo,
@@ -1033,31 +1026,6 @@ impl Orderbook {
         Ok(())
     }
 
-    pub fn get_nonce(&self, user: &str) -> u32 {
-        let user_info = self.get_user_info(user);
-        user_info.map(|info| info.nonce).unwrap_or(0)
-    }
-
-    pub fn get_session_keys(&self, user: &str) -> Option<Vec<Vec<u8>>> {
-        let user_info = self.get_user_info(user);
-        user_info.map(|info| info.session_keys.clone())
-    }
-
-    pub fn get_user_info(&self, user: &str) -> Option<UserInfo> {
-        self.users_info_salt.get(user).and_then(|salt| {
-            let key = UserInfo::compute_key(user, salt.as_slice());
-            self.users_info_mt.get(&key).ok()
-        })
-    }
-
-    pub fn get_users_info_proofs(&self, users_info: &BTreeSet<UserInfo>) -> BorshableMerkleProof {
-        BorshableMerkleProof(
-            self.users_info_mt
-                .merkle_proof(users_info.iter().map(|u| u.get_key()).collect::<Vec<_>>())
-                .expect("Failed to create merkle proof"),
-        )
-    }
-
     fn insert_order(&mut self, order: &Order, user_info: &UserInfo) -> Result<(), String> {
         // Function only called for Limit orders
         let price = order.price.unwrap();
@@ -1089,6 +1057,94 @@ impl Orderbook {
         Ok(())
     }
 
+    pub fn is_blob_whitelisted(&self, contract_name: &ContractName) -> bool {
+        if contract_name.0 == "orderbook" {
+            return true;
+        }
+
+        self.pairs_info
+            .keys()
+            .any(|pair| pair.0 == contract_name.0 || pair.1 == contract_name.0)
+    }
+
+    pub fn as_bytes(&self) -> Result<Vec<u8>, Error> {
+        borsh::to_vec(self)
+    }
+}
+
+/// Implementation of functions that are only used by the server.
+impl Orderbook {
+    pub fn get_orders(&self) -> BTreeMap<String, Order> {
+        self.orders.clone()
+    }
+
+    pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
+        let salt = self
+            .users_info_salt
+            .get(user)
+            .ok_or_else(|| format!("No salt found for user '{user}'"))?;
+        let key = UserInfo::compute_key(user, salt.as_slice());
+        self.users_info_mt.get(&key).map_err(|e| {
+            format!("Failed to get user info for user '{user}' with key {key:?}: {e}",)
+        })
+    }
+
+    pub fn get_user_info_proofs(
+        &self,
+        user_info: &UserInfo,
+    ) -> Result<BorshableMerkleProof, String> {
+        Ok(BorshableMerkleProof(
+            self.users_info_mt
+                .merkle_proof(vec![user_info.get_key()])
+                .map_err(|e| {
+                    format!(
+                        "Failed to create merkle proof for user {:?}: {e}",
+                        user_info.user
+                    )
+                })?,
+        ))
+    }
+
+    pub fn get_users_info_proofs(
+        &self,
+        users_info: &BTreeSet<UserInfo>,
+    ) -> Result<BorshableMerkleProof, String> {
+        Ok(BorshableMerkleProof(
+            self.users_info_mt
+                .merkle_proof(users_info.iter().map(|u| u.get_key()).collect::<Vec<_>>())
+                .map_err(|e| {
+                    format!("Failed to create merkle proof for users {users_info:?}: {e}")
+                })?,
+        ))
+    }
+
+    pub fn get_user_info_with_proof(
+        &self,
+        user: &str,
+    ) -> Result<(UserInfo, BorshableMerkleProof), String> {
+        let user_info = self
+            .users_info_salt
+            .get(user)
+            .and_then(|salt| {
+                let key = UserInfo::compute_key(user, salt.as_slice());
+                self.users_info_mt.get(&key).ok()
+            })
+            .ok_or_else(|| format!("User info not found for user '{user}'"))?;
+
+        let proof = BorshableMerkleProof(
+            self.users_info_mt
+                .merkle_proof(vec![user_info.get_key()])
+                .map_err(|e| {
+                    format!(
+                        "Failed to create merkle proof for user {:?}: {e}",
+                        user_info.user
+                    )
+                })?,
+        );
+
+        Ok((user_info, proof))
+    }
+
     /// Returns a mapping from order IDs to user names
     pub fn get_order_user_map(
         &self,
@@ -1107,9 +1163,7 @@ impl Orderbook {
         if let Some(order_ids) = relevant_orders {
             for order_id in order_ids {
                 if let Some(user) = self.orders_owner.get(order_id) {
-                    let user_info = self
-                        .get_user_info(user)
-                        .ok_or_else(|| format!("User info not found for user {user}"))?;
+                    let user_info = self.get_user_info(user)?;
                     map.insert(order_id.clone(), user_info);
                 }
             }
@@ -1117,11 +1171,66 @@ impl Orderbook {
         Ok(map)
     }
 
-    pub fn get_balances_with_proofs(
+    pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
+        self.balances
+            .get(token)
+            .and_then(|tree| tree.get(&user.get_key()).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, u64>> {
+        // Create an inverse hashmap: key -> username
+        let mut key_to_username = BTreeMap::new();
+        for (username, salt) in self.users_info_salt.iter() {
+            let user_key = UserInfo::compute_key(username, salt);
+            key_to_username.insert(user_key, username.clone());
+        }
+
+        let mut balances = BTreeMap::new();
+        for (token, balances_mt) in self.balances.iter() {
+            let token_store = balances_mt.store();
+            let token_balances = balances.entry(token.clone()).or_insert_with(BTreeMap::new);
+            for (user_info_key, balance) in token_store.leaves_map().iter() {
+                let user_identifier = key_to_username
+                    .get(user_info_key)
+                    .cloned()
+                    .unwrap_or_else(|| hex::encode(user_info_key.as_slice()));
+                token_balances.insert(user_identifier, balance.0);
+            }
+        }
+        balances
+    }
+
+    pub fn get_balances_for_account(
+        &self,
+        user: &str,
+    ) -> Result<BTreeMap<TokenName, Balance>, String> {
+        // First compute the users key
+        let user_salt = self
+            .users_info_salt
+            .get(user)
+            .ok_or_else(|| format!("No salt found for user '{user}'"))?;
+
+        let user_key = UserInfo::compute_key(user, user_salt);
+
+        let mut balances = BTreeMap::new();
+        for (token, balances_mt) in self.balances.iter() {
+            let token_store = balances_mt.store();
+            let user_balance = token_store
+                .leaves_map()
+                .get(&user_key)
+                .cloned()
+                .unwrap_or_default();
+            balances.insert(token.clone(), user_balance);
+        }
+        Ok(balances)
+    }
+
+    pub fn get_balances_with_proof(
         &self,
         users_info: &[UserInfo],
         token: &TokenName,
-    ) -> (BTreeMap<UserInfo, Balance>, BorshableMerkleProof) {
+    ) -> Result<(BTreeMap<UserInfo, Balance>, BorshableMerkleProof), String> {
         let mut balances_map = BTreeMap::new();
         for user_info in users_info {
             let balance = self.get_balance(user_info, token);
@@ -1132,40 +1241,36 @@ impl Orderbook {
         let tree = self.balances.get(token).unwrap();
         let proof = BorshableMerkleProof(
             tree.merkle_proof(users.iter().map(|u| u.get_key()).collect::<Vec<_>>())
-                .expect("Failed to create merkle proof"),
+                .map_err(|e| {
+                    format!(
+                        "Failed to create merkle proof for token {token} and users {:?}: {e}",
+                        users_info
+                            .iter()
+                            .map(|u| u.user.clone())
+                            .collect::<Vec<_>>()
+                    )
+                })?,
         );
 
-        (balances_map, proof)
+        Ok((balances_map, proof))
     }
 
     pub fn get_balance_with_proof(
         &self,
         user_info: &UserInfo,
         token: &TokenName,
-    ) -> (Balance, BorshableMerkleProof) {
+    ) -> Result<(Balance, BorshableMerkleProof), String> {
         let balance = self.get_balance(user_info, token);
 
         let tree = self.balances.get(token).unwrap();
-        let proof = BorshableMerkleProof(
-            tree.merkle_proof(vec![user_info.get_key()])
-                .expect("Failed to create merkle proof"),
-        );
-
-        (balance, proof)
-    }
-
-    pub fn is_blob_whitelisted(&self, contract_name: &ContractName) -> bool {
-        if contract_name.0 == "orderbook" {
-            return true;
-        }
-
-        self.pairs_info
-            .keys()
-            .any(|pair| pair.0 == contract_name.0 || pair.1 == contract_name.0)
-    }
-
-    pub fn as_bytes(&self) -> Result<Vec<u8>, Error> {
-        borsh::to_vec(self)
+        let proof =
+            BorshableMerkleProof(tree.merkle_proof(vec![user_info.get_key()]).map_err(|e| {
+                format!(
+                    "Failed to create merkle proof for token {token} and user {:?}: {e}",
+                    user_info.user
+                )
+            })?);
+        Ok((balance, proof))
     }
 }
 

@@ -111,7 +111,6 @@ impl Module for OrderbookModule {
             .route("/temp/balances", get(get_balances))
             .route("/temp/balance/{user}", get(get_balance_for_account))
             .route("/temp/orders", get(get_orders))
-            .route("/temp/orders/{token1}/{token2}", get(get_orders_by_pair))
             .route("/temp/reset_state", get(reset_state))
             .with_state(state)
             .layer(cors);
@@ -239,7 +238,7 @@ async fn get_balance_for_account(
 ) -> Result<impl IntoResponse, AppError> {
     let orderbook = ctx.orderbook.lock().await;
     let balances = orderbook
-        .get_balance_for_account(&user)
+        .get_balances_for_account(&user)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
     Ok(Json(balances))
@@ -247,15 +246,6 @@ async fn get_balance_for_account(
 async fn get_orders(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let orderbook = ctx.orderbook.lock().await;
     let orders = orderbook.get_orders();
-
-    Ok(Json(orders))
-}
-async fn get_orders_by_pair(
-    State(ctx): State<RouterCtx>,
-    Path((token1, token2)): Path<(String, String)>,
-) -> Result<impl IntoResponse, AppError> {
-    let orderbook = ctx.orderbook.lock().await;
-    let orders = orderbook.get_orders_by_pair(&token1, &token2);
 
     Ok(Json(orders))
 }
@@ -276,7 +266,10 @@ async fn get_nonce(
     // TODO: do some checks on headers to verify identify the user
 
     let orderbook = ctx.orderbook.lock().await;
-    let nonce = orderbook.get_nonce(&user);
+    let nonce = orderbook
+        .get_user_info(&user)
+        .map(|u| u.nonce)
+        .unwrap_or_default();
 
     Ok(Json(nonce))
 }
@@ -329,7 +322,7 @@ async fn create_pair(
         let orderbook = ctx.orderbook.lock().await;
 
         // Get user_info if exists, otherwise create a new one with random salt
-        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|| {
+        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
             let mut salt = [0u8; 32];
             rand::rng().fill_bytes(&mut salt);
             UserInfo::new(user.clone(), salt.to_vec())
@@ -386,7 +379,7 @@ async fn add_session_key(
         let orderbook = ctx.orderbook.lock().await;
 
         // Get user_info if exists, otherwise create a new one with random salt
-        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|| {
+        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
             let mut salt = [0u8; 32];
             rand::rng().fill_bytes(&mut salt);
             UserInfo::new(user.clone(), salt.to_vec())
@@ -445,12 +438,11 @@ async fn deposit(
     let (user_info, user_info_proof, balance, balance_proof) = {
         let orderbook = ctx.orderbook.lock().await;
 
-        let user_info = orderbook.get_user_info(&user).ok_or_else(|| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Unknown user: please add a session key first"),
-            )
-        })?;
+        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
+            let mut salt = [0u8; 32];
+            rand::rng().fill_bytes(&mut salt);
+            UserInfo::new(user.clone(), salt.to_vec())
+        });
 
         let user_info_proof = orderbook
             .users_info_mt
@@ -536,18 +528,30 @@ async fn create_order(
                 )
             })?;
 
-        let user_info = orderbook.get_user_info(&user).ok_or_else(|| {
+        let user_info = orderbook.get_user_info(&user).map_err(|e| {
             AppError(
                 StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Unknown user: please add a session key first"),
+                anyhow::anyhow!("Could not get user info: {e}"),
             )
         })?;
-        let user_info_proof = orderbook.get_users_info_proofs(&BTreeSet::from([user_info.clone()]));
+        let user_info_proof = orderbook
+            .get_user_info_proofs(&user_info.clone())
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not get user proof: {e}"),
+                )
+            })?;
 
         let mut users_info: BTreeSet<_> = order_user_map.values().cloned().collect();
         users_info.insert(user_info.clone());
 
-        let users_info_proof = orderbook.get_users_info_proofs(&users_info);
+        let users_info_proof = orderbook.get_users_info_proofs(&users_info).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Could not generate merkle proof for users: {e}"),
+            )
+        })?;
 
         // Determine which token to fetch balances for, based on order_side
         let [token_all_users, token_only_user] = match &request.order_side {
@@ -558,11 +562,21 @@ async fn create_order(
         // impacted users
         let users_info_vec: Vec<_> = users_info.iter().cloned().collect();
         let (balances_all_users, balances_proof_all_users) =
-            orderbook.get_balances_with_proofs(&users_info_vec, token_all_users);
+            orderbook.get_balances_with_proof(&users_info_vec, token_all_users).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not generate merkle proof of balance of token {token_all_users} for user {user}: {e}"),
+                )
+            })?;
 
         // user
         let (balances_only_user, balances_proof_only_user) =
-            orderbook.get_balances_with_proofs(&[user_info.clone()], token_only_user);
+            orderbook.get_balances_with_proof(&[user_info.clone()], token_only_user).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not generate merkle proof of balance of token {token_only_user} for user {user}: {e}"),
+                )
+            })?;
 
         let balances = BTreeMap::from([
             (token_all_users.clone(), balances_all_users),
@@ -654,13 +668,13 @@ async fn cancel_order(
             ));
         }
 
-        let user_info = orderbook.get_user_info(&user).ok_or_else(|| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Unknown user: please add a session key first"),
-            )
-        })?;
-        let user_info_proof = orderbook.get_users_info_proofs(&BTreeSet::from([user_info.clone()]));
+        let (user_info, user_info_proof) =
+            orderbook.get_user_info_with_proof(&user).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not generate merkle proof for user {user}: {e}"),
+                )
+            })?;
 
         // Get the token name out of the order
         let order = orderbook.orders.get(&request.order_id).ok_or_else(|| {
@@ -674,7 +688,14 @@ async fn cancel_order(
             OrderSide::Ask => order.pair.0.clone(),
         };
 
-        let (balance, balance_proof) = orderbook.get_balance_with_proof(&user_info, &token);
+        let (balance, balance_proof) = orderbook
+            .get_balance_with_proof(&user_info, &token)
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not generate merkle proof of balance of token {token} for user {user}: {e}"),
+                )
+            })?;
 
         (user_info, user_info_proof, balance, balance_proof)
     };
@@ -727,16 +748,21 @@ async fn withdraw(
     let (user_info, user_info_proof, balances, balances_proof) = {
         let orderbook = ctx.orderbook.lock().await;
 
-        let user_info = orderbook.get_user_info(&user).ok_or_else(|| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Unknown user: please add a session key first"),
-            )
-        })?;
-        let user_info_proof = orderbook.get_users_info_proofs(&BTreeSet::from([user_info.clone()]));
+        let (user_info, user_info_proof) =
+            orderbook.get_user_info_with_proof(&user).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not generate merkle proof for user {user}: {e}"),
+                )
+            })?;
 
         let (balances, balances_proof) =
-            orderbook.get_balances_with_proofs(&[user_info.clone()], &request.token);
+            orderbook.get_balances_with_proof(&[user_info.clone()], &request.token).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not generate merkle proof of balance of token {} for user {user}: {e}", request.token),
+                )
+            })?;
 
         (user_info, user_info_proof, balances, balances_proof)
     };
