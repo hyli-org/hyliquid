@@ -19,3 +19,5 @@ echo "First matching trade"
 tx --identity $identity create-order --order-id 0199851b-7a3a-737d-9148-929cace1fa70 --order-side bid --order-type limit --pair-token1 BTC --pair-token2 USDT --quantity 100000 --price 27600000000
 echo "Second matching trade"
 tx --identity $identity create-order --order-id 0199852e-b569-70fc-8c89-b88bb2040dd5 --order-side bid --order-type limit --pair-token1 BTC --pair-token2 USDT --quantity 100000 --price 27600000000
+
+./loop.sh

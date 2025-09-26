@@ -188,7 +188,7 @@ watchEffect(() => {
     const { wallet } = useWallet();
     // Subscribe to new instrument when selection changes
     if (instrumentsState.selected && websocketManager.state.connected) {
-        websocketManager.subscribeToOrderbook(instrumentsState.selected.symbol);
+        websocketManager.subscribeToOrderbook(instrumentsState.selected.symbol, activityState.orderbookTicks);
         websocketManager.subscribeToTrades(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender");
         websocketManager.subscribeToOrders(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender");
     }
@@ -231,6 +231,7 @@ export const activityState = reactive({
     ordersError: swOrders.error,
     fillsError: swFills.error,
     balancesError: swBalances.error,
+    orderbookTicks: 10 ** 4,
     // Pagination state for orders
     ordersPagination: null as PaginationInfo | null,
     ordersCurrentPage: 1,

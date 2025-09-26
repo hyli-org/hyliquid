@@ -117,7 +117,7 @@ class WebSocketManager {
         this.ws.send(JSON.stringify(message));
     }
 
-    subscribeToOrderbook(instrument: string, groupTicks: number = 1): void {
+    subscribeToOrderbook(instrument: string, groupTicks: number): void {
         // Unsubscribe from previous subscription
         if (this.currentBookSubscription) {
             this.unsubscribe();
@@ -186,7 +186,7 @@ class WebSocketManager {
 
                 // Calculate mid price
                 if (data.data.bids && data.data.asks && data.data.bids.length > 0 && data.data.asks.length > 0) {
-                    this.state.mid = (data.data.bids[0]!.price + data.data.asks[0]!.price) / 2;
+                    this.state.mid = (data.data.bids[0]!.price + data.data.asks[data.data.asks.length - 1]!.price) / 2;
                 }
             } else if (data.type === "trades" && data.data) {
                 console.log("Received trades:", data.data.trades);

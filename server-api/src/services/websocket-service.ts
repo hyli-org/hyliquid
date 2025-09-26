@@ -310,9 +310,12 @@ export class WebSocketService {
       throw new Error(`Instrument not found: ${instrument}`);
     }
 
-    this.databaseCallbacks.addBookNotificationCallback((instrument: string) => {
-      this.triggerL2BookUpdate(instrument);
-    });
+    this.databaseCallbacks.addBookNotificationCallback(
+      clientId,
+      (instrument: string) => {
+        this.triggerL2BookUpdate(instrument);
+      }
+    );
 
     // Send initial data
     try {
