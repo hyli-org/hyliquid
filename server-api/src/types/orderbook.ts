@@ -39,7 +39,6 @@ export interface Balance {
 }
 
 export interface Order {
-  order_id: number;
   order_signed_id: string;
   instrument_id: number;
   user_id: number;
@@ -65,33 +64,33 @@ export interface Trade {
 
 // Enums
 export enum MarketStatus {
-  ACTIVE = 'active',
-  HALTED = 'halted',
-  CLOSED = 'closed'
+  ACTIVE = "active",
+  HALTED = "halted",
+  CLOSED = "closed",
 }
 
 export enum UserStatus {
-  ACTIVE = 'active',
-  SUSPENDED = 'suspended',
-  CLOSED = 'closed'
+  ACTIVE = "active",
+  SUSPENDED = "suspended",
+  CLOSED = "closed",
 }
 
 export enum OrderSide {
-  BID = 'bid',
-  ASK = 'ask'
+  BID = "bid",
+  ASK = "ask",
 }
 
 export enum OrderType {
-  LIMIT = 'limit',
-  MARKET = 'market',
-  STOP_LIMIT = 'stop_limit',
-  STOP_MARKET = 'stop_market'
+  LIMIT = "limit",
+  MARKET = "market",
+  STOP_LIMIT = "stop_limit",
+  STOP_MARKET = "stop_market",
 }
 
 export enum OrderStatus {
-  OPEN = 'open',
-  PARTIALLY_FILLED = 'partially_filled',
-  FILLED = 'filled',
-  CANCELLED = 'cancelled',
-  REJECTED = 'rejected'
+  OPEN = "open",
+  PARTIALLY_FILLED = "partially_filled",
+  FILLED = "filled",
+  CANCELLED = "cancelled",
+  REJECTED = "rejected",
 }

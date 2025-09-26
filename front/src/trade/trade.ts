@@ -20,6 +20,7 @@ import { encodeToHex } from "../utils";
 
 // Re-export types for components
 export type { PaginationInfo, PaginationParams } from "./api";
+export type { ApiTrade, ApiOrder } from "./api";
 
 export type Side = "Bid" | "Ask";
 export type OrderType = "Market" | "Limit";
@@ -32,6 +33,7 @@ export interface Asset {
 }
 
 export interface Instrument {
+    instrument_id: number;
     symbol: string;
     price: number;
     qty_step: number;
@@ -182,15 +184,22 @@ export const orderbookState = reactive({
 });
 
 watchEffect(() => {
+    const { wallet } = useWallet();
     // Subscribe to new instrument when selection changes
     if (instrumentsState.selected && websocketManager.state.connected) {
         websocketManager.subscribeToOrderbook(instrumentsState.selected.symbol);
+        websocketManager.subscribeToTrades(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender"); // TODO: get user from session
+        websocketManager.subscribeToOrders(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender"); // TODO: get user from session
     }
 });
 
-// Activity state via SWRV
-const swPositions = useSWR<PerpPosition[]>(fetchPositions);
+// Activity state via SWRV - only fetch after instruments are loaded
+const swPositions = useSWR<PerpPosition[]>(() => {
+    if (!instrumentsAndAssets.isLoaded.value) throw new Error("Instruments not loaded yet");
+    return fetchPositions();
+});
 const swOrders = useSWR<{ orders: Order[]; pagination?: PaginationInfo }>(() => {
+    if (!instrumentsAndAssets.isLoaded.value) throw new Error("Instruments not loaded yet");
     if (!instrumentsState.selected) throw new Error("No instrument selected");
     const parts = instrumentsState.selected.symbol.split("/");
     if (parts.length !== 2) throw new Error("Invalid instrument symbol format");
@@ -198,8 +207,14 @@ const swOrders = useSWR<{ orders: Order[]; pagination?: PaginationInfo }>(() => 
     const quoteAsset = parts[1]!;
     return fetchOrdersForInstrument(baseAsset, quoteAsset);
 });
-const swFills = useSWR<Fill[]>(fetchFills);
-const swBalances = useSWR<Balance[]>(() => fetchBalances());
+const swFills = useSWR<Fill[]>(() => {
+    if (!instrumentsAndAssets.isLoaded.value) throw new Error("Instruments not loaded yet");
+    return fetchFills();
+});
+const swBalances = useSWR<Balance[]>(() => {
+    if (!instrumentsAndAssets.isLoaded.value) throw new Error("Instruments not loaded yet");
+    return fetchBalances();
+});
 
 export const activityState = reactive({
     positions: [] as PerpPosition[],
@@ -248,6 +263,16 @@ watchEffect(() => {
     if (balances) activityState.balances = balances;
 });
 
+// Add new fills to the state when they are received
+watchEffect(() => {
+    if (websocketManager.state.fills) {
+        activityState.fills.push(...websocketManager.state.fills);
+    }
+    if (websocketManager.state.orders) {
+        activityState.orders = websocketManager.state.orders;
+    }
+});
+
 // Order form state
 const orderFormState = {
     orderType: ref<OrderType>("Limit"),
@@ -272,6 +297,9 @@ export function useOrderFormState() {
 
 // Functions to handle orders pagination
 export async function loadOrdersPage(page: number, pageSize?: number, sortBy?: string, sortOrder?: "asc" | "desc") {
+    if (!instrumentsAndAssets.isLoaded.value) {
+        throw new Error("Instruments not loaded yet");
+    }
     if (!instrumentsState.selected) {
         throw new Error("No instrument selected");
     }

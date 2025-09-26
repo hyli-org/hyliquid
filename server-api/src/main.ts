@@ -3,7 +3,8 @@
  */
 
 import { Elysia } from 'elysia';
-import { DatabaseConfig, DatabaseQueries } from './config/database';
+import { DatabaseConfig } from './config/database';
+import { DatabaseQueries } from './database/queries';
 import { getAppConfig } from './config/app';
 import { AssetService, UserService, BookService, WebSocketService } from './services';
 import { createApiRoutes } from './api';

@@ -449,7 +449,7 @@ impl Orderbook {
                         &mut balance_changes,
                         user_info.clone(),
                         &required_token,
-                        -((order.quantity * order.price.unwrap()) as i128),
+                        -((order.quantity * order.price.unwrap() / base_scale) as i128),
                     )?;
 
                     return Ok(events);

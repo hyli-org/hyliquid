@@ -2,8 +2,8 @@
  * User service with in-memory caching
  */
 
-import { UserBalances, BalanceResponse, UserTrades, PaginatedUserOrders, PaginationQuery } from '../types';
-import { DatabaseQueries } from '../config/database';
+import { UserBalances, BalanceResponse, UserTrades, PaginatedUserOrders, PaginationQuery, User } from '../types';
+import { DatabaseQueries } from '../database/queries';
 
 export class UserService {
   private userIdMap: Map<string, number> = new Map();
@@ -27,6 +27,13 @@ export class UserService {
     }
 
     console.log(`Loaded ${this.userIdMap.size} users into memory`);
+  }
+
+  /**
+   * Get user by identity
+   */
+  async getUserById(userId: number): Promise<User | null> {
+    return this.queries.getUserById(userId);
   }
 
   /**

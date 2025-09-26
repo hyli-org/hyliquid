@@ -97,15 +97,9 @@ CREATE TYPE order_status AS ENUM (
     'rejected'
 );
 
-CREATE TABLE order_signed_ids (
-    order_signed_id text PRIMARY KEY,
-    user_id bigserial NOT NULL REFERENCES users (user_id),
-    created_at timestamptz NOT NULL DEFAULT now()
-);
-
 CREATE TABLE orders (
     order_id bigserial PRIMARY KEY,
-    order_signed_id text NOT NULL REFERENCES order_signed_ids (order_signed_id),
+    order_signed_id text NOT NULL,
     user_id bigserial NOT NULL REFERENCES users (user_id),
     instrument_id bigserial NOT NULL REFERENCES instruments (instrument_id),
     side order_side NOT NULL,
@@ -126,39 +120,33 @@ WITH (
 -- Events, append-only & partitioned
 -- Filled from contract output: Vec<OrderbookEvent>
 -----------------------
-CREATE TYPE order_event_type AS ENUM (
-    'created',
-    'cancelled',
-    'executed',
-    'updated',
-    'rejected',
-    'expired'
-);
-
 CREATE TABLE order_events (
-    event_id bigserial NOT NULL,
-    order_id bigserial NOT NULL,
-    instrument_id bigserial NOT NULL REFERENCES instruments (instrument_id),
-    event_type order_event_type NOT NULL,
-    event_time timestamptz NOT NULL DEFAULT now(),
-    seq bigint NOT NULL, -- séquence par ordre ou globale
-    delta_qty bigint, -- for executed/updated
-    payload jsonb NOT NULL DEFAULT '{}'::jsonb,
-    PRIMARY KEY (instrument_id, event_time, event_id) -- clé adaptée au partitionnement
+    event_id bigserial PRIMARY KEY,
+    order_signed_id text NOT NULL,
+    user_id bigint NOT NULL,
+    instrument_id bigserial NOT NULL,
+    side order_side NOT NULL,
+    type order_type NOT NULL,
+    price bigint NOT NULL,
+    qty bigint NOT NULL,
+    qty_filled bigint NOT NULL,
+    status order_status NOT NULL,
+    event_time timestamptz NOT NULL DEFAULT now()
 )
 -- PARTITION BY RANGE (event_time)
 ;
 
-CREATE TABLE trades (
-    trade_id BIGSERIAL,
-    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
-    taker_order_signed_id text NOT NULL REFERENCES order_signed_ids (order_signed_id),
-    maker_order_signed_id text NOT NULL REFERENCES order_signed_ids (order_signed_id),
+CREATE TABLE trade_events (
+    trade_id BIGSERIAL PRIMARY KEY,
+    maker_order_signed_id text NOT NULL,
+    taker_order_signed_id text NOT NULL,
+    maker_user_id bigint NOT NULL,
+    taker_user_id bigint NOT NULL,
+    instrument_id bigint NOT NULL,
     price bigint NOT NULL,
     qty bigint NOT NULL,
-    trade_time timestamptz NOT NULL DEFAULT now(),
     side order_side NOT NULL, -- côté du taker
-    PRIMARY KEY (instrument_id, taker_order_signed_id, maker_order_signed_id)
+    trade_time timestamptz NOT NULL DEFAULT now()
 )
 -- PARTITION BY RANGE (trade_time)
 ;

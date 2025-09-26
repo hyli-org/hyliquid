@@ -6,10 +6,9 @@ use hyli_modules::log_error;
 use orderbook::orderbook::OrderbookEvent;
 use reqwest::StatusCode;
 use serde::Serialize;
-use serde_json::json;
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
 
 use crate::services::asset_service::{AssetService, MarketStatus};
 use crate::services::user_service::UserService;
@@ -18,7 +17,6 @@ pub struct BookWriterService {
     pool: PgPool,
     user_service: Arc<RwLock<UserService>>,
     asset_service: Arc<RwLock<AssetService>>,
-    trigger_url: String,
 }
 
 impl BookWriterService {
@@ -26,13 +24,12 @@ impl BookWriterService {
         pool: PgPool,
         user_service: Arc<RwLock<UserService>>,
         asset_service: Arc<RwLock<AssetService>>,
-        trigger_url: String,
+        _trigger_url: String,
     ) -> Self {
         BookWriterService {
             pool,
             user_service,
             asset_service,
-            trigger_url,
         }
     }
 
@@ -45,6 +42,8 @@ impl BookWriterService {
 
         let mut symbol_book_updated = HashSet::<String>::new();
         let mut reload_instrument_map = false;
+        let mut trigger_notify_trades = false;
+        let mut trigger_notify_orders = false;
 
         let mut tx = self.pool.begin().await?;
         for event in _events {
@@ -117,6 +116,8 @@ impl BookWriterService {
                     )?;
                 }
                 OrderbookEvent::OrderCreated { order } => {
+                    trigger_notify_orders = true;
+
                     let user_id = self.user_service.read().await.get_user_id(user).await?;
                     let symbol = format!("{}/{}", order.pair.0, order.pair.1);
                     let asset_service = self.asset_service.read().await;
@@ -133,50 +134,47 @@ impl BookWriterService {
 
                     symbol_book_updated.insert(symbol);
 
+                    // log_error!(
+                    //     sqlx::query(
+                    //         "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                    //     )
+                    //     .bind(order.order_id.clone())
+                    //     .bind(user_id)
+                    //     .execute(&mut *tx)
+                    //     .await,
+                    //     "Failed to create order signed id"
+                    // )?;
+
                     log_error!(
-                        sqlx::query(
-                            "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
-                        )
+                        sqlx::query("INSERT INTO orders (order_signed_id, instrument_id, user_id, side, type, price, qty)
+                                     VALUES ($1, $2, $3, $4, $5, $6, $7)")
                         .bind(order.order_id.clone())
+                        .bind(instrument.instrument_id)
                         .bind(user_id)
+                        .bind(order.order_side.clone())
+                        .bind(order.order_type.clone())
+                        .bind(order.price.map(|p| p as i64))
+                        .bind(order.quantity as i64)
                         .execute(&mut *tx)
                         .await,
-                        "Failed to create order signed id"
+                        "Failed to create order"
                     )?;
 
                     log_error!(
                         sqlx::query(
-                            "
-                        INSERT INTO orders (
-                            order_signed_id,
-                            instrument_id, 
-                            user_id, 
-                            side, 
-                            type,
-                            price, 
-                            qty
-                            )
-                        VALUES (
-                            $1, 
-                            $2, 
-                            $3, 
-                            $4, 
-                            $5, 
-                            $6, 
-                            $7
+                            "INSERT INTO order_events (order_signed_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'open')"
                         )
-                        ",
-                        )
-                        .bind(order.order_id)
-                        .bind(instrument.instrument_id)
+                        .bind(order.order_id.clone())
                         .bind(user_id)
+                        .bind(instrument.instrument_id)
                         .bind(order.order_side)
                         .bind(order.order_type)
                         .bind(order.price.map(|p| p as i64))
                         .bind(order.quantity as i64)
                         .execute(&mut *tx)
                         .await,
-                        "Failed to create order"
+                        "Failed to create order event"
                     )?;
                 }
                 OrderbookEvent::OrderCancelled { order_id, pair } => {
@@ -184,6 +182,7 @@ impl BookWriterService {
                         "Cancelling order for user {} with order id {:?} and pair {:?}",
                         user, order_id, pair
                     );
+                    trigger_notify_orders = true;
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
@@ -193,10 +192,22 @@ impl BookWriterService {
                         UPDATE orders SET status = 'cancelled' WHERE order_signed_id = $1
                         ",
                         )
+                        .bind(order_id.clone())
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to update order as cancelled"
+                    )?;
+
+                    log_error!(
+                        sqlx::query(
+                            "
+                            INSERT INTO order_events (order_signed_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            VALUES select order_signed_id, user_id, instrument_id, side, type, price, qty, qty_filled, status from orders where order_signed_id = $1"
+                        )
                         .bind(order_id)
                         .execute(&mut *tx)
                         .await,
-                        "Failed to cancel order"
+                        "Failed to create order event"
                     )?;
                 }
                 OrderbookEvent::OrderExecuted {
@@ -208,6 +219,8 @@ impl BookWriterService {
                         "Executing order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
+                    trigger_notify_orders = true;
+                    trigger_notify_trades = true;
 
                     let user_id = self.user_service.read().await.get_user_id(user).await?;
                     let asset_service = self.asset_service.read().await;
@@ -224,43 +237,48 @@ impl BookWriterService {
                     log_error!(
                         sqlx::query(
                             "
-                        UPDATE orders SET status = 'filled', qty_filled = qty WHERE order_signed_id = $1
+                        UPDATE orders SET status = 'filled', qty_filled = qty WHERE order_signed_id = $1 returning user_id
                         ",
                         )
                         .bind(order_id.clone())
                         .execute(&mut *tx)
                         .await,
-                        "Failed to execute order"
+                        "Failed to update order as filled"
                     )?;
 
+                    // TODO:have more data in the event to avoid the SELECT here
                     log_error!(
                         sqlx::query(
-                            "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                            "
+                            INSERT INTO order_events (order_signed_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            SELECT order_signed_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_signed_id = $1
+                            "
                         )
-                        .bind(taker_order_id.clone())
-                        .bind(user_id)
+                        .bind(order_id.clone())
                         .execute(&mut *tx)
                         .await,
-                        "Failed to create order signed id"
+                        "Failed to create order event"
                     )?;
 
+                    // TODO:have more data in the event to avoid the SELECT here
                     log_error!(
                         sqlx::query(
                             "
                             WITH maker_order AS (
                                 SELECT * FROM orders WHERE order_signed_id = $1
                             )
-                            INSERT INTO trades (maker_order_signed_id, taker_order_signed_id, instrument_id, price, qty, side)
-                            SELECT $1, $2, $3, maker_order.price, maker_order.qty, get_other_side(maker_order.side)
+                            INSERT INTO trade_events (maker_order_signed_id, taker_order_signed_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
+                            SELECT $1, $2, $3, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $4
                             FROM maker_order
                             "
                         )
                         .bind(order_id)
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
+                        .bind(user_id)
                         .execute(&mut *tx)
                         .await,
-                        "Failed to execute order"
+                        "Failed to insert trade event"
                     )?;
                 }
                 OrderbookEvent::OrderUpdate {
@@ -273,6 +291,8 @@ impl BookWriterService {
                         "Updating order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
+                    trigger_notify_trades = true;
+                    trigger_notify_orders = true;
 
                     let user_id = self.user_service.read().await.get_user_id(user).await?;
                     let asset_service = self.asset_service.read().await;
@@ -285,16 +305,43 @@ impl BookWriterService {
                         ))?;
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
+                    
+                    log_error!(
+                        sqlx::query(
+                            "
+                        UPDATE orders SET status = 'partially_filled', qty_filled = qty - $1 WHERE order_signed_id = $2 returning user_id
+                        ",
+                        )
+                        .bind(remaining_quantity as i64)
+                        .bind(order_id.clone())
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to update order as partially filled"
+                    )?;
+
+
+                    // log_error!(
+                    //     sqlx::query(
+                    //         "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                    //     )
+                    //     .bind(taker_order_id.clone())
+                    //     .bind(user_id)
+                    //     .execute(&mut *tx)
+                    //     .await,
+                    //     "Failed to create order signed id"
+                    // )?;
 
                     log_error!(
                         sqlx::query(
-                            "INSERT INTO order_signed_ids (order_signed_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
+                            "
+                            INSERT INTO order_events (order_signed_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            SELECT order_signed_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_signed_id = $1
+                            "
                         )
-                        .bind(taker_order_id.clone())
-                        .bind(user_id)
+                        .bind(order_id.clone())
                         .execute(&mut *tx)
                         .await,
-                        "Failed to create order signed id"
+                        "Failed to create order event"
                     )?;
 
                     // The trade insert query must be done before the order update query to be able to compute the executed quantity
@@ -304,32 +351,20 @@ impl BookWriterService {
                             WITH maker_order AS (
                                 SELECT * FROM orders WHERE order_signed_id = $1
                             )
-                            INSERT INTO trades (maker_order_signed_id, taker_order_signed_id, instrument_id, price, qty, side)
-                            SELECT $1, $2, $3, maker_order.price, maker_order.qty - $4, get_other_side(maker_order.side)
+                            INSERT INTO trade_events (maker_order_signed_id, taker_order_signed_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
+                            SELECT $1, $2, $3, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $4
                             FROM maker_order
                             "
                         )
                         .bind(order_id.clone())
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
-                        .bind(remaining_quantity as i64)
+                        .bind(user_id)
                         .execute(&mut *tx)
                         .await,
-                        "Failed to update order"
+                        "Failed to insert trade event"
                     )?;
 
-                    log_error!(
-                        sqlx::query(
-                            "
-                        UPDATE orders SET qty_filled = qty - $1 WHERE order_signed_id = $2
-                        ",
-                        )
-                        .bind(remaining_quantity as i64)
-                        .bind(order_id)
-                        .execute(&mut *tx)
-                        .await,
-                        "Failed to update order"
-                    )?;
                 }
                 OrderbookEvent::SessionKeyAdded { user } => {
                     info!("Creating user {}", user);
@@ -346,6 +381,38 @@ impl BookWriterService {
                 }
             }
         }
+
+        if trigger_notify_trades {
+            info!("Notifying trades");
+            log_error!(
+                sqlx::query("select pg_notify('trades', 'trades')")
+                    .execute(&mut *tx)
+                    .await,
+                "Failed to notify 'trades'"
+            )?;
+        }
+
+        if trigger_notify_orders {
+            info!("Notifying orders");
+            log_error!(
+                sqlx::query("select pg_notify('orders', 'orders')")
+                    .execute(&mut *tx)
+                    .await,
+                "Failed to notify 'orders'"
+            )?;
+        }
+
+        for symbol in symbol_book_updated {
+            info!("Notifying book for symbol {}", symbol);
+            log_error!(
+                sqlx::query("select pg_notify('book', $1)")
+                    .bind(symbol)
+                    .execute(&mut *tx)
+                    .await,
+                "Failed to notify 'book'"
+            )?;
+        }
+
         tx.commit().await?;
 
         if reload_instrument_map {
@@ -353,23 +420,6 @@ impl BookWriterService {
             asset_service.reload_instrument_map().await?;
         }
 
-        self.send_order_book_update(symbol_book_updated).await?;
-
-        Ok(())
-    }
-
-    pub async fn send_order_book_update(&self, symbols: HashSet<String>) -> Result<(), AppError> {
-        // Send a POST request to localhost:3000/api/websocket/trigger with instrument in body
-        let client = reqwest::Client::new();
-        let response = client
-            .post(self.trigger_url.clone())
-            .body(serde_json::to_string(&json!({ "instruments": symbols })).unwrap())
-            .header("Content-Type", "application/json")
-            .send()
-            .await;
-        if let Err(e) = response {
-            warn!("Failed to send order book update: {}", e);
-        }
         Ok(())
     }
 }

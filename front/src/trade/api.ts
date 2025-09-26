@@ -1,4 +1,5 @@
 import type { Asset, Balance, Fill, Instrument, Order, OrderStatus, PerpPosition } from "./trade";
+import { instrumentsState } from "./trade";
 import { useWallet } from "hyli-wallet-vue";
 import { API_BASE_URL } from "../config";
 
@@ -36,17 +37,7 @@ interface ApiInfoResponse {
     instruments: ApiInstrument[];
 }
 
-interface ApiOrderbookEntry {
-    price: number;
-    quantity: number;
-}
-
-interface ApiOrderbookResponse {
-    bids: ApiOrderbookEntry[];
-    asks: ApiOrderbookEntry[];
-}
-
-interface ApiOrder {
+export interface ApiOrder {
     order_id: number;
     order_signed_id: string;
     instrument_id: number;
@@ -83,7 +74,7 @@ export interface PaginationParams {
     sort_order?: "asc" | "desc";
 }
 
-interface ApiTrade {
+export interface ApiTrade {
     trade_id: number;
     instrument_id: number;
     price: number;
@@ -107,6 +98,7 @@ function transformInstrument(
     vol?: number,
 ): Instrument {
     return {
+        instrument_id: apiInstrument.instrument_id,
         symbol: apiInstrument.symbol,
         price: marketPrice || 0,
         change: priceChange || 0,
@@ -118,8 +110,8 @@ function transformInstrument(
 }
 
 // Helper function to transform API order to frontend order
-function transformOrder(apiOrder: ApiOrder, instruments: ApiInstrument[]): Order {
-    const instrument = instruments.find((i) => i.instrument_id === apiOrder.instrument_id);
+export function transformOrder(apiOrder: ApiOrder): Order {
+    const instrument = instrumentsState.list.find((i) => i.instrument_id === apiOrder.instrument_id);
 
     return {
         symbol: instrument?.symbol || "UNKNOWN",
@@ -136,8 +128,10 @@ function transformOrder(apiOrder: ApiOrder, instruments: ApiInstrument[]): Order
 }
 
 // Helper function to transform API trade to frontend fill
-function transformTrade(apiTrade: ApiTrade, instruments: ApiInstrument[]): Fill {
-    const instrument = instruments.find((i) => i.instrument_id === apiTrade.instrument_id);
+export function transformTrade(apiTrade: ApiTrade): Fill {
+    console.log("transformTrade", apiTrade);
+    console.log("instrumentsState.list", instrumentsState.list);
+    const instrument = instrumentsState.list.find((i) => i.instrument_id === apiTrade.instrument_id);
 
     return {
         symbol: instrument?.symbol || "UNKNOWN",
@@ -202,36 +196,6 @@ export async function fetchInstruments(): Promise<{ instruments: Instrument[]; a
     return { instruments, assets };
 }
 
-// export async function fetchOrderbook(symbol: string) {
-//   // Parse symbol to get base and quote assets
-//   const [baseAsset, quoteAsset] = symbol.split("/");
-
-//   const response = await fetch(
-//     `${API_BASE_URL}/api/book/${baseAsset}/${quoteAsset}?levels=10&group_ticks=1`
-//   );
-
-//   if (!response.ok) {
-//     throw new Error(`Failed to fetch orderbook: ${response.status} ${response.statusText}`);
-//   }
-
-//   const data: ApiOrderbookResponse = await response.json();
-
-//   // Calculate mid price
-//   const mid = data.bids.length > 0 && data.asks.length > 0
-//     ? (data.bids[0]!.price + data.asks[0]!.price) / 2
-//     : 0;
-
-//   console.log("mid", mid);
-//   console.log("bids", data.bids);
-//   console.log("asks", data.asks);
-
-//   return {
-//     mid,
-//     bids: data.bids,
-//     asks: data.asks,
-//   };
-// }
-
 export async function fetchPositions(): Promise<PerpPosition[]> {
     return [];
 }
@@ -266,23 +230,19 @@ export async function fetchOrdersForInstrument(
 
     const data = await response.json();
 
-    // Get instruments for symbol mapping
-    const instrumentsResponse = await fetch(`${API_BASE_URL}/api/info`);
-    const instrumentsData: ApiInfoResponse = await instrumentsResponse.json();
-
     // Check if response is paginated or legacy format
     if (data.data && data.pagination) {
         // Paginated response
         const paginatedData = data as PaginatedApiOrdersResponse;
         return {
-            orders: paginatedData.data.map((order) => transformOrder(order, instrumentsData.instruments)),
+            orders: paginatedData.data.map((order) => transformOrder(order)),
             pagination: paginatedData.pagination,
         };
     } else {
         // Legacy response format
         const legacyData = data as { orders: ApiOrder[] };
         return {
-            orders: legacyData.orders.map((order) => transformOrder(order, instrumentsData.instruments)),
+            orders: legacyData.orders.map((order) => transformOrder(order)),
         };
     }
 }
@@ -301,11 +261,7 @@ export async function fetchFills(): Promise<Fill[]> {
 
     const data: { trades: ApiTrade[] } = await response.json();
 
-    // Get instruments for symbol mapping
-    const instrumentsResponse = await fetch(`${API_BASE_URL}/api/info`);
-    const instrumentsData: ApiInfoResponse = await instrumentsResponse.json();
-
-    return data.trades.map((trade) => transformTrade(trade, instrumentsData.instruments));
+    return data.trades.map((trade) => transformTrade(trade));
 }
 
 export async function fetchBalances(): Promise<Balance[]> {

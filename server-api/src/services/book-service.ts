@@ -3,7 +3,7 @@
  */
 
 import { L2BookData, L2BookEntry } from '../types';
-import { DatabaseQueries } from '../config/database';
+import { DatabaseQueries } from '../database/queries';
 import { AssetService } from './asset-service';
 
 export class BookService {

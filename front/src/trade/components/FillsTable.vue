@@ -28,7 +28,7 @@ defineProps<{ fills: Fill[]; loading?: boolean; error?: string | null }>();
                     <td class="px-3 py-2" :class="f.side === 'Bid' ? 'text-emerald-400' : 'text-rose-400'">
                         {{ f.side }}
                     </td>
-                    <td class="px-3 py-2 tabular-nums">{{ instrumentsState.toRealQty(f.symbol, f.size) }}</td>
+                    <td class="px-3 py-2 tabular-nums">{{ instrumentsState.toRealQty(f.symbol, f.qty) }}</td>
                     <td class="px-3 py-2 tabular-nums">{{ instrumentsState.toRealPrice(f.symbol, f.price) }}</td>
                     <td class="px-3 py-2">{{ f.time }}</td>
                 </tr>

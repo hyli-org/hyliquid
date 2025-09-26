@@ -5,12 +5,10 @@
 export interface WebSocketSubscription {
   type: string;
   instrument: string;
-  groupTicks?: number;
-  levels?: number;
 }
 
 export interface WebSocketMessage {
-  method: 'subscribe' | 'unsubscribe';
+  method: "subscribe" | "unsubscribe";
   subscription: WebSocketSubscription;
 }
 
@@ -22,8 +20,18 @@ export interface WebSocketResponse {
 }
 
 export interface L2BookSubscription extends WebSocketSubscription {
-  type: 'l2Book';
+  type: "l2Book";
   groupTicks: number;
+}
+
+export interface TradesSubscription extends WebSocketSubscription {
+  type: "trades";
+  user: string;
+}
+
+export interface OrdersSubscription extends WebSocketSubscription {
+  type: "orders";
+  user: string;
 }
 
 export interface L2BookEntry {
