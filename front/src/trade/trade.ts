@@ -7,7 +7,7 @@ import {
     fetchBalances,
     type PaginationInfo,
     type PaginationParams,
-} from "./trade_api";
+} from "./api";
 import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
@@ -19,7 +19,7 @@ import { useWallet } from "hyli-wallet-vue";
 import { encodeToHex } from "../utils";
 
 // Re-export types for components
-export type { PaginationInfo, PaginationParams } from "./trade_api";
+export type { PaginationInfo, PaginationParams } from "./api";
 
 export type Side = "Bid" | "Ask";
 export type OrderType = "Market" | "Limit";
