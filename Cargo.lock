@@ -4568,6 +4568,7 @@ dependencies = [
  "orderbook",
  "serde",
  "sha2",
+ "sha3",
  "sp1-zkvm",
  "sparse-merkle-tree",
  "sqlx",

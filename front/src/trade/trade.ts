@@ -398,26 +398,29 @@ export function placeOrder(input: {
         if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");
 
-        let nonce = await fetch(`${BACKEND_API_URL.value}/nonce`, {
-            method: "GET",
-            headers: {
-                "x-identity": wallet.value?.address || "tx_sender",
-            },
-        });
+        let nonce = await (
+            await fetch(`${BACKEND_API_URL.value}/nonce`, {
+                method: "GET",
+                headers: {
+                    "x-identity": wallet.value?.address || "tx_sender",
+                },
+            })
+        ).text();
 
+        const uuid = uuidv7();
+        const signed = signMessageWithSessionKey(
+            `${wallet.value?.address || "tx_sender"}:${nonce}:create_order:${uuid}`,
+        );
         const res = await fetch(`${BACKEND_API_URL.value}/create_order`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
                 "x-identity": wallet.value?.address || "tx_sender",
                 "x-public-key": (await getOrReuseSessionKey())?.publicKey || "",
-                "x-signature": encodeToHex(
-                    signMessageWithSessionKey(`${wallet.value?.address || "tx_sender"}:${nonce}:create_order:${1234}`)
-                        .signature,
-                ),
+                "x-signature": encodeToHex(signed.signature),
             },
             body: JSON.stringify({
-                order_id: uuidv7(),
+                order_id: uuid,
                 order_side: input.side,
                 order_type: input.type,
                 pair: input.symbol.split("/"),

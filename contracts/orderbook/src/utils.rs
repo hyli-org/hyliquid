@@ -2,7 +2,7 @@ use k256::{
     ecdsa::{Signature, VerifyingKey},
     EncodedPoint,
 };
-use sha2::{Digest, Sha256};
+use sha3::{Digest, Sha3_256};
 
 use crate::smt_values::UserInfo;
 
@@ -30,7 +30,7 @@ pub fn verify_user_signature_authorization(
 }
 
 /// Verifies a signature for a given message with a public key
-/// Uses ECDSA with secp256k1 curve and SHA256 hashing
+/// Uses ECDSA with secp256k1 curve and SHA3_256 hashing
 pub fn verify_signature(signature: &Vec<u8>, msg: &str, public_key: &Vec<u8>) -> bool {
     // Parse the signature
     let signature = match Signature::try_from(signature.as_slice()) {
@@ -49,12 +49,11 @@ pub fn verify_signature(signature: &Vec<u8>, msg: &str, public_key: &Vec<u8>) ->
         Err(_) => return false,
     };
 
-    // Hash the message with SHA256
-    let mut hasher = Sha256::new();
+    // Hash the message with SHA3_256
+    let mut hasher = Sha3_256::new();
     hasher.update(msg.as_bytes());
-    let message_hash = hasher.finalize();
 
     // Verify the signature
-    use k256::ecdsa::signature::Verifier;
-    verifying_key.verify(&message_hash, &signature).is_ok()
+    use k256::ecdsa::signature::DigestVerifier;
+    verifying_key.verify_digest(hasher, &signature).is_ok()
 }
