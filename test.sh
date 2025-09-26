@@ -10,6 +10,11 @@ function tx {
 identity=hyli@wallet
 
 tx --identity $identity create-pair --pair-token1 BTC --pair-token2 USDT
+
+tx --identity tx_sender add-session-key
+tx --identity tx_sender deposit --token USDT --amount 10000000000
+tx --identity tx_sender deposit --token BTC --amount 1250000000
+
 tx --identity $identity add-session-key
 tx --identity $identity deposit --token USDT --amount 1000000000
 tx --identity $identity deposit --token BTC --amount 125000000

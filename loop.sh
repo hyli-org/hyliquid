@@ -1,9 +1,9 @@
 #!/bin/bash
 
-identity=hyli@wallet
 
 # From argument or default to 0
 delai=${1:-0}
+identity=${2:-tx_sender}
 
 echo "Starting random order generation loop..."
 echo "Press Ctrl+C to stop the loop"
@@ -36,6 +36,9 @@ while true; do
     side=$([ $((RANDOM % 2)) -eq 0 ] && echo "bid" || echo "ask")
     # order_type=$([ $((RANDOM % 2)) -eq 0 ] && echo "limit" || echo "market")
     order_type="limit"
+
+    # make the price of 1 USDT at each step
+    mid_price=$((mid_price + 100000))
 
     quantity=$(random_between 10000 50000)  # Bid quantity between 10k and 50k
 
