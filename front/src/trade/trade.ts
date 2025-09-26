@@ -1,11 +1,22 @@
 import { reactive } from "vue";
-import { fetchInstruments, fetchPositions, fetchOrdersForInstrument, fetchFills, fetchBalances, type PaginationInfo, type PaginationParams } from "./api";
+import {
+    fetchInstruments,
+    fetchPositions,
+    fetchOrdersForInstrument,
+    fetchFills,
+    fetchBalances,
+    type PaginationInfo,
+    type PaginationParams,
+} from "./api";
 import { useSWR } from "../api_call";
 import type { SWRResponse } from "../api_call";
 import { watchEffect } from "vue";
 import { ref } from "vue";
-import { v7 as uuidv7 } from 'uuid';
+import { v7 as uuidv7 } from "uuid";
 import { websocketManager } from "./websocket";
+import { BACKEND_API_URL } from "../config";
+import { useWallet } from "hyli-wallet-vue";
+import { encodeToHex } from "../utils";
 
 // Re-export types for components
 export type { PaginationInfo, PaginationParams } from "./api";
@@ -55,7 +66,7 @@ export interface Order {
     status: OrderStatus;
     created_at: Date;
     updated_at: Date;
-  }
+}
 
 export interface Fill {
     symbol: string;
@@ -73,7 +84,7 @@ export interface Balance {
 }
 
 // Instruments
-const instrumentsAndAssets = useSWR<{instruments: Instrument[], assets: Asset[]}>(fetchInstruments);
+const instrumentsAndAssets = useSWR<{ instruments: Instrument[]; assets: Asset[] }>(fetchInstruments);
 
 export const instrumentsState = reactive({
     search: "",
@@ -82,32 +93,34 @@ export const instrumentsState = reactive({
     fetching: instrumentsAndAssets.fetching,
     error: instrumentsAndAssets.error,
     toRealPrice: (instrument_symbol: string | undefined, price: number) => {
-        if (!instrument_symbol) return price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        if (!instrument_symbol)
+            return price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         const quoteAsset = instrument_symbol.split("/")[1];
-        const quoteAssetScale = assetsState.list.find(a => a.symbol === quoteAsset)?.scale ?? 0;
-        const real = price  / 10 ** quoteAssetScale;
+        const quoteAssetScale = assetsState.list.find((a) => a.symbol === quoteAsset)?.scale ?? 0;
+        const real = price / 10 ** quoteAssetScale;
         return real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: quoteAssetScale });
     },
     toRealQty: (instrument_symbol: string | undefined, qty: number) => {
-        if (!instrument_symbol) return qty.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        if (!instrument_symbol)
+            return qty.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });
         const baseAsset = instrument_symbol.split("/")[0];
-        const baseAssetScale = assetsState.list.find(a => a.symbol === baseAsset)?.scale ?? 0;
+        const baseAssetScale = assetsState.list.find((a) => a.symbol === baseAsset)?.scale ?? 0;
         const qty_real = qty / 10 ** baseAssetScale;
         return qty_real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: baseAssetScale });
     },
     toIntPrice: (instrument_symbol: string | undefined, price: number) => {
         if (!instrument_symbol) return price;
         const quoteAsset = instrument_symbol.split("/")[1];
-        const quoteAssetScale = assetsState.list.find(a => a.symbol === quoteAsset)?.scale ?? 0;
-        const int_price =  price * 10 ** quoteAssetScale;
-        return int_price
+        const quoteAssetScale = assetsState.list.find((a) => a.symbol === quoteAsset)?.scale ?? 0;
+        const int_price = price * 10 ** quoteAssetScale;
+        return int_price;
     },
     toIntQty: (instrument_symbol: string | undefined, qty: number) => {
         if (!instrument_symbol) return qty;
         const baseAsset = instrument_symbol.split("/")[0];
-        const baseAssetScale = assetsState.list.find(a => a.symbol === baseAsset)?.scale ?? 0;
+        const baseAssetScale = assetsState.list.find((a) => a.symbol === baseAsset)?.scale ?? 0;
         const int_qty = qty * 10 ** baseAssetScale;
-        return int_qty
+        return int_qty;
     },
 });
 
@@ -117,7 +130,7 @@ export const assetsState = reactive({
     fetching: instrumentsAndAssets.fetching,
     error: instrumentsAndAssets.error,
     toRealQty: (asset_symbol: string, value: number) => {
-        const asset = assetsState.list.find(a => a.symbol === asset_symbol);
+        const asset = assetsState.list.find((a) => a.symbol === asset_symbol);
         const real = value / 10 ** (asset?.scale ?? 0);
         return real.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: asset?.scale ?? 0 });
     },
@@ -140,7 +153,7 @@ watchEffect(() => {
 
 // Function to select instrument by symbol (for URL-based selection)
 export function selectInstrumentBySymbol(symbol: string): boolean {
-    const instrument = instrumentsState.list.find(instrument => instrument.symbol === symbol);
+    const instrument = instrumentsState.list.find((instrument) => instrument.symbol === symbol);
     if (instrument) {
         instrumentsState.selected = instrument;
         return true;
@@ -150,11 +163,21 @@ export function selectInstrumentBySymbol(symbol: string): boolean {
 
 // Orderbook state using WebSocket manager
 export const orderbookState = reactive({
-    get bids() { return websocketManager.state.bids; },
-    get asks() { return websocketManager.state.asks; },
-    get mid() { return websocketManager.state.mid; },
-    get connected() { return websocketManager.state.connected; },
-    get error() { return websocketManager.state.error; },
+    get bids() {
+        return websocketManager.state.bids;
+    },
+    get asks() {
+        return websocketManager.state.asks;
+    },
+    get mid() {
+        return websocketManager.state.mid;
+    },
+    get connected() {
+        return websocketManager.state.connected;
+    },
+    get error() {
+        return websocketManager.state.error;
+    },
     fetching: false, // Keep for compatibility
 });
 
@@ -167,7 +190,7 @@ watchEffect(() => {
 
 // Activity state via SWRV
 const swPositions = useSWR<PerpPosition[]>(fetchPositions);
-const swOrders = useSWR<{ orders: Order[], pagination?: PaginationInfo }>(() => {
+const swOrders = useSWR<{ orders: Order[]; pagination?: PaginationInfo }>(() => {
     if (!instrumentsState.selected) throw new Error("No instrument selected");
     const parts = instrumentsState.selected.symbol.split("/");
     if (parts.length !== 2) throw new Error("Invalid instrument symbol format");
@@ -196,8 +219,8 @@ export const activityState = reactive({
     ordersPagination: null as PaginationInfo | null,
     ordersCurrentPage: 1,
     ordersPageSize: 20,
-    ordersSortBy: 'created_at',
-    ordersSortOrder: 'desc' as 'asc' | 'desc',
+    ordersSortBy: "created_at",
+    ordersSortOrder: "desc" as "asc" | "desc",
 });
 
 watchEffect(() => {
@@ -207,8 +230,6 @@ watchEffect(() => {
     activityState.ordersPagination = null;
     activityState.ordersCurrentPage = 1;
 });
-
-
 
 watchEffect(() => {
     const positions = swPositions.data.value;
@@ -250,24 +271,24 @@ export function useOrderFormState() {
 }
 
 // Functions to handle orders pagination
-export async function loadOrdersPage(page: number, pageSize?: number, sortBy?: string, sortOrder?: 'asc' | 'desc') {
+export async function loadOrdersPage(page: number, pageSize?: number, sortBy?: string, sortOrder?: "asc" | "desc") {
     if (!instrumentsState.selected) {
         throw new Error("No instrument selected");
     }
-    
+
     const pagination: PaginationParams = {
         page,
         limit: pageSize || activityState.ordersPageSize,
         sort_by: sortBy || activityState.ordersSortBy,
-        sort_order: sortOrder || activityState.ordersSortOrder
+        sort_order: sortOrder || activityState.ordersSortOrder,
     };
-    
+
     // Update state
     activityState.ordersCurrentPage = page;
     if (pageSize) activityState.ordersPageSize = pageSize;
     if (sortBy) activityState.ordersSortBy = sortBy;
     if (sortOrder) activityState.ordersSortOrder = sortOrder;
-    
+
     // Fetch new data for the selected instrument
     const parts = instrumentsState.selected.symbol.split("/");
     if (parts.length !== 2) throw new Error("Invalid instrument symbol format");
@@ -292,7 +313,7 @@ export async function prevOrdersPage() {
     }
 }
 
-export async function changeOrdersSorting(sortBy: string, sortOrder: 'asc' | 'desc') {
+export async function changeOrdersSorting(sortBy: string, sortOrder: "asc" | "desc") {
     await loadOrdersPage(1, activityState.ordersPageSize, sortBy, sortOrder);
 }
 
@@ -309,6 +330,8 @@ export async function submitOrder() {
     // activityState.orders.unshift(created);
 }
 
+const { wallet, getOrReuseSessionKey, signMessageWithSessionKey } = useWallet();
+
 export function placeOrder(input: {
     symbol: string;
     side: Side;
@@ -320,16 +343,26 @@ export function placeOrder(input: {
         if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");
 
-        const res = await fetch("http://localhost:9002/create_order", {
+        let nonce = await fetch(`${BACKEND_API_URL.value}/nonce`, {
+            method: "GET",
+            headers: {
+                "x-identity": wallet.value?.address || "tx_sender",
+            },
+        });
+
+        const res = await fetch(`${BACKEND_API_URL.value}/create_order`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "x-identity": "test_user",
-                "x-public-key": "1234",
-                "x-signature": "4564",
+                "x-identity": wallet.value?.address || "tx_sender",
+                "x-public-key": (await getOrReuseSessionKey())?.publicKey || "",
+                "x-signature": encodeToHex(
+                    signMessageWithSessionKey(`${wallet.value?.address || "tx_sender"}:${nonce}:create_order:${1234}`)
+                        .signature,
+                ),
             },
             body: JSON.stringify({
-                order_id: uuidv7(), 
+                order_id: uuidv7(),
                 order_side: input.side,
                 order_type: input.type,
                 pair: input.symbol.split("/"),
@@ -340,7 +373,7 @@ export function placeOrder(input: {
 
         if (res.ok) {
             return {
-                tx_hash: await res.json() as string,
+                tx_hash: (await res.json()) as string,
             };
         } else {
             throw new Error(`Failed to create order: ${res.status} ${res.statusText}`);
