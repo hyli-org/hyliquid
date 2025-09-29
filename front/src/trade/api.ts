@@ -6,8 +6,9 @@ import { API_BASE_URL } from "../config";
 // Authentication headers - you may want to get these from a store or context
 const getAuthHeaders = () => {
     const { wallet } = useWallet();
+    if (!wallet.value?.address) throw new Error("No wallet address");
     return {
-        "x-identity": wallet.value?.address,
+        "x-identity": wallet.value.address,
     };
 };
 // Types for the real API responses

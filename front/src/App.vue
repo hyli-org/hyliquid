@@ -1,9 +1,8 @@
 <script setup lang="ts">
 import { HyliWallet, setWalletConfig, useWallet } from "hyli-wallet-vue";
 import { useApi } from "./api_call";
-import { API_BASE_URL, BACKEND_API_URL } from "./config";
+import { BACKEND_API_URL } from "./config";
 import { assetsState, instrumentsState } from "./trade/trade";
-import { computed } from "vue";
 
 setWalletConfig({
     config: {
