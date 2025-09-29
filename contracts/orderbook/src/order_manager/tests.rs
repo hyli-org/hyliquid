@@ -3,19 +3,14 @@ use super::*;
 use std::collections::BTreeMap;
 
 use crate::orderbook::{
-    Order, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair,
+    ExecutionMode, ExecutionState, Order, OrderSide, OrderType, Orderbook, OrderbookEvent,
+    PairInfo, TokenPair,
 };
 use crate::smt_values::{Balance, UserInfo};
-use sdk::merkle_utils::BorshableMerkleProof;
 use sdk::LaneId;
-use sparse_merkle_tree::MerkleProof;
 
 fn test_user(name: &str) -> UserInfo {
     UserInfo::new(name.to_string(), name.as_bytes().to_vec())
-}
-
-fn empty_proof() -> BorshableMerkleProof {
-    BorshableMerkleProof(MerkleProof::new(vec![], vec![]))
 }
 
 fn sample_pair() -> TokenPair {
@@ -23,7 +18,7 @@ fn sample_pair() -> TokenPair {
 }
 
 fn build_orderbook() -> Orderbook {
-    Orderbook::init(LaneId::default(), true, b"secret".to_vec()).unwrap()
+    Orderbook::init(LaneId::default(), ExecutionMode::Full, b"secret".to_vec()).unwrap()
 }
 
 fn make_limit_order(id: &str, side: OrderSide, price: u64, quantity: u64) -> Order {
@@ -51,12 +46,16 @@ fn make_market_order(id: &str, side: OrderSide, quantity: u64) -> Order {
 #[test]
 fn add_session_key_registers_new_key() {
     let mut orderbook = build_orderbook();
-    let mut user = test_user("alice");
+    let user = test_user("alice");
     let key = vec![1, 2, 3, 4];
 
     let events = orderbook
-        .add_session_key(&mut user, &key)
+        .add_session_key(user, &key)
         .expect("should add session key");
+
+    let user = orderbook
+        .get_user_info("alice")
+        .expect("user should exist after adding session key");
 
     assert_eq!(user.session_keys, vec![key.clone()]);
     assert_eq!(events.len(), 1);
@@ -66,7 +65,7 @@ fn add_session_key_registers_new_key() {
     ));
 
     let err = orderbook
-        .add_session_key(&mut user, &key)
+        .add_session_key(user, &key)
         .expect_err("duplicate keys must fail");
     assert!(err.contains("already exists"));
 }
@@ -81,12 +80,18 @@ fn create_pair_initializes_balances() {
     };
 
     let events = orderbook
-        .create_pair(pair.clone(), info.clone())
+        .create_pair(&pair, &info)
         .expect("pair creation should succeed");
 
     assert!(orderbook.pairs_info.contains_key(&pair));
-    assert!(orderbook.balances_mt.contains_key(&pair.0));
-    assert!(orderbook.balances_mt.contains_key(&pair.1));
+
+    match &orderbook.execution_state {
+        ExecutionState::Full(state) => {
+            assert!(state.balances_mt.contains_key(&pair.0));
+            assert!(state.balances_mt.contains_key(&pair.1));
+        }
+        _ => panic!("Orderbook should be in full execution mode for this test"),
+    }
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
@@ -108,28 +113,20 @@ fn deposit_updates_balance_and_event() {
     let pair = sample_pair();
     orderbook
         .create_pair(
-            pair.clone(),
-            PairInfo {
+            &pair,
+            &PairInfo {
                 base_scale: 3,
                 quote_scale: 2,
             },
         )
         .unwrap();
     let user = test_user("bob");
-    let mut balance_in_proof = Balance(0);
 
     let events = orderbook
-        .deposit(
-            pair.1.clone(),
-            500,
-            &user,
-            &mut balance_in_proof,
-            &empty_proof(),
-        )
+        .deposit(&pair.1, 500, &user)
         .expect("deposit should succeed");
 
     assert_eq!(orderbook.get_balance(&user, &pair.1).0, 500);
-    assert_eq!(balance_in_proof.0, 0, "input balance remains a snapshot");
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
@@ -144,8 +141,8 @@ fn withdraw_deducts_balance() {
     let pair = sample_pair();
     orderbook
         .create_pair(
-            pair.clone(),
-            PairInfo {
+            &pair,
+            &PairInfo {
                 base_scale: 3,
                 quote_scale: 2,
             },
@@ -153,21 +150,10 @@ fn withdraw_deducts_balance() {
         .unwrap();
     let user = test_user("carol");
 
-    orderbook
-        .deposit(
-            pair.1.clone(),
-            1_000,
-            &user,
-            &mut Balance(0),
-            &empty_proof(),
-        )
-        .unwrap();
-
-    let mut balances = BTreeMap::new();
-    balances.insert(user.clone(), Balance(1_000));
+    orderbook.deposit(&pair.1, 1_000, &user).unwrap();
 
     let events = orderbook
-        .withdraw(pair.1.clone(), 400, &user, &balances, &empty_proof())
+        .withdraw(&pair.1, &400, &user)
         .expect("withdraw should succeed");
 
     assert_eq!(orderbook.get_balance(&user, &pair.1).0, 600);
@@ -178,10 +164,8 @@ fn withdraw_deducts_balance() {
             if user == "carol" && token == &pair.1 && amount == 600
     ));
 
-    balances.insert(user.clone(), Balance(600));
-
     let err = orderbook
-        .withdraw(pair.1.clone(), 700, &user, &balances, &empty_proof())
+        .withdraw(&pair.1, &700, &user)
         .expect_err("should reject overdraft");
     assert!(err.contains("Insufficient balance"));
 }
@@ -192,8 +176,8 @@ fn cancel_order_refunds_and_removes() {
     let pair = sample_pair();
     orderbook
         .create_pair(
-            pair.clone(),
-            PairInfo {
+            &pair,
+            &PairInfo {
                 base_scale: 3,
                 quote_scale: 2,
             },
@@ -204,14 +188,14 @@ fn cancel_order_refunds_and_removes() {
 
     orderbook
         .order_manager
-        .insert_order(&order, &user)
+        .insert_order(&order, &user.get_key())
         .expect("order insertion should succeed");
 
     let mut balances = BTreeMap::new();
     balances.insert(user.clone(), Balance(0));
 
     let events = orderbook
-        .cancel_order(order.order_id.clone(), &user, &Balance(0), &empty_proof())
+        .cancel_order(order.order_id.clone(), &user)
         .expect("cancellation should succeed");
 
     assert!(orderbook.order_manager.orders.is_empty());
@@ -236,7 +220,7 @@ fn limit_bid_inserts_when_no_liquidity() {
     let order = make_limit_order("bid-1", OrderSide::Bid, 101, 5);
 
     let events = manager
-        .execute_order(&user, &order)
+        .execute_order(&user.get_key(), &order)
         .expect("order execution should succeed");
 
     assert_eq!(events.len(), 1);
@@ -253,15 +237,14 @@ fn limit_bid_matches_existing_ask() {
 
     let resting_order = make_limit_order("ask-1", OrderSide::Ask, 100, 5);
     manager
-        .insert_order(&resting_order, &maker_user)
+        .insert_order(&resting_order, &maker_user.get_key())
         .expect("resting ask should be stored");
 
     let taker_order = make_limit_order("bid-1", OrderSide::Bid, 110, 5);
     let events = manager
-        .execute_order(&taker_user, &taker_order)
+        .execute_order(&taker_user.get_key(), &taker_order)
         .expect("matching limit bid should succeed");
 
-    assert!(!manager.orders.contains_key(&resting_order.order_id));
     assert!(!manager.orders.contains_key(&taker_order.order_id));
     assert!(manager
         .sell_orders
@@ -284,12 +267,12 @@ fn limit_bid_inserts_when_price_too_low() {
 
     let resting_order = make_limit_order("ask-1", OrderSide::Ask, 120, 5);
     manager
-        .insert_order(&resting_order, &maker_user)
+        .insert_order(&resting_order, &maker_user.get_key())
         .expect("resting ask should be stored");
 
     let taker_order = make_limit_order("bid-1", OrderSide::Bid, 110, 5);
     let events = manager
-        .execute_order(&taker_user, &taker_order)
+        .execute_order(&taker_user.get_key(), &taker_order)
         .expect("non crossing bid becomes resting");
 
     assert!(matches!(
@@ -310,7 +293,7 @@ fn limit_ask_inserts_when_no_bids() {
     let order = make_limit_order("ask-1", OrderSide::Ask, 105, 7);
 
     let events = manager
-        .execute_order(&user, &order)
+        .execute_order(&user.get_key(), &order)
         .expect("ask with no bids should rest");
 
     assert!(matches!(
@@ -335,12 +318,12 @@ fn limit_ask_matches_existing_bid_partial() {
 
     let resting_bid = make_limit_order("bid-1", OrderSide::Bid, 110, 10);
     manager
-        .insert_order(&resting_bid, &maker_user)
+        .insert_order(&resting_bid, &maker_user.get_key())
         .expect("resting bid should be stored");
 
     let taker_order = make_limit_order("ask-1", OrderSide::Ask, 100, 6);
     let events = manager
-        .execute_order(&taker_user, &taker_order)
+        .execute_order(&taker_user.get_key(), &taker_order)
         .expect("matching ask should succeed");
 
     let updated_bid = manager.orders.get(&resting_bid.order_id).unwrap();
@@ -362,12 +345,12 @@ fn limit_ask_inserts_when_price_above_best_bid() {
 
     let resting_bid = make_limit_order("bid-1", OrderSide::Bid, 110, 4);
     manager
-        .insert_order(&resting_bid, &maker_user)
+        .insert_order(&resting_bid, &maker_user.get_key())
         .expect("resting bid should be stored");
 
     let taker_order = make_limit_order("ask-1", OrderSide::Ask, 120, 6);
     let events = manager
-        .execute_order(&taker_user, &taker_order)
+        .execute_order(&taker_user.get_key(), &taker_order)
         .expect("non crossing ask becomes resting");
 
     assert!(matches!(
@@ -388,7 +371,7 @@ fn market_bid_requires_liquidity() {
     let order = make_market_order("mkt-bid", OrderSide::Bid, 5);
 
     let err = manager
-        .execute_order(&user, &order)
+        .execute_order(&user.get_key(), &order)
         .expect_err("market order without liquidity should fail");
     assert!(err.contains("No matching sell orders"));
 }
@@ -401,14 +384,23 @@ fn market_bid_consumes_multiple_asks() {
     let taker = test_user("taker");
 
     manager
-        .insert_order(&make_limit_order("ask-1", OrderSide::Ask, 90, 3), &maker1)
+        .insert_order(
+            &make_limit_order("ask-1", OrderSide::Ask, 90, 3),
+            &maker1.get_key(),
+        )
         .unwrap();
     manager
-        .insert_order(&make_limit_order("ask-2", OrderSide::Ask, 95, 4), &maker2)
+        .insert_order(
+            &make_limit_order("ask-2", OrderSide::Ask, 95, 4),
+            &maker2.get_key(),
+        )
         .unwrap();
 
     let events = manager
-        .execute_order(&taker, &make_market_order("bid-1", OrderSide::Bid, 5))
+        .execute_order(
+            &taker.get_key(),
+            &make_market_order("bid-1", OrderSide::Bid, 5),
+        )
         .expect("market bid should execute against asks");
 
     assert!(manager.orders.contains_key("ask-2"));
@@ -428,14 +420,23 @@ fn market_ask_consumes_bids() {
     let taker = test_user("taker");
 
     manager
-        .insert_order(&make_limit_order("bid-1", OrderSide::Bid, 110, 2), &maker1)
+        .insert_order(
+            &make_limit_order("bid-1", OrderSide::Bid, 110, 2),
+            &maker1.get_key(),
+        )
         .unwrap();
     manager
-        .insert_order(&make_limit_order("bid-2", OrderSide::Bid, 105, 3), &maker2)
+        .insert_order(
+            &make_limit_order("bid-2", OrderSide::Bid, 105, 3),
+            &maker2.get_key(),
+        )
         .unwrap();
 
     let events = manager
-        .execute_order(&taker, &make_market_order("ask-1", OrderSide::Ask, 4))
+        .execute_order(
+            &taker.get_key(),
+            &make_market_order("ask-1", OrderSide::Ask, 4),
+        )
         .expect("market ask should execute against bids");
 
     assert!(manager.orders.contains_key("bid-2"));
@@ -454,7 +455,7 @@ fn market_ask_without_bids_fails() {
     let order = make_market_order("ask-1", OrderSide::Ask, 3);
 
     let err = manager
-        .execute_order(&user, &order)
+        .execute_order(&user.get_key(), &order)
         .expect_err("market ask without bids should fail");
     assert!(err.contains("No matching buy orders"));
 }

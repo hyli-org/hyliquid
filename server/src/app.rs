@@ -1,8 +1,8 @@
-use std::{sync::Arc, vec};
+use std::{collections::BTreeMap, sync::Arc, vec};
 
 use anyhow::Result;
 use axum::{
-    extract::{Json, Path, State},
+    extract::{Json, State},
     http::{HeaderMap, Method},
     response::IntoResponse,
     routing::{get, post},
@@ -22,17 +22,13 @@ use hyli_modules::{
     },
 };
 use orderbook::{
-    orderbook::{Order, OrderSide, Orderbook, OrderbookEvent, PairInfo, TokenPair},
+    orderbook::{Order, Orderbook, OrderbookEvent, PairInfo, TokenPair},
     smt_values::UserInfo,
-    AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
-    DepositPrivateInput, OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput,
-    WithdrawPrivateInput,
+    AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
+    PermissionnedOrderbookAction, WithdrawPrivateInput,
 };
 use reqwest::StatusCode;
-use sdk::{
-    merkle_utils::BorshableMerkleProof, BlobTransaction, Calldata, ContractName, Hashed, LaneId,
-    TxContext, TxHash, ZkContract,
-};
+use sdk::{BlobTransaction, ContractName, LaneId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
@@ -105,7 +101,6 @@ impl Module for OrderbookModule {
             // To be removed later, temporary endpoint for testing
             .route("/nonce", get(get_nonce))
             .route("/temp/balances", get(get_balances))
-            .route("/temp/balance/{user}", get(get_balance_for_account))
             .route("/temp/orders", get(get_orders))
             .route("/temp/reset_state", get(reset_state))
             .with_state(state)
@@ -130,6 +125,7 @@ impl Module for OrderbookModule {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct RouterCtx {
     pub client: Arc<NodeApiHttpClient>,
     pub bus: OrderbookModuleBusClient,
@@ -214,20 +210,17 @@ pub struct WithdrawRequest {
 // --------------------------------------------------------
 async fn get_balances(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let orderbook = ctx.orderbook.lock().await;
-    let balances = orderbook.get_balances();
+    let balances = orderbook.get_balances_indexer();
+    let mut serializable_balances = BTreeMap::new();
+    for (token, token_balances) in balances.iter() {
+        let mut serializable_token_balances = BTreeMap::new();
+        for (user_key, balance) in token_balances.iter() {
+            serializable_token_balances.insert(user_key.user.clone(), balance.0);
+        }
+        serializable_balances.insert(token.clone(), serializable_token_balances);
+    }
 
-    Ok(Json(balances))
-}
-async fn get_balance_for_account(
-    State(ctx): State<RouterCtx>,
-    Path(user): Path<String>,
-) -> Result<impl IntoResponse, AppError> {
-    let orderbook = ctx.orderbook.lock().await;
-    let balances = orderbook
-        .get_balances_for_account(&user)
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-    Ok(Json(balances))
+    Ok(Json(serializable_balances))
 }
 async fn get_orders(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let orderbook = ctx.orderbook.lock().await;
@@ -275,10 +268,6 @@ async fn create_pair(
     }
 
     let user = auth.identity;
-    let tx_ctx = TxContext {
-        lane_id: ctx.lane_id.clone(),
-        ..Default::default()
-    };
 
     let asset_service = ctx.asset_service.read().await;
     let base_asset = asset_service
@@ -312,8 +301,8 @@ async fn create_pair(
     };
     drop(asset_service);
 
-    let (user_info, user_info_proof) = {
-        let orderbook = ctx.orderbook.lock().await;
+    let (user_info, events) = {
+        let mut orderbook = ctx.orderbook.lock().await;
 
         // Get user_info if exists, otherwise create a new one with random salt
         let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
@@ -322,35 +311,28 @@ async fn create_pair(
             UserInfo::new(user.clone(), salt.to_vec())
         });
 
-        let user_info_proof = orderbook
-            .users_info_mt
-            .merkle_proof(vec![user_info.get_key()])
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-        (user_info, BorshableMerkleProof::from(user_info_proof))
-    };
-
-    let private_input =
-        create_permissioned_private_input(user_info, user_info_proof, &Vec::<u8>::new())
+        let events = orderbook
+            .create_pair(&request.pair, &info)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
-    let orderbook_blob =
-        OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::CreatePair {
-            pair: request.pair,
-            info,
-        })
-        .as_blob(ctx.orderbook_cn.clone());
-
-    let calldata = Calldata {
-        identity: "orderbook@orderbook".into(),
-        index: sdk::BlobIndex(0),
-        blobs: vec![orderbook_blob].into(),
-        tx_blob_count: 1,
-        tx_hash: TxHash::default(),
-        tx_ctx: Some(tx_ctx),
-        private_input,
+        (user_info, events)
     };
 
-    execute_orderbook_action(&user, &calldata, &ctx).await
+    let action_private_input = Vec::<u8>::new();
+
+    let orderbook_action = PermissionnedOrderbookAction::CreatePair {
+        pair: request.pair,
+        info,
+    };
+
+    process_orderbook_action(
+        user_info,
+        events,
+        orderbook_action,
+        &action_private_input,
+        &ctx,
+    )
+    .await
 }
 
 async fn add_session_key(
@@ -359,18 +341,11 @@ async fn add_session_key(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
-    let tx_ctx = TxContext {
-        lane_id: ctx.lane_id.clone(),
-        ..Default::default()
-    };
-
-    let orderbook_blob =
-        OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::AddSessionKey)
-            .as_blob(ctx.orderbook_cn.clone());
+    let public_key = auth.public_key.expect("Missing public key in headers");
 
     // FIXME: locking here makes locking another time in execute_orderbook_action ...
-    let (user_info, user_info_proof) = {
-        let orderbook = ctx.orderbook.lock().await;
+    let (user_info, events) = {
+        let mut orderbook = ctx.orderbook.lock().await;
 
         // Get user_info if exists, otherwise create a new one with random salt
         let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
@@ -379,33 +354,27 @@ async fn add_session_key(
             UserInfo::new(user.clone(), salt.to_vec())
         });
 
-        let user_info_proof = orderbook
-            .users_info_mt
-            .merkle_proof(vec![user_info.get_key()])
+        let events = orderbook
+            .add_session_key(user_info.clone(), &public_key)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-        (user_info, BorshableMerkleProof::from(user_info_proof))
+
+        (user_info, events)
     };
 
-    let private_input = create_permissioned_private_input(
+    let action_private_input = &AddSessionKeyPrivateInput {
+        new_public_key: public_key,
+    };
+
+    let orderbook_action = PermissionnedOrderbookAction::AddSessionKey;
+
+    process_orderbook_action(
         user_info,
-        user_info_proof,
-        &AddSessionKeyPrivateInput {
-            new_public_key: auth.public_key.expect("Missing public key in headers"),
-        },
+        events,
+        orderbook_action,
+        action_private_input,
+        &ctx,
     )
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-    let calldata = Calldata {
-        identity: "orderbook@orderbook".into(),
-        index: sdk::BlobIndex(0),
-        blobs: vec![orderbook_blob].into(),
-        tx_blob_count: 1,
-        tx_hash: TxHash::default(),
-        tx_ctx: Some(tx_ctx),
-        private_input,
-    };
-
-    execute_orderbook_action(&user, &calldata, &ctx).await
+    .await
 }
 
 async fn deposit(
@@ -415,77 +384,40 @@ async fn deposit(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
-    let tx_ctx = TxContext {
-        lane_id: ctx.lane_id.clone(),
-        ..Default::default()
-    };
     // TODO: Check that the user actually has sent the funds to the contract before proceeding to deposit
 
-    let orderbook_blob =
-        OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::Deposit {
-            token: request.token.clone(),
-            amount: request.amount,
-        })
-        .as_blob(ctx.orderbook_cn.clone());
+    let (user_info, events) = {
+        let mut orderbook = ctx.orderbook.lock().await;
 
-    // FIXME: locking here makes locking another time in execute_orderbook_action ...
-    let (user_info, user_info_proof, balance, balance_proof) = {
-        let orderbook = ctx.orderbook.lock().await;
-
+        // Get user_info if exists, otherwise create a new one with random salt
         let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
             let mut salt = [0u8; 32];
             rand::rng().fill_bytes(&mut salt);
             UserInfo::new(user.clone(), salt.to_vec())
         });
 
-        let user_info_proof = orderbook
-            .users_info_mt
-            .merkle_proof(vec![user_info.get_key()])
+        let events = orderbook
+            .deposit(&request.token, request.amount, &user_info)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
-        let user_balance = orderbook.get_balance(&user_info, &request.token);
-
-        let balance_proof = orderbook
-            .balances_mt
-            .get(&request.token)
-            .ok_or_else(|| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Deposit not allowed for this token"),
-                )
-            })?
-            .merkle_proof(vec![user_info.get_key()])
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-        (
-            user_info,
-            BorshableMerkleProof::from(user_info_proof),
-            user_balance,
-            BorshableMerkleProof::from(balance_proof),
-        )
+        (user_info, events)
     };
 
-    let private_input = create_permissioned_private_input(
+    let action_private_input = Vec::<u8>::new();
+
+    let orderbook_action = PermissionnedOrderbookAction::Deposit {
+        token: request.token,
+        amount: request.amount,
+    };
+
+    process_orderbook_action(
         user_info,
-        user_info_proof,
-        &DepositPrivateInput {
-            balance,
-            balance_proof,
-        },
+        events,
+        orderbook_action,
+        &action_private_input,
+        &ctx,
     )
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-    let calldata = Calldata {
-        identity: "orderbook@orderbook".into(),
-        index: sdk::BlobIndex(0),
-        blobs: vec![orderbook_blob].into(),
-        tx_blob_count: 1,
-        tx_hash: TxHash::default(),
-        tx_ctx: Some(tx_ctx),
-        private_input,
-    };
-
-    execute_orderbook_action(&user, &calldata, &ctx).await
+    .await
 }
 
 async fn create_order(
@@ -496,63 +428,45 @@ async fn create_order(
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
 
-    let tx_ctx = TxContext {
-        lane_id: ctx.lane_id.clone(),
-        ..Default::default()
+    let (user_info, events) = {
+        let mut orderbook = ctx.orderbook.lock().await;
+
+        let user_info = orderbook.get_user_info(&user).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Could not find user {user}: {e}"),
+            )
+        })?;
+
+        let events = orderbook
+            .execute_order(&user_info, request.clone())
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+        (user_info, events)
     };
 
-    // FIXME: locking here makes locking another time in execute_orderbook_action ...
-    let create_order_ctx = {
-        let orderbook = ctx.orderbook.lock().await;
-
-        let create_order_ctx = orderbook
-            .get_create_order_ctx(&user, &request)
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not generate create_order context: {e}"),
-                )
-            })?;
-        create_order_ctx
+    let action_private_input = &CreateOrderPrivateInput {
+        public_key: auth.public_key.expect("Missing public key in headers"),
+        signature: auth.signature.expect("Missing signature in headers"),
     };
 
-    let private_input = create_permissioned_private_input(
-        create_order_ctx.user_info,
-        create_order_ctx.user_info_proof,
-        &CreateOrderPrivateInput {
-            public_key: auth.public_key.expect("Missing public key in headers"),
-            signature: auth.signature.expect("Missing signature in headers"),
-            order_user_map: create_order_ctx.order_user_map,
-            users_info: create_order_ctx.users_info,
-            users_info_proof: create_order_ctx.users_info_proof,
-            balances: create_order_ctx.balances,
-            balances_proof: create_order_ctx.balances_proof,
-        },
+    let orderbook_action = PermissionnedOrderbookAction::CreateOrder {
+        order_id: request.order_id,
+        order_side: request.order_side,
+        order_type: request.order_type,
+        price: request.price,
+        pair: request.pair,
+        quantity: request.quantity,
+    };
+
+    process_orderbook_action(
+        user_info,
+        events,
+        orderbook_action,
+        action_private_input,
+        &ctx,
     )
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-    let calldata = Calldata {
-        identity: "orderbook@orderbook".into(),
-        index: sdk::BlobIndex(0),
-        blobs: vec![OrderbookAction::PermissionnedOrderbookAction(
-            PermissionnedOrderbookAction::CreateOrder {
-                order_id: request.order_id,
-                order_side: request.order_side,
-                order_type: request.order_type,
-                price: request.price,
-                pair: request.pair,
-                quantity: request.quantity,
-            },
-        )
-        .as_blob(ctx.orderbook_cn.clone())]
-        .into(),
-        tx_blob_count: 1,
-        tx_hash: TxHash::default(),
-        tx_ctx: Some(tx_ctx),
-        private_input,
-    };
-
-    execute_orderbook_action(&user, &calldata, &ctx).await
+    .await
 }
 
 async fn cancel_order(
@@ -562,88 +476,54 @@ async fn cancel_order(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
-    let tx_ctx = TxContext {
-        lane_id: ctx.lane_id.clone(),
-        ..Default::default()
-    };
 
-    let orderbook_blob =
-        OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::Cancel {
-            order_id: request.order_id.clone(),
-        })
-        .as_blob(ctx.orderbook_cn.clone());
+    let (user_info, events) = {
+        let mut orderbook = ctx.orderbook.lock().await;
 
-    // FIXME: locking here makes locking another time in execute_orderbook_action ...
-    // TODO: make it a function for readability
-    let (user_info, user_info_proof, balance, balance_proof) = {
-        let orderbook = ctx.orderbook.lock().await;
+        let user_info = orderbook.get_user_info(&user).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Could not find user {user}: {e}"),
+            )
+        })?;
 
-        // Verify that user is the owner of the order
-        if orderbook.order_manager.get_order_owner(&request.order_id) != Some(&user) {
+        let Some(order_owner) = orderbook.get_order_owner(&request.order_id) else {
             return Err(AppError(
                 StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("User is not the owner of the order"),
+                anyhow::anyhow!("Order not found: {}", request.order_id),
+            ));
+        };
+        if user_info.get_key() != *order_owner {
+            return Err(AppError(
+                StatusCode::UNAUTHORIZED,
+                anyhow::anyhow!("You are not the owner of this order"),
             ));
         }
 
-        let (user_info, user_info_proof) =
-            orderbook.get_user_info_with_proof(&user).map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not generate merkle proof for user {user}: {e}"),
-                )
-            })?;
+        let events = orderbook
+            .cancel_order(request.order_id.clone(), &user_info)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
-        // Get the token name out of the order
-        let order = orderbook
-            .order_manager
-            .get_order(&request.order_id)
-            .ok_or_else(|| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Unknown order: {}", request.order_id),
-                )
-            })?;
-        let token = match order.order_side {
-            OrderSide::Bid => order.pair.1.clone(),
-            OrderSide::Ask => order.pair.0.clone(),
-        };
-
-        let (balance, balance_proof) = orderbook
-            .get_balance_with_proof(&user_info, &token)
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not generate merkle proof of balance of token {token} for user {user}: {e}"),
-                )
-            })?;
-
-        (user_info, user_info_proof, balance, balance_proof)
+        (user_info, events)
     };
 
-    let private_input = create_permissioned_private_input(
+    let action_private_input = CancelOrderPrivateInput {
+        public_key: auth.public_key.expect("Missing public key in headers"),
+        signature: auth.signature.expect("Missing signature in headers"),
+    };
+
+    let orderbook_action = PermissionnedOrderbookAction::Cancel {
+        order_id: request.order_id.clone(),
+    };
+
+    process_orderbook_action(
         user_info,
-        user_info_proof,
-        &CancelOrderPrivateInput {
-            public_key: auth.public_key.expect("Missing public key in headers"),
-            signature: auth.signature.expect("Missing signature in headers"),
-            balance,
-            balance_proof,
-        },
+        events,
+        orderbook_action,
+        &action_private_input,
+        &ctx,
     )
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-    let calldata = Calldata {
-        identity: "orderbook@orderbook".into(),
-        index: sdk::BlobIndex(0),
-        blobs: vec![orderbook_blob].into(),
-        tx_blob_count: 1,
-        tx_hash: TxHash::default(),
-        tx_ctx: Some(tx_ctx),
-        private_input,
-    };
-
-    execute_orderbook_action(&user, &calldata, &ctx).await
+    .await
 }
 
 async fn withdraw(
@@ -653,135 +533,98 @@ async fn withdraw(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
-    let tx_ctx = TxContext {
-        lane_id: ctx.lane_id.clone(),
-        ..Default::default()
+
+    let (user_info, events) = {
+        let mut orderbook = ctx.orderbook.lock().await;
+
+        let user_info = orderbook.get_user_info(&user).map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Could not find user {user}: {e}"),
+            )
+        })?;
+
+        let balance = orderbook.get_balance(&user_info, &request.token);
+        if balance.0 < request.amount {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!(
+                    "Not enough balance: withdrawing {} {} while having {}",
+                    request.amount,
+                    request.token,
+                    balance.0
+                ),
+            ));
+        };
+
+        let events = orderbook
+            .withdraw(&request.token, &request.amount, &user_info)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+        (user_info, events)
     };
 
-    let orderbook_blob =
-        OrderbookAction::PermissionnedOrderbookAction(PermissionnedOrderbookAction::Withdraw {
-            token: request.token.clone(),
-            amount: request.amount,
-        })
-        .as_blob(ctx.orderbook_cn.clone());
-
-    // FIXME: locking here makes locking another time in execute_orderbook_action ...
-    let (user_info, user_info_proof, balances, balances_proof) = {
-        let orderbook = ctx.orderbook.lock().await;
-
-        let (user_info, user_info_proof) =
-            orderbook.get_user_info_with_proof(&user).map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not generate merkle proof for user {user}: {e}"),
-                )
-            })?;
-
-        let (balances, balances_proof) =
-            orderbook.get_balances_with_proof(&[user_info.clone()], &request.token).map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not generate merkle proof of balance of token {} for user {user}: {e}", request.token),
-                )
-            })?;
-
-        (user_info, user_info_proof, balances, balances_proof)
+    let action_private_input = WithdrawPrivateInput {
+        public_key: auth.public_key.expect("Missing public key in headers"),
+        signature: auth.signature.expect("Missing signature in headers"),
     };
 
-    let private_input = create_permissioned_private_input(
+    let orderbook_action = PermissionnedOrderbookAction::Withdraw {
+        token: request.token.clone(),
+        amount: request.amount,
+    };
+
+    process_orderbook_action(
         user_info,
-        user_info_proof,
-        &WithdrawPrivateInput {
-            public_key: auth.public_key.expect("Missing public key in headers"),
-            signature: auth.signature.expect("Missing signature in headers"),
-            balances,
-            balances_proof,
-        },
+        events,
+        orderbook_action,
+        &action_private_input,
+        &ctx,
     )
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-    let calldata = Calldata {
-        identity: "orderbook@orderbook".into(),
-        index: sdk::BlobIndex(0),
-        blobs: vec![orderbook_blob].into(),
-        tx_blob_count: 1,
-        tx_hash: TxHash::default(),
-        tx_ctx: Some(tx_ctx),
-        private_input,
-    };
-
-    execute_orderbook_action(&user, &calldata, &ctx).await
+    .await
 }
 
-async fn execute_orderbook_action(
-    user: &str,
-    calldata: &Calldata,
+async fn process_orderbook_action<T: BorshSerialize>(
+    user_info: UserInfo,
+    events: Vec<OrderbookEvent>,
+    orderbook_action: PermissionnedOrderbookAction,
+    action_private_input: &T,
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
-    let mut orderbook = ctx.orderbook.lock().await;
+    tracing::info!("Orderbook execution results: {:?}", events);
     let book_service = ctx.book_writer_service.lock().await;
 
-    // FIXME: This is not optimal. We should have a way to send the orderbook commitment metadata without blocking the entire process here
-    let commitment_metadata = orderbook.as_bytes()?;
+    let tx_hash = ctx
+        .client
+        .send_tx_blob(BlobTransaction::new(
+            "orderbook@orderbook",
+            vec![
+                OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone())
+                    .as_blob(ctx.orderbook_cn.clone()),
+            ],
+        ))
+        .await?;
 
-    let res = orderbook.execute(calldata);
+    book_service
+        .write_events(&user_info.user, tx_hash.clone(), events.clone())
+        .await?;
 
-    match &res {
-        Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
-            Ok(events) => {
-                tracing::info!("Orderbook execution results: {:?}", events);
+    let action_private_input = borsh::to_vec(action_private_input).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            anyhow::anyhow!("Failed to serialize action private input: {e}"),
+        )
+    })?;
 
-                let tx = BlobTransaction::new(
-                    calldata.identity.clone(),
-                    calldata
-                        .blobs
-                        .iter()
-                        .map(|(_, blob)| blob.clone())
-                        .collect(),
-                );
-
-                // TODO: make tx.hashed() unique !!
-                book_service.write_events(user, tx.hashed(), events).await?;
-                let tx_hash = ctx.client.send_tx_blob(tx).await?;
-
-                // Send tx to prover
-                let mut bus = ctx.bus.clone();
-                bus.send(OrderbookProverRequest::TxToProve {
-                    commitment_metadata,
-                    calldata: calldata.clone(),
-                    tx_hash: tx_hash.clone(),
-                })?;
-
-                Ok(Json(tx_hash))
-            }
-            Err(e) => {
-                tracing::error!("Failed to deserialize events: {:?}", e);
-                Err(AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Failed to deserialize events: {e}"),
-                ))
-            }
-        },
-        Err(e) => {
-            tracing::error!("Could not execute the transaction: {:?}", e);
-            Err(AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Could not execute the transaction: {e}"),
-            ))
-        }
-    }
-}
-
-fn create_permissioned_private_input<T: BorshSerialize>(
-    user_info: UserInfo,
-    user_info_proof: BorshableMerkleProof,
-    private_input: &T,
-) -> Result<Vec<u8>> {
-    let permissioned_private_input = PermissionnedPrivateInput {
-        secret: vec![1, 2, 3],
+    // Send tx to prover
+    let mut bus = ctx.bus.clone();
+    bus.send(OrderbookProverRequest::TxToProve {
+        events,
         user_info,
-        user_info_proof,
-        private_input: borsh::to_vec(&private_input)?,
-    };
-    Ok(borsh::to_vec(&permissioned_private_input)?)
+        action_private_input,
+        orderbook_action,
+        tx_hash: tx_hash.clone(),
+    })?;
+
+    Ok(Json(tx_hash))
 }

@@ -1,13 +1,18 @@
 use std::{collections::BTreeMap, sync::Arc};
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use client_sdk::{helpers::ClientSdkProver, rest_client::NodeApiClient};
 use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use sdk::{Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
+use orderbook::{
+    orderbook::{Orderbook, OrderbookEvent},
+    smt_values::UserInfo,
+    OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput,
+};
+use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
 use tracing::{debug, error};
 
 #[derive(Debug, Clone)]
@@ -19,8 +24,10 @@ pub struct PendingTx {
 #[derive(Debug, Clone)]
 pub enum OrderbookProverRequest {
     TxToProve {
-        commitment_metadata: Vec<u8>,
-        calldata: Calldata,
+        user_info: UserInfo,
+        events: Vec<OrderbookEvent>,
+        orderbook_action: PermissionnedOrderbookAction,
+        action_private_input: Vec<u8>,
         tx_hash: TxHash,
     },
 }
@@ -42,12 +49,14 @@ pub struct OrderbookProverCtx {
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
     pub node_client: Arc<dyn NodeApiClient + Send + Sync>,
+    pub initial_orderbook: Orderbook,
 }
 
 pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
     pending_txs: BTreeMap<TxHash, PendingTx>,
+    orderbook: Orderbook,
 }
 
 impl Module for OrderbookProverModule {
@@ -55,10 +64,12 @@ impl Module for OrderbookProverModule {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = OrderbookProverBusClient::new_from_bus(bus.new_handle()).await;
+        let orderbook = ctx.initial_orderbook.clone();
         Ok(OrderbookProverModule {
             ctx,
             bus,
             pending_txs: BTreeMap::new(),
+            orderbook,
         })
     }
 
@@ -87,10 +98,58 @@ impl OrderbookProverModule {
     async fn handle_prover_request(&mut self, request: OrderbookProverRequest) -> Result<()> {
         match request {
             OrderbookProverRequest::TxToProve {
-                commitment_metadata,
-                calldata,
+                events,
+                user_info,
+                action_private_input,
+                orderbook_action,
                 tx_hash,
             } => {
+                // The goal is to create commitment metadata that contains the proofs to be able to load the zkvm state into the zkvm
+
+                // We generate the commitment metadata from the zkvm state
+                // We then execute the action with the complete orderbook to compare the events and update the state
+
+                let commitment_metadata = self
+                    .orderbook
+                    .derive_zkvm_commitment_metadata_from_events(&user_info, &events)
+                    .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
+
+                let permissioned_private_input = PermissionnedPrivateInput {
+                    secret: vec![1, 2, 3],
+                    user_info: user_info.clone(),
+                    private_input: action_private_input.clone(),
+                };
+
+                let execution_events = self
+                    .orderbook
+                    .execute_permissionned_action(
+                        user_info.clone(),
+                        orderbook_action.clone(),
+                        &permissioned_private_input.private_input,
+                    )
+                    .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
+
+                // This should NEVER happen. If it happens, it means there is a difference in execution logic between api and prover.
+                if events != execution_events {
+                    bail!("The provided events do not match the executed events. This should NEVER happen. Provided: {events:?}, Executed: {execution_events:?}");
+                }
+
+                let private_input = borsh::to_vec(&permissioned_private_input)?;
+
+                let calldata = Calldata {
+                    identity: "orderbook@orderbook".into(),
+                    tx_hash: tx_hash.clone(),
+                    blobs: vec![OrderbookAction::PermissionnedOrderbookAction(
+                        orderbook_action.clone(),
+                    )
+                    .as_blob(self.ctx.orderbook_cn.clone())]
+                    .into(),
+                    tx_blob_count: 1,
+                    index: BlobIndex(0),
+                    private_input,
+                    tx_ctx: Default::default(), // Will be set when proving
+                };
+
                 let pending_tx = PendingTx {
                     commitment_metadata,
                     calldata,
@@ -98,7 +157,11 @@ impl OrderbookProverModule {
 
                 self.pending_txs.insert(tx_hash.clone(), pending_tx);
 
-                debug!("Transaction {tx_hash:#} added to pending transactions queue");
+                debug!(
+                    tx_hash = %tx_hash,
+                    events = ?events,
+                    "Transaction added to pending transactions queue"
+                );
             }
         }
         Ok(())
@@ -110,9 +173,21 @@ impl OrderbookProverModule {
                 tracing::debug!("New block received: {:?}", block);
 
                 let first_tx_hash = match self.pending_txs.keys().next() {
-                    Some(tx_hash) => tx_hash,
+                    Some(tx_hash) => {
+                        if block
+                            .parsed_block
+                            .txs
+                            .iter()
+                            .any(|(id, _)| id.1 == *tx_hash)
+                        {
+                            tx_hash
+                        } else {
+                            // If the transaction is not in the block, we can't prove it.
+                            return Ok(());
+                        }
+                    }
                     None => {
-                        // There's not transaction to prove.
+                        // There's no transaction to prove.
                         return Ok(());
                     }
                 };
@@ -145,7 +220,6 @@ impl OrderbookProverModule {
                     tokio::spawn(async move {
                         let mut calldata = pending_tx.calldata;
 
-                        calldata.tx_hash = tx_hash.clone();
                         calldata.tx_ctx = Some(tx_context_cloned);
 
                         match prover
