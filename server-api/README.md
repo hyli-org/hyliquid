@@ -16,18 +16,21 @@ A high-performance TypeScript backend API for the Hyliquid trading platform, bui
 ## API Endpoints
 
 ### Health & Configuration
+
 - `GET /_health` - Health check endpoint
 - `GET /api/config` - Get configuration information
 - `GET /api/info` - Get order book information
 
 ### Trading
+
 - `GET /api/book/{baseAssetSymbol}/{quoteAssetSymbol}` - Get order book for a trading pair
   - Query parameters:
     - `levels` (optional): Number of price levels (default: 20)
     - `group_ticks` (optional): Tick grouping (default: 10)
 
 ### User Data
-- `GET /api/balances` - Get user balances (requires `x-user` header)
+
+- `GET /api/balances` - Get user balances (requires `x-identity` header)
 
 ## Project Structure
 
@@ -48,18 +51,21 @@ server-api/
 ## Setup
 
 1. **Install dependencies:**
+
    ```bash
    cd server-api
    bun install
    ```
 
 2. **Configure environment:**
+
    ```bash
    cp .env.example .env
    # Edit .env with your database configuration
    ```
 
 3. **Start the server:**
+
    ```bash
    # Development mode with hot reload
    bun run dev
@@ -80,6 +86,7 @@ server-api/
 ## Database Schema
 
 The API expects a PostgreSQL database with the following tables:
+
 - `assets` - Trading assets (BTC, USDT, etc.)
 - `instruments` - Trading pairs (BTC/USDT, etc.)
 - `users` - User accounts

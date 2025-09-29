@@ -189,8 +189,11 @@ watchEffect(() => {
     // Subscribe to new instrument when selection changes
     if (instrumentsState.selected && websocketManager.state.connected) {
         websocketManager.subscribeToOrderbook(instrumentsState.selected.symbol, activityState.orderbookTicks);
-        websocketManager.subscribeToTrades(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender");
-        websocketManager.subscribeToOrders(instrumentsState.selected.symbol, wallet.value?.address || "tx_sender");
+        const address = wallet.value?.address;
+        if (address) {
+            websocketManager.subscribeToTrades(instrumentsState.selected.symbol, address);
+            websocketManager.subscribeToOrders(instrumentsState.selected.symbol, address);
+        }
     }
 });
 
@@ -398,24 +401,25 @@ export function placeOrder(input: {
         if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");
 
+        const address = wallet.value?.address;
+        if (!address) throw new Error("No wallet address");
+
         let nonce = await (
             await fetch(`${BACKEND_API_URL.value}/nonce`, {
                 method: "GET",
                 headers: {
-                    "x-identity": wallet.value?.address || "tx_sender",
+                    "x-identity": address,
                 },
             })
         ).text();
 
         const uuid = uuidv7();
-        const signed = signMessageWithSessionKey(
-            `${wallet.value?.address || "tx_sender"}:${nonce}:create_order:${uuid}`,
-        );
+        const signed = signMessageWithSessionKey(`${address}:${nonce}:create_order:${uuid}`);
         const res = await fetch(`${BACKEND_API_URL.value}/create_order`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
-                "x-identity": wallet.value?.address || "tx_sender",
+                "x-identity": address,
                 "x-public-key": (await getOrReuseSessionKey())?.publicKey || "",
                 "x-signature": encodeToHex(signed.signature),
             },

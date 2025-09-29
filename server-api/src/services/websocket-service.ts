@@ -14,6 +14,7 @@ import {
 import { BookService } from "./book-service";
 import { Order, Trade } from "@/types";
 import { DatabaseCallbacks } from "@/database/callbacks";
+import { CustomError } from "@/middleware";
 
 export class WebSocketService {
   private channelManager: ChannelManager;
@@ -86,10 +87,11 @@ export class WebSocketService {
               timestamp: Date.now(),
             };
           } catch (error) {
-            throw new Error(
+            throw new CustomError(
               `Failed to get WebSocket stats: ${
                 error instanceof Error ? error.message : "Unknown error"
-              }`
+              }`,
+              500
             );
           }
         })
@@ -307,7 +309,7 @@ export class WebSocketService {
     // Validate instrument exists
     const [baseAsset, quoteAsset] = instrument.split("/");
     if (!this.bookService.hasPair(baseAsset, quoteAsset)) {
-      throw new Error(`Instrument not found: ${instrument}`);
+      throw new CustomError(`Instrument not found: ${instrument}`, 404);
     }
 
     this.databaseCallbacks.addBookNotificationCallback(
@@ -328,10 +330,11 @@ export class WebSocketService {
 
       this.sendL2BookUpdate(clientId, instrument, bookData);
     } catch (error) {
-      throw new Error(
+      throw new CustomError(
         `Failed to get initial book data: ${
           error instanceof Error ? error.message : "Unknown error"
-        }`
+        }`,
+        500
       );
     }
   }

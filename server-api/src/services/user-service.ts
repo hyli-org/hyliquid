@@ -2,8 +2,16 @@
  * User service with in-memory caching
  */
 
-import { UserBalances, BalanceResponse, UserTrades, PaginatedUserOrders, PaginationQuery, User } from '../types';
-import { DatabaseQueries } from '../database/queries';
+import {
+  UserBalances,
+  BalanceResponse,
+  UserTrades,
+  PaginatedUserOrders,
+  PaginationQuery,
+  User,
+} from "../types";
+import { DatabaseQueries } from "../database/queries";
+import { CustomError } from "@/middleware";
 
 export class UserService {
   private userIdMap: Map<string, number> = new Map();
@@ -17,11 +25,11 @@ export class UserService {
    * Initialize the service by loading all users into memory
    */
   async initialize(): Promise<void> {
-    console.log('Loading users into memory...');
-    
+    console.log("Loading users into memory...");
+
     const users = await this.queries.getAllUsers();
     this.userIdMap.clear();
-    
+
     for (const user of users) {
       this.userIdMap.set(user.identity, user.user_id);
     }
@@ -49,7 +57,7 @@ export class UserService {
     // Fallback to database lookup
     const userRecord = await this.queries.getUserByIdentity(user);
     if (!userRecord) {
-      throw new Error(`User not found: ${user}`);
+      throw new CustomError(`User not found: ${user}`, 404);
     }
 
     // Cache the result for future lookups
@@ -64,7 +72,7 @@ export class UserService {
     const userId = await this.getUserId(user);
     const balanceRows = await this.queries.getUserBalances(userId);
 
-    const balances: BalanceResponse[] = balanceRows.map(row => ({
+    const balances: BalanceResponse[] = balanceRows.map((row) => ({
       token: row.symbol,
       total: row.total,
       reserved: row.reserved,
@@ -77,17 +85,26 @@ export class UserService {
   /**
    * Get user orders with pagination
    */
-  async getOrdersPaginated(user: string, pagination: PaginationQuery = {}): Promise<PaginatedUserOrders> {
+  async getOrdersPaginated(
+    user: string,
+    pagination: PaginationQuery = {}
+  ): Promise<PaginatedUserOrders> {
     const userId = await this.getUserId(user);
     const page = pagination.page || 1;
     const limit = Math.min(pagination.limit || 20, 100); // Cap at 100 items per page
-    const sortBy = pagination.sort_by || 'created_at';
-    const sortOrder = pagination.sort_order || 'desc';
-    
-    const { orders, total } = await this.queries.getUserOrders(userId, page, limit, sortBy, sortOrder);
-    
+    const sortBy = pagination.sort_by || "created_at";
+    const sortOrder = pagination.sort_order || "desc";
+
+    const { orders, total } = await this.queries.getUserOrders(
+      userId,
+      page,
+      limit,
+      sortBy,
+      sortOrder
+    );
+
     const totalPages = Math.ceil(total / limit);
-    
+
     return {
       data: orders,
       pagination: {
@@ -96,25 +113,36 @@ export class UserService {
         total,
         total_pages: totalPages,
         has_next: page < totalPages,
-        has_prev: page > 1
-      }
+        has_prev: page > 1,
+      },
     };
   }
 
   /**
    * Get user orders by pair with pagination
    */
-  async getOrdersByPairPaginated(user: string, instrumentId: number, pagination: PaginationQuery = {}): Promise<PaginatedUserOrders> {
+  async getOrdersByPairPaginated(
+    user: string,
+    instrumentId: number,
+    pagination: PaginationQuery = {}
+  ): Promise<PaginatedUserOrders> {
     const userId = await this.getUserId(user);
     const page = pagination.page || 1;
     const limit = Math.min(pagination.limit || 20, 100); // Cap at 100 items per page
-    const sortBy = pagination.sort_by || 'created_at';
-    const sortOrder = pagination.sort_order || 'desc';
-    
-    const { orders, total } = await this.queries.getUserOrdersByPair(userId, instrumentId, page, limit, sortBy, sortOrder);
-    
+    const sortBy = pagination.sort_by || "created_at";
+    const sortOrder = pagination.sort_order || "desc";
+
+    const { orders, total } = await this.queries.getUserOrdersByPair(
+      userId,
+      instrumentId,
+      page,
+      limit,
+      sortBy,
+      sortOrder
+    );
+
     const totalPages = Math.ceil(total / limit);
-    
+
     return {
       data: orders,
       pagination: {
@@ -123,8 +151,8 @@ export class UserService {
         total,
         total_pages: totalPages,
         has_next: page < totalPages,
-        has_prev: page > 1
-      }
+        has_prev: page > 1,
+      },
     };
   }
 
@@ -140,7 +168,10 @@ export class UserService {
   /**
    * Get user trades by pair
    */
-  async getTradesByPair(user: string, instrumentId: number): Promise<UserTrades> {
+  async getTradesByPair(
+    user: string,
+    instrumentId: number
+  ): Promise<UserTrades> {
     const userId = await this.getUserId(user);
     const trades = await this.queries.getUserTradesByPair(userId, instrumentId);
     return { trades };

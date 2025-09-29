@@ -11,7 +11,7 @@ export const corsMiddleware = () => {
       const headers: Record<string, string> = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-identity',
         'Access-Control-Max-Age': '86400', // 24 hours
       };
       

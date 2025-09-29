@@ -2,9 +2,10 @@
  * Book service for orderbook operations
  */
 
-import { L2BookData, L2BookEntry } from '../types';
-import { DatabaseQueries } from '../database/queries';
-import { AssetService } from './asset-service';
+import { L2BookData, L2BookEntry } from "../types";
+import { DatabaseQueries } from "../database/queries";
+import { AssetService } from "./asset-service";
+import { CustomError } from "@/middleware";
 
 export class BookService {
   private queries: DatabaseQueries;
@@ -20,7 +21,7 @@ export class BookService {
    */
   async getInfo(): Promise<string> {
     const isHealthy = await this.queries.healthCheck();
-    return isHealthy ? 'Order book info' : 'Order book unavailable';
+    return isHealthy ? "Order book info" : "Order book unavailable";
   }
 
   /**
@@ -33,11 +34,11 @@ export class BookService {
     groupTicks: number = 10
   ): Promise<L2BookData> {
     const symbol = `${baseAssetSymbol.toUpperCase()}/${quoteAssetSymbol.toUpperCase()}`;
-    
+
     // Validate that the instrument exists
     const instrument = this.assetService.getInstrument(symbol);
     if (!instrument) {
-      throw new Error(`Instrument not found: ${symbol}`);
+      throw new CustomError(`Instrument not found: ${symbol}`, 404);
     }
 
     const rows = await this.queries.getOrderbook(symbol, levels, groupTicks);
@@ -51,9 +52,9 @@ export class BookService {
         quantity: row.qty,
       };
 
-      if (row.side === 'bid') {
+      if (row.side === "bid") {
         bids.push(entry);
-      } else if (row.side === 'ask') {
+      } else if (row.side === "ask") {
         asks.push(entry);
       }
     }
@@ -64,11 +65,17 @@ export class BookService {
   /**
    * Get latest price for a trading pair
    */
-  async getLatestPrice(baseAssetSymbol: string, quoteAssetSymbol: string): Promise<number> {
-    const symbol = this.assetService.getInstrumentSymbol(baseAssetSymbol, quoteAssetSymbol);
+  async getLatestPrice(
+    baseAssetSymbol: string,
+    quoteAssetSymbol: string
+  ): Promise<number> {
+    const symbol = this.assetService.getInstrumentSymbol(
+      baseAssetSymbol,
+      quoteAssetSymbol
+    );
     const instrumentId = this.assetService.getInstrumentId(symbol);
     if (!instrumentId) {
-      throw new Error(`Instrument not found: ${symbol}`);
+      throw new CustomError(`Instrument not found: ${symbol}`, 404);
     }
     const price = await this.queries.getLatestPrice(instrumentId);
     return price;
@@ -77,11 +84,17 @@ export class BookService {
   /**
    * Get price change for a trading pair
    */
-  async getPriceChange(baseAssetSymbol: string, quoteAssetSymbol: string): Promise<number> {
-    const symbol = this.assetService.getInstrumentSymbol(baseAssetSymbol, quoteAssetSymbol);
+  async getPriceChange(
+    baseAssetSymbol: string,
+    quoteAssetSymbol: string
+  ): Promise<number> {
+    const symbol = this.assetService.getInstrumentSymbol(
+      baseAssetSymbol,
+      quoteAssetSymbol
+    );
     const instrumentId = this.assetService.getInstrumentId(symbol);
     if (!instrumentId) {
-      throw new Error(`Instrument not found: ${symbol}`);
+      throw new CustomError(`Instrument not found: ${symbol}`, 404);
     }
     const change = await this.queries.getPriceChange(instrumentId);
     return change;
@@ -90,11 +103,17 @@ export class BookService {
   /**
    * Get volume for a trading pair
    */
-  async getVolume(baseAssetSymbol: string, quoteAssetSymbol: string): Promise<number> {
-    const symbol = this.assetService.getInstrumentSymbol(baseAssetSymbol, quoteAssetSymbol);
+  async getVolume(
+    baseAssetSymbol: string,
+    quoteAssetSymbol: string
+  ): Promise<number> {
+    const symbol = this.assetService.getInstrumentSymbol(
+      baseAssetSymbol,
+      quoteAssetSymbol
+    );
     const instrumentId = this.assetService.getInstrumentId(symbol);
     if (!instrumentId) {
-      throw new Error(`Instrument not found: ${symbol}`);
+      throw new CustomError(`Instrument not found: ${symbol}`, 404);
     }
     const vol = await this.queries.getVolume(instrumentId);
     return vol;
@@ -104,7 +123,9 @@ export class BookService {
    * Get all available trading pairs
    */
   getAvailablePairs(): string[] {
-    return this.assetService.getActiveInstruments().map(instrument => instrument.symbol);
+    return this.assetService
+      .getActiveInstruments()
+      .map((instrument) => instrument.symbol);
   }
 
   /**

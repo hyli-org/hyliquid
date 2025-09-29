@@ -7,7 +7,7 @@ import { API_BASE_URL } from "../config";
 const getAuthHeaders = () => {
     const { wallet } = useWallet();
     return {
-        "x-user": wallet.value?.address || "tx_sender",
+        "x-identity": wallet.value?.address,
     };
 };
 // Types for the real API responses
