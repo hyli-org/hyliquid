@@ -16,6 +16,7 @@ pub mod client;
 #[cfg(feature = "client")]
 pub mod indexer;
 
+pub mod order_manager;
 pub mod orderbook;
 pub mod smt_values;
 mod tests;
@@ -202,7 +203,7 @@ impl sdk::ZkContract for Orderbook {
 
                         // Verify that order_user_map is populated with valid users info
                         for (order_id, user_info) in &create_order_private_input.order_user_map {
-                            if !self.orders.contains_key(order_id) {
+                            if !self.order_manager.orders.contains_key(order_id) {
                                 if self.server_execution {
                                     return Err(format!("Order with id {order_id} does not exist"));
                                 } else {
@@ -275,6 +276,7 @@ impl sdk::ZkContract for Orderbook {
 
                         // Verify that balances are correct
                         let order = self
+                            .order_manager
                             .orders
                             .get(&order_id)
                             .ok_or(format!("Order {order_id} not found"))?;

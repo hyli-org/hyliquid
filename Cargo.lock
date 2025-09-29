@@ -6338,7 +6338,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "sha2",
+ "sha3",
  "sp1-sdk",
  "sqlx",
  "thiserror 2.0.16",
@@ -6365,7 +6365,8 @@ dependencies = [
 [[package]]
 name = "sha2"
 version = "0.10.8"
-source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha2-0.10.8-sp1-4.0.0#1f224388fdede7cef649bce0d63876d1a9e3f515"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "793db75ad2bcafc3ffa7c68b215fee268f537982cd901d132f89c6343f3a3dc8"
 dependencies = [
  "cfg-if 1.0.3",
  "cpufeatures",
@@ -6375,8 +6376,7 @@ dependencies = [
 [[package]]
 name = "sha3"
 version = "0.10.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75872d278a8f37ef87fa0ddbda7802605cb18344497949862c0d4dcb291eba60"
+source = "git+https://github.com/sp1-patches/RustCrypto-hashes?tag=patch-sha3-0.10.8-sp1-4.0.0#8f6d303c0861ba7e5adcc36207c0f41fe5edaabc"
 dependencies = [
  "digest 0.10.7",
  "keccak",
