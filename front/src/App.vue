@@ -71,7 +71,7 @@ const onWalletClose = () => {
 <template>
     <div class="min-h-screen w-full bg-neutral-950 text-neutral-200">
         <div class="flex w-full h-16 justify-between items-center px-4">
-            <h3>HYLIQUID</h3>
+            <h3>HYLILILIQUID</h3>
             <div class="flex justify-between items-center gap-4">
                 <button @click="createPair"
                     class="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 rounded text-sm cursor-pointer">
