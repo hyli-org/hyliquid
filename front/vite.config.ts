@@ -46,5 +46,8 @@ export default defineConfig({
         tailwindcss(),
         wasmContentTypePlugin(),
     ],
-    optimizeDeps: {},
+    optimizeDeps: {
+        include: ["pino"],
+        exclude: ["@aztec/bb.js", "@noir-lang/noir_js"],
+    },
 });
