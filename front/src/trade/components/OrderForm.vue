@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import { activityState, assetsState, instrumentsState, submitOrder, useOrderFormState } from "../trade";
 import { v7 as uuidv7 } from "uuid";
 
 const { price, size, side, orderType, orderSubmit } = useOrderFormState();
-
+const debug = ref(false);
 const baseSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.base_asset : "")!);
 const quoteSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.quote_asset : "")!);
 
@@ -100,7 +100,12 @@ const availableBalance = computed(() => {
         <div v-if="orderSubmit?.error" class="mb-2 text-xs text-rose-400">
             {{ orderSubmit.error }}
         </div>
-        <div>
+        <div class="mb-2">
+            <button class="text-xs text-neutral-400" @click="debug = !debug">
+                {{ debug ? "Hide debug" : "Show debug" }}
+            </button>
+        </div>
+        <div v-show="debug" class="mb-2 text-xs text-neutral-400">
             Side: {{ side }}<br />
             Order type: {{ orderType }}<br />
             Integer price: {{ instrumentsState.toIntPrice(instrumentsState.selected?.symbol, price ?? 0) }}<br />

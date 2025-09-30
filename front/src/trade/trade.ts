@@ -440,7 +440,7 @@ export function placeOrder(input: {
                 tx_hash: (await res.json()) as string,
             };
         } else {
-            throw new Error(`Failed to create order: ${res.status} ${res.statusText}`);
+            throw new Error(`Failed to create order: ${res.status} ${res.statusText}. ${await res.text()}`);
         }
     });
 }
