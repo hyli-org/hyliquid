@@ -266,6 +266,14 @@ async fn create_pair(
     Json(request): Json<CreatePairRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
+
+    if request.pair.0 == request.pair.1 {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow::anyhow!("Base and quote asset cannot be the same"),
+        ));
+    }
+
     let user = auth.identity;
     let tx_ctx = TxContext {
         lane_id: ctx.lane_id.clone(),
