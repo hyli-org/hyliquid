@@ -249,6 +249,8 @@ watchEffect(() => {
     activityState.orders = [];
     activityState.ordersPagination = null;
     activityState.ordersCurrentPage = 1;
+    activityState.orderbookTicks =
+        10 ** (assetsState.list.find((a) => a.symbol === instrumentsState.selected?.quote_asset)?.scale ?? 0);
 });
 
 watchEffect(() => {

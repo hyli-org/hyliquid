@@ -30,26 +30,16 @@ const availableBalance = computed(() => {
 <template>
     <section class="col-span-2 p-3">
         <div class="mb-3 flex gap-2">
-            <button
-                class="w-full rounded-md px-3 py-2 text-sm"
-                :class="
-                    side === 'Bid'
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-700'
-                        : 'bg-neutral-900 text-neutral-300'
-                "
-                @click="() => (side = 'Bid')"
-            >
+            <button class="w-full rounded-md px-3 py-2 text-sm" :class="side === 'Bid'
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-700'
+                : 'bg-neutral-900 text-neutral-300'
+                " @click="() => (side = 'Bid')">
                 Buy
             </button>
-            <button
-                class="w-full rounded-md px-3 py-2 text-sm"
-                :class="
-                    side === 'Ask'
-                        ? 'bg-rose-500/20 text-rose-300 border border-rose-700'
-                        : 'bg-neutral-900 text-neutral-300'
-                "
-                @click="() => (side = 'Ask')"
-            >
+            <button class="w-full rounded-md px-3 py-2 text-sm" :class="side === 'Ask'
+                ? 'bg-rose-500/20 text-rose-300 border border-rose-700'
+                : 'bg-neutral-900 text-neutral-300'
+                " @click="() => (side = 'Ask')">
                 Sell
             </button>
         </div>
@@ -57,18 +47,14 @@ const availableBalance = computed(() => {
         <div class="mb-3">
             <div class="mb-1 text-xs text-neutral-400">Order Type</div>
             <div class="grid grid-cols-2 gap-2">
-                <button
-                    class="rounded-md px-3 py-2 text-sm"
+                <button class="rounded-md px-3 py-2 text-sm"
                     :class="orderType === 'Limit' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
-                    @click="() => (orderType = 'Limit')"
-                >
+                    @click="() => (orderType = 'Limit')">
                     Limit
                 </button>
-                <button
-                    class="rounded-md px-3 py-2 text-sm"
+                <button class="rounded-md px-3 py-2 text-sm"
                     :class="orderType === 'Market' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
-                    @click="() => (orderType = 'Market')"
-                >
+                    @click="() => (orderType = 'Market')">
                     Market
                 </button>
             </div>
@@ -76,23 +62,17 @@ const availableBalance = computed(() => {
 
         <div v-if="orderType === 'Limit'" class="mb-3">
             <div class="mb-1 text-xs text-neutral-400">Price</div>
-            <input
-                :value="price ?? ''"
-                @input="(e: any) => (price = e.target.value === '' ? null : Number(e.target.value))"
-                type="number"
+            <input :value="price ?? ''"
+                @input="(e: any) => (price = e.target.value === '' ? null : Number(e.target.value))" type="number"
                 step="0.01"
-                class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-neutral-700"
-            />
+                class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-neutral-700" />
         </div>
 
         <div class="mb-3">
             <div class="mb-1 text-xs text-neutral-400">Quantity ({{ baseSymbol }})</div>
-            <input
-                :value="size ?? ''"
-                @input="(e: any) => (size = e.target.value === '' ? null : Number(e.target.value))"
-                type="number"
-                class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-neutral-700"
-            />
+            <input :value="size ?? ''"
+                @input="(e: any) => (size = e.target.value === '' ? null : Number(e.target.value))" type="number"
+                class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-neutral-700" />
         </div>
         <div class="mb-3">
             <div class="text-xs text-neutral-400">
@@ -111,14 +91,10 @@ const availableBalance = computed(() => {
 
         <button
             class="mb-2 w-full rounded-md px-3 py-2 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
-            :class="
-                side === 'Bid'
-                    ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                    : 'bg-rose-600 hover:bg-rose-500 text-white'
-            "
-            :disabled="orderSubmit?.fetching"
-            @click="submitOrder()"
-        >
+            :class="side === 'Bid'
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                : 'bg-rose-600 hover:bg-rose-500 text-white'
+                " :disabled="orderSubmit?.fetching" @click="submitOrder()">
             {{ side === "Bid" ? "Buy" : "Sell" }} {{ orderType }}
         </button>
         <div v-if="orderSubmit?.error" class="mb-2 text-xs text-rose-400">
@@ -139,7 +115,8 @@ const availableBalance = computed(() => {
         </div>
         <div v-if="orderSubmit?.data" class="mb-2 text-xs text-emerald-400">
             Order submitted successfully
-            <a :href="`https://explorer.hyli.com/tx/${orderSubmit.data.tx_hash}`" target="_blank">
+            <a class="underline" :href="`https://explorer.hyli.org/tx/${orderSubmit.data.tx_hash}?network=localhost`"
+                target="_blank">
                 See tx on explorer
             </a>
         </div>

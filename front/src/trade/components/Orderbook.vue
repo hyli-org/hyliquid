@@ -1,21 +1,30 @@
 <script setup lang="ts">
 import { computed } from "vue";
-import { orderbookState, instrumentsState, activityState } from "../trade";
+import { orderbookState, instrumentsState, activityState, assetsState } from "../trade";
 
 const midPrice = computed(() => orderbookState.mid);
 
 const lines = 10
 
 // GroupTick options
-const groupTickOptions = [
-    { value: 0.001 * 10 ** 6, label: "0.001" },
-    { value: 0.01 * 10 ** 6, label: "0.01" },
-    { value: 0.1 * 10 ** 6, label: "0.1" },
-    { value: 1 * 10 ** 6, label: "1" },
-    { value: 10 * 10 ** 6, label: "10" },
-    { value: 100 * 10 ** 4, label: "100" },
-    { value: 1000 * 10 ** 4, label: "1000" }
-];
+const groupTickOptions = computed(() => {
+    const quoteAsset = instrumentsState.selected?.quote_asset;
+    const scale = assetsState.list.find((a) => a.symbol === quoteAsset)?.scale ?? 0;
+
+    console.log("quoteAsset", quoteAsset);
+    console.log("assetsState.list", assetsState.list.find((a) => a.symbol === quoteAsset));
+    console.log("scale", scale);
+
+    return [
+        { value: 0.001 * 10 ** scale, label: "0.001" },
+        { value: 0.01 * 10 ** scale, label: "0.01" },
+        { value: 0.1 * 10 ** scale, label: "0.1" },
+        { value: 1 * 10 ** scale, label: "1" },
+        { value: 10 * 10 ** scale, label: "10" },
+        { value: 100 * 10 ** scale, label: "100" },
+        { value: 1000 * 10 ** scale, label: "1000" }
+    ].filter(option => option.value >= 1);
+});
 
 // Calculate maximum quantity for percentage calculations
 const maxQuantity = computed(() => {
@@ -106,7 +115,7 @@ const getQuantityPercentage = (quantity: number) => {
                 <div class="border-t border-b border-neutral-800 py-1 text-center text-neutral-300 flex-shrink-0">
                     <span class="tabular-nums">{{
                         instrumentsState.toRealPrice(instrumentsState.selected?.symbol, midPrice)
-                    }}</span>
+                        }}</span>
                 </div>
 
                 <!-- Bids section - bottom half -->
