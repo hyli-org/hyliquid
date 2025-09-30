@@ -48,6 +48,6 @@ export default defineConfig({
     ],
     optimizeDeps: {
         include: ["pino"],
-        exclude: ["@aztec/bb.js", "@noir-lang/noir_js"],
+        exclude: ["@aztec/bb.js"],
     },
 });
