@@ -425,7 +425,8 @@ impl Orderbook {
                     // Deduct liquidity for created order
                     let (quantity, token) = match created_order.order_side {
                         OrderSide::Bid => (
-                            -((created_order.quantity * created_order.price.unwrap()) as i128),
+                            -((created_order.quantity * created_order.price.unwrap() / base_scale)
+                                as i128),
                             created_order.pair.1.clone(),
                         ),
                         OrderSide::Ask => {
