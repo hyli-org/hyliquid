@@ -15,7 +15,6 @@ setWalletConfig({
 
 const { wallet, getOrReuseSessionKey } = useWallet();
 
-
 // Temporarily here
 const deposit = async (token: string) => {
     const address = wallet.value?.address;
@@ -30,6 +29,19 @@ const deposit = async (token: string) => {
         headers: { "Content-Type": "application/json", "x-identity": address },
     });
     await resp.loaded();
+};
+const createPair = async () => {
+    const assets = ["BTC", "HYLLAR", "ORANJ", "USDT"];
+    fetch(`${BACKEND_API_URL.value}/create_pair`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-identity": "fakeuser" },
+        body: JSON.stringify({
+            pair: [
+                assets[Math.floor(Math.random() * assets.length)],
+                assets[Math.floor(Math.random() * assets.length)],
+            ],
+        }),
+    });
 };
 const depositBase = async () => {
     deposit(instrumentsState.selected?.base_asset ?? "");
@@ -56,18 +68,32 @@ const addSessionKey = async () => {
         <div class="flex w-full h-16 justify-between items-center px-4">
             <h3>HYLIQUID</h3>
             <div class="flex justify-between items-center gap-4">
+                <button
+                    @click="createPair"
+                    class="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 rounded text-sm cursor-pointer"
+                >
+                    Create pair
+                </button>
                 <p v-if="wallet?.address">Logged in as {{ wallet?.address }}</p>
-                <button @click="addSessionKey" v-if="wallet?.address"
-                    class="px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm cursor-pointer">Add
-                    session key</button>
-                <button @click="depositBase"
+                <button
+                    @click="addSessionKey"
+                    v-if="wallet?.address"
+                    class="px-3 py-1 bg-purple-600 hover:bg-purple-700 rounded text-sm cursor-pointer"
+                >
+                    Add session key
+                </button>
+                <button
+                    @click="depositBase"
                     class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm cursor-pointer"
-                    v-if="wallet?.address && instrumentsState.selected?.base_asset">
+                    v-if="wallet?.address && instrumentsState.selected?.base_asset"
+                >
                     Deposit 100 {{ instrumentsState.selected?.base_asset }}
                 </button>
-                <button @click="depositQuote"
+                <button
+                    @click="depositQuote"
                     class="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm cursor-pointer"
-                    v-if="wallet?.address && instrumentsState.selected?.quote_asset">
+                    v-if="wallet?.address && instrumentsState.selected?.quote_asset"
+                >
                     Deposit 100 {{ instrumentsState.selected?.quote_asset }}
                 </button>
                 <HyliWallet></HyliWallet>

@@ -40,7 +40,9 @@ export interface WebSocketState {
 class WebSocketManager {
     private ws: WebSocket | null = null;
     private currentBookSubscription: Subscription | null = null;
+    // @ts-expect-error
     private currentTradesSubscription: Subscription | null = null;
+    // @ts-expect-error
     private currentOrdersSubscription: Subscription | null = null;
     private reconnectTimeout: number | null = null;
     private url: string;
