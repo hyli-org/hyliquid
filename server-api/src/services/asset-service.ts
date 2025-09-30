@@ -2,8 +2,9 @@
  * Asset service with in-memory caching
  */
 
-import { Asset, Instrument, MarketStatus } from '../types';
-import { DatabaseQueries } from '../config/database';
+import { Asset, Instrument, MarketStatus } from "../types";
+import { DatabaseQueries } from "../database/queries";
+import { DatabaseCallbacks } from "@/database/callbacks";
 
 export class AssetService {
   private assetMap: Map<string, Asset> = new Map();
@@ -18,8 +19,8 @@ export class AssetService {
    * Initialize the service by loading all assets and instruments into memory
    */
   async initialize(): Promise<void> {
-    console.log('Loading assets and instruments into memory...');
-    
+    console.log("Loading assets and instruments into memory...");
+
     // Load assets
     const assets = await this.queries.getAllAssets();
     this.assetMap.clear();
@@ -34,7 +35,18 @@ export class AssetService {
       this.instrumentMap.set(instrument.symbol, instrument);
     }
 
-    console.log(`Loaded ${this.assetMap.size} assets and ${this.instrumentMap.size} instruments into memory`);
+    // Register a callback to reload the asset and instrument maps
+    DatabaseCallbacks.getInstance().addInstrumentsCallback(
+      "asset-service",
+      () => {
+        console.log("Got instruments update");
+        this.initialize();
+      }
+    );
+
+    console.log(
+      `Loaded ${this.assetMap.size} assets and ${this.instrumentMap.size} instruments into memory`
+    );
   }
 
   /**
@@ -51,10 +63,13 @@ export class AssetService {
     return this.instrumentMap.get(symbol) || null;
   }
 
-  /** 
+  /**
    * Get instrument symbol by base and quote asset symbols
    */
-  getInstrumentSymbol(baseAssetSymbol: string, quoteAssetSymbol: string): string {
+  getInstrumentSymbol(
+    baseAssetSymbol: string,
+    quoteAssetSymbol: string
+  ): string {
     return `${baseAssetSymbol.toUpperCase()}/${quoteAssetSymbol.toUpperCase()}`;
   }
 
@@ -84,7 +99,7 @@ export class AssetService {
    */
   getActiveInstruments(): Instrument[] {
     return this.getAllInstruments().filter(
-      instrument => instrument.status === MarketStatus.ACTIVE
+      (instrument) => instrument.status === MarketStatus.ACTIVE
     );
   }
 

@@ -1,6 +1,6 @@
 use anyhow::{bail, Result};
 use client_sdk::rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient};
-use sdk::{api::APIRegisterContract, info, ContractName, ProgramId, StateCommitment};
+use sdk::{api::APIRegisterContract, info, ContractName, LaneId, ProgramId, StateCommitment};
 use std::{sync::Arc, time::Duration};
 use tokio::time::timeout;
 

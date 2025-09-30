@@ -415,6 +415,12 @@ impl BookWriterService {
         tx.commit().await?;
 
         if reload_instrument_map {
+            log_error!(
+                sqlx::query("select pg_notify('instruments', 'instruments')")
+                    .execute(&self.pool)
+                    .await,
+                "Failed to notify 'instruments'"
+            )?;
             let mut asset_service = self.asset_service.write().await;
             asset_service.reload_instrument_map().await?;
         }

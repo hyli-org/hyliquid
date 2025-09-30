@@ -14,7 +14,8 @@ export class DatabaseCallbacks {
     new Map();
   private bookNotifCallbacks: Map<string, (instrument: string) => void> =
     new Map();
-  private notificationChannels = ["book", "orders", "trades"];
+  private instrumentNotifCallbacks: Map<string, () => void> = new Map();
+  private notificationChannels = ["book", "orders", "trades", "instruments"];
   // TODO: store this in db to be retrieved when restarting the server
   private last_seen_trade_id: number = 0;
   private last_seen_order_id: number = 0;
@@ -59,6 +60,9 @@ export class DatabaseCallbacks {
         }
         if (message.channel === "book") {
           this.handleL2BookUpdate(message.payload);
+        }
+        if (message.channel === "instruments") {
+          this.handleInstrumentsUpdate();
         }
       });
 
@@ -210,6 +214,14 @@ export class DatabaseCallbacks {
     }
   }
 
+  private handleInstrumentsUpdate() {
+    for (const callback of this.instrumentNotifCallbacks.values()) {
+      if (callback) {
+        callback();
+      }
+    }
+  }
+
   addTradeNotificationCallback(
     user: string,
     callback: (payload: Trade[]) => void
@@ -227,6 +239,9 @@ export class DatabaseCallbacks {
     callback: (instrument: string) => void
   ) {
     this.bookNotifCallbacks.set(client_id, callback);
+  }
+  addInstrumentsCallback(client_id: string, callback: () => void) {
+    this.instrumentNotifCallbacks.set(client_id, callback);
   }
 
   async close() {
