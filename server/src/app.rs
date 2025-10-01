@@ -740,6 +740,7 @@ async fn execute_orderbook_action(
                         .collect(),
                 );
 
+                // TODO: make tx.hashed() unique !!
                 book_service.write_events(user, tx.hashed(), events).await?;
                 let tx_hash = ctx.client.send_tx_blob(tx).await?;
 
