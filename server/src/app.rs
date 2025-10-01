@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, sync::Arc, vec};
+use std::{sync::Arc, vec};
 
 use anyhow::Result;
 use axum::{
@@ -98,11 +98,7 @@ impl Module for OrderbookModule {
             .route("/create_order", post(create_order))
             .route("/cancel_order", post(cancel_order))
             .route("/withdraw", post(withdraw))
-            // To be removed later, temporary endpoint for testing
             .route("/nonce", get(get_nonce))
-            .route("/temp/balances", get(get_balances))
-            .route("/temp/orders", get(get_orders))
-            .route("/temp/reset_state", get(reset_state))
             .with_state(state)
             .layer(cors);
 
@@ -208,33 +204,6 @@ pub struct WithdrawRequest {
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
-async fn get_balances(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
-    let orderbook = ctx.orderbook.lock().await;
-    let balances = orderbook.get_balances_indexer();
-    let mut serializable_balances = BTreeMap::new();
-    for (token, token_balances) in balances.iter() {
-        let mut serializable_token_balances = BTreeMap::new();
-        for (user_key, balance) in token_balances.iter() {
-            serializable_token_balances.insert(user_key.user.clone(), balance.0);
-        }
-        serializable_balances.insert(token.clone(), serializable_token_balances);
-    }
-
-    Ok(Json(serializable_balances))
-}
-async fn get_orders(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
-    let orderbook = ctx.orderbook.lock().await;
-    let orders = orderbook.get_orders();
-
-    Ok(Json(orders))
-}
-async fn reset_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
-    let mut orderbook = ctx.orderbook.lock().await;
-    *orderbook = ctx.default_state.clone();
-
-    Ok(Json("Orderbook state has been reset"))
-}
-
 async fn get_nonce(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,

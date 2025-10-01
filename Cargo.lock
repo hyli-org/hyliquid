@@ -4562,7 +4562,6 @@ dependencies = [
  "borsh",
  "clap",
  "hex",
- "hyli-client-sdk",
  "hyli-contract-sdk",
  "k256",
  "orderbook",

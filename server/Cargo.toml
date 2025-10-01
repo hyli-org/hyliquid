@@ -7,7 +7,7 @@ name = "tx_sender"
 path = "src/bin/tx_sender.rs"
 
 [dependencies]
-orderbook = { workspace = true, features = ["client", "sqlx"] }
+orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
 client-sdk = { workspace = true, features = ["sp1", "rest"] }
 hyli-modules = { workspace = true }

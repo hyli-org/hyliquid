@@ -14,11 +14,6 @@ use crate::{
     smt_values::UserInfo,
 };
 
-#[cfg(feature = "client")]
-pub mod client;
-#[cfg(feature = "client")]
-pub mod indexer;
-
 pub mod order_manager;
 pub mod orderbook;
 pub mod smt_values;
@@ -52,7 +47,10 @@ impl sdk::ZkContract for Orderbook {
             }
         }
 
-        let is_server_execution = matches!(self.mode(), ExecutionMode::Full | ExecutionMode::Light);
+        let is_server_execution = matches!(
+            self.execution_state.mode(),
+            ExecutionMode::Full | ExecutionMode::Light
+        );
 
         // Verify that balances are correct
         self.verify_balances_proof().map_err(|err| {
