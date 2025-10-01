@@ -5,6 +5,7 @@ use client_sdk::contract_indexer::AppError;
 use hyli_modules::log_error;
 use orderbook::orderbook::OrderbookEvent;
 use reqwest::StatusCode;
+use sdk::TxHash;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
@@ -36,6 +37,7 @@ impl BookWriterService {
     pub async fn write_events(
         &self,
         user: &str,
+        tx_hash: TxHash,
         _events: Vec<OrderbookEvent>,
     ) -> Result<(), AppError> {
         // Transactionnaly write all events & update balances
@@ -46,6 +48,16 @@ impl BookWriterService {
         let mut trigger_notify_orders = false;
 
         let mut tx = self.pool.begin().await?;
+
+        let row = log_error!(
+            sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
+                .bind(tx_hash.0)
+                .fetch_one(&mut *tx)
+                .await,
+            "Failed to create commit"
+        )?;
+        let commit_id: i64 = row.get("commit_id");
+
         for event in _events {
             match event {
                 OrderbookEvent::PairCreated { pair, info: _ } => {
@@ -61,11 +73,12 @@ impl BookWriterService {
                     log_error!(
                         sqlx::query(
                             "INSERT INTO instruments 
-                                (symbol, tick_size, qty_step, base_asset_id, quote_asset_id, status) 
+                                (commit_id, symbol, tick_size, qty_step, base_asset_id, quote_asset_id, status) 
                                 VALUES 
-                                ($1, $2, $3, $4, $5, $6) 
+                                ($1, $2, $3, $4, $5, $6, $7) 
                             ON CONFLICT DO NOTHING"
                         )
+                        .bind(commit_id)
                         .bind(format!("{}/{}", pair.0, pair.1))
                         .bind(1_i64)
                         .bind(1_i64)
@@ -114,6 +127,17 @@ impl BookWriterService {
                         .await,
                         "Failed to update balance"
                     )?;
+
+                    log_error!(
+                        sqlx::query("INSERT INTO balance_events (commit_id, user_id, asset_id, total, kind) VALUES ($1, $2, $3, $4, 'transfer')")
+                        .bind(commit_id)
+                        .bind(user_id)
+                        .bind(asset.asset_id)
+                        .bind(amount as i64)
+                        .execute(&mut *tx)
+                        .await,
+                        "Failed to create balance event"
+                    )?;
                 }
                 OrderbookEvent::OrderCreated { order } => {
                     trigger_notify_orders = true;
@@ -134,17 +158,6 @@ impl BookWriterService {
 
                     symbol_book_updated.insert(symbol);
 
-                    // log_error!(
-                    //     sqlx::query(
-                    //         "INSERT INTO order_ids (order_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
-                    //     )
-                    //     .bind(order.order_id.clone())
-                    //     .bind(user_id)
-                    //     .execute(&mut *tx)
-                    //     .await,
-                    //     "Failed to create order signed id"
-                    // )?;
-
                     log_error!(
                         sqlx::query("INSERT INTO orders (order_id, instrument_id, user_id, side, type, price, qty)
                                      VALUES ($1, $2, $3, $4, $5, $6, $7)")
@@ -162,9 +175,10 @@ impl BookWriterService {
 
                     log_error!(
                         sqlx::query(
-                            "INSERT INTO order_events (order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
-                            VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 'open')"
+                            "INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 'open')"
                         )
+                        .bind(commit_id)
                         .bind(order.order_id.clone())
                         .bind(user_id)
                         .bind(instrument.instrument_id)
@@ -201,9 +215,10 @@ impl BookWriterService {
                     log_error!(
                         sqlx::query(
                             "
-                            INSERT INTO order_events (order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
-                            VALUES select order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status from orders where order_id = $1"
+                            INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            VALUES select $1, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status from orders where order_id = $2"
                         )
+                        .bind(commit_id)
                         .bind(order_id)
                         .execute(&mut *tx)
                         .await,
@@ -250,10 +265,11 @@ impl BookWriterService {
                     log_error!(
                         sqlx::query(
                             "
-                            INSERT INTO order_events (order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
-                            SELECT order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $1
+                            INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            SELECT $1, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
                             "
                         )
+                        .bind(commit_id)
                         .bind(order_id.clone())
                         .execute(&mut *tx)
                         .await,
@@ -265,13 +281,14 @@ impl BookWriterService {
                         sqlx::query(
                             "
                             WITH maker_order AS (
-                                SELECT * FROM orders WHERE order_id = $1
+                                SELECT * FROM orders WHERE order_id = $2
                             )
-                            INSERT INTO trade_events (maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
-                            SELECT $1, $2, $3, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $4
+                            INSERT INTO trade_events (commit_id, maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
+                            SELECT $1, $2, $3, $4, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $5
                             FROM maker_order
                             "
                         )
+                        .bind(commit_id)
                         .bind(order_id)
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
@@ -320,24 +337,14 @@ impl BookWriterService {
                         "Failed to update order as partially filled"
                     )?;
 
-                    // log_error!(
-                    //     sqlx::query(
-                    //         "INSERT INTO order_ids (order_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING"
-                    //     )
-                    //     .bind(taker_order_id.clone())
-                    //     .bind(user_id)
-                    //     .execute(&mut *tx)
-                    //     .await,
-                    //     "Failed to create order signed id"
-                    // )?;
-
                     log_error!(
                         sqlx::query(
                             "
-                            INSERT INTO order_events (order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
-                            SELECT order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $1
+                            INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            SELECT $1, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
                             "
                         )
+                        .bind(commit_id)
                         .bind(order_id.clone())
                         .execute(&mut *tx)
                         .await,
@@ -349,13 +356,14 @@ impl BookWriterService {
                         sqlx::query(
                             "
                             WITH maker_order AS (
-                                SELECT * FROM orders WHERE order_id = $1
+                                SELECT * FROM orders WHERE order_id = $2
                             )
-                            INSERT INTO trade_events (maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
-                            SELECT $1, $2, $3, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $4
+                            INSERT INTO trade_events (commit_id, maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
+                            SELECT $1, $2, $3, $4, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $5
                             FROM maker_order
                             "
                         )
+                        .bind(commit_id)
                         .bind(order_id.clone())
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
@@ -370,8 +378,9 @@ impl BookWriterService {
 
                     log_error!(
                         sqlx::query(
-                            "INSERT INTO users (identity) VALUES ($1) ON CONFLICT DO NOTHING"
+                            "INSERT INTO users (commit_id, identity) VALUES ($1, $2) ON CONFLICT DO NOTHING"
                         )
+                        .bind(commit_id)
                         .bind(user)
                         .execute(&mut *tx)
                         .await,

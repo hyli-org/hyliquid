@@ -1,3 +1,15 @@
+--------------------
+-- Used to track history of the database
+-- Used to get state of the database at a given tx
+-- Commits
+--------------------
+CREATE TABLE commits (
+  commit_id      bigserial PRIMARY KEY,
+  tx_hash        text NOT NULL,
+  authored_at    timestamptz NOT NULL DEFAULT now(),
+  message        text NOT NULL DEFAULT ''
+);
+
 -- Tokens (ex: BTC, USDT).
 CREATE TABLE assets (
     asset_id bigserial PRIMARY KEY,
@@ -22,6 +34,7 @@ CREATE TYPE market_status AS ENUM (
 
 -- Exemple: BTC/USDT
 CREATE TABLE instruments (
+    commit_id bigint NOT NULL REFERENCES commits (commit_id),
     instrument_id bigserial PRIMARY KEY,
     symbol text UNIQUE NOT NULL, -- 'BTC/USDT'
     -- Smallest price increment
@@ -39,6 +52,7 @@ CREATE TABLE instruments (
 );
 
 --------------------
+-- Live view of current state
 -- Users and Balances
 --------------------
 CREATE TYPE user_status AS ENUM (
@@ -49,6 +63,7 @@ CREATE TYPE user_status AS ENUM (
 
 CREATE TABLE users (
     user_id bigserial PRIMARY KEY,
+    commit_id bigint NOT NULL REFERENCES commits (commit_id),
     identity TEXT UNIQUE NOT NULL,
     status user_status NOT NULL DEFAULT 'active',
     created_at timestamptz NOT NULL DEFAULT now()
@@ -117,7 +132,7 @@ WITH (
 
 -----------------------
 -- Events, append-only & partitioned
--- Filled from contract output: Vec<OrderbookEvent>
+-- Filled from contract output
 -----------------------
 CREATE TABLE order_events (
     commit_id bigint NOT NULL REFERENCES commits (commit_id),
@@ -156,7 +171,7 @@ CREATE TYPE balance_event_kind AS ENUM (
   'deposit', 'withdrawal',
   'reserve_inc', 'reserve_dec',
   'transfer',
-  'settlement',
+  'settlement'
 );
 
 CREATE TABLE balance_events (
@@ -169,18 +184,5 @@ CREATE TABLE balance_events (
   kind        balance_event_kind NOT NULL,
   ref_order_id text DEFAULT NULL,
   ref_trade_signed_id text DEFAULT NULL,
-  event_time  timestamptz NOT NULL DEFAULT now(),
+  event_time  timestamptz NOT NULL DEFAULT now()
 );
-
-CREATE TABLE commits (
-  commit_id      bigserial PRIMARY KEY,
-  tx_hash        text NOT NULL,
-  authored_at    timestamptz NOT NULL DEFAULT now(),
-  message        text NOT NULL DEFAULT '',
-);
-
-CREATE UNIQUE INDEX commits_commit_id_idx ON commits(commit_id);
-CREATE UNIQUE INDEX commits_tx_hash_idx ON commits(tx_hash);
-
-CREATE INDEX order_events_commit_idx ON order_events(commit_id);
-CREATE INDEX trade_events_commit_idx ON trade_events(commit_id);

@@ -30,8 +30,8 @@ use orderbook::{
 };
 use reqwest::StatusCode;
 use sdk::{
-    merkle_utils::BorshableMerkleProof, BlobTransaction, Calldata, ContractName, LaneId, TxContext,
-    TxHash, ZkContract,
+    merkle_utils::BorshableMerkleProof, BlobTransaction, Calldata, ContractName, Hashed, LaneId,
+    TxContext, TxHash, ZkContract,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
@@ -730,18 +730,18 @@ async fn execute_orderbook_action(
         Ok((bytes, _, _)) => match borsh::from_slice::<Vec<OrderbookEvent>>(bytes) {
             Ok(events) => {
                 tracing::info!("Orderbook execution results: {:?}", events);
-                book_service.write_events(user, events).await?;
-                let tx_hash = ctx
-                    .client
-                    .send_tx_blob(BlobTransaction::new(
-                        calldata.identity.clone(),
-                        calldata
-                            .blobs
-                            .iter()
-                            .map(|(_, blob)| blob.clone())
-                            .collect(),
-                    ))
-                    .await?;
+
+                let tx = BlobTransaction::new(
+                    calldata.identity.clone(),
+                    calldata
+                        .blobs
+                        .iter()
+                        .map(|(_, blob)| blob.clone())
+                        .collect(),
+                );
+
+                book_service.write_events(user, tx.hashed(), events).await?;
+                let tx_hash = ctx.client.send_tx_blob(tx).await?;
 
                 // Send tx to prover
                 let mut bus = ctx.bus.clone();
