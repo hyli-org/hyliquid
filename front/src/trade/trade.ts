@@ -9,7 +9,7 @@ import {
     type PaginationParams,
 } from "./api";
 import { useSWR } from "../api_call";
-import type { SWRResponse } from "../api_call";
+import type { SWRQuery } from "../api_call";
 import { watchEffect } from "vue";
 import { ref } from "vue";
 import { v7 as uuidv7 } from "uuid";
@@ -312,7 +312,7 @@ const orderFormState = {
     size: ref<number | null>(null),
     side: ref<Side>("Bid"),
     leverage: ref(10),
-    orderSubmit: ref<SWRResponse<{ tx_hash: string }> | null>(null),
+    orderSubmit: ref<SWRQuery<{ tx_hash: string }> | null>(null),
 };
 
 // Composable for order form state
@@ -386,6 +386,7 @@ export async function submitOrder() {
         price: instrumentsState.toIntPrice(instrumentsState.selected!.symbol, orderFormState.price.value ?? 0),
     });
     orderFormState.orderSubmit.value = created;
+    await created.loaded();
     // TODO: should we do this?
     // activityState.orders.unshift(created);
 }
@@ -398,7 +399,7 @@ export function placeOrder(input: {
     size: number; // integer amount
     type: OrderType;
     price: number | null; // integer price
-}): SWRResponse<{ tx_hash: string }> {
+}): SWRQuery<{ tx_hash: string }> {
     return useSWR(async () => {
         if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");

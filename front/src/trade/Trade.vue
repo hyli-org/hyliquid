@@ -44,7 +44,7 @@ watchEffect(() => {
 </script>
 
 <template>
-    <div class="flex h-screen w-full overflow-hidden">
+    <div class="flex flex-1 w-full overflow-hidden">
         <InstrumentsPanel />
 
         <main class="flex min-w-0 grow flex-col bg-neutral-950">
@@ -54,7 +54,7 @@ watchEffect(() => {
                 <section class="col-span-8 border-r border-neutral-800">
                     <ChartPlaceholder />
 
-                    <div class="flex h-150 flex-col p-3">
+                    <div class="flex h-full min-h-80 flex-col p-3">
                         <BottomTabs v-model="activityState.bottomTab" />
 
                         <PositionsTable
