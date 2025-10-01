@@ -39,7 +39,7 @@ export interface Balance {
 }
 
 export interface Order {
-  order_signed_id: string;
+  order_id: string;
   instrument_id: number;
   user_id: number;
   side: OrderSide;

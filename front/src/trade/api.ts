@@ -39,8 +39,7 @@ interface ApiInfoResponse {
 }
 
 export interface ApiOrder {
-    order_id: number;
-    order_signed_id: string;
+    order_id: string;
     instrument_id: number;
     user_id: number;
     side: "bid" | "ask";
@@ -115,7 +114,7 @@ export function transformOrder(apiOrder: ApiOrder): Order {
     const instrument = instrumentsState.list.find((i) => i.instrument_id === apiOrder.instrument_id);
 
     return {
-        id: apiOrder.order_signed_id,
+        id: apiOrder.order_id,
         symbol: instrument?.symbol || "UNKNOWN",
         side: apiOrder.side === "bid" ? "Bid" : "Ask",
         qty: apiOrder.qty,

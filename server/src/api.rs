@@ -99,7 +99,7 @@ async fn health() -> impl IntoResponse {
 //     Headers
 // --------------------------------------------------------
 
-const USER_HEADER: &str = "x-user";
+const USER_HEADER: &str = "x-identity";
 
 #[derive(Debug)]
 struct AuthHeaders {

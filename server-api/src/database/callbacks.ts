@@ -164,7 +164,7 @@ export class DatabaseCallbacks {
   private handleNewOrders() {
     this.pool
       .query(
-        "SELECT event_id, order_signed_id, instrument_id, user_id, side, type, price, qty, qty_filled, status, event_time FROM order_events WHERE event_id > $1",
+        "SELECT event_id, order_id, instrument_id, user_id, side, type, price, qty, qty_filled, status, event_time FROM order_events WHERE event_id > $1",
         [this.last_seen_order_id]
       )
       .then(async (result) => {
@@ -182,7 +182,7 @@ export class DatabaseCallbacks {
               payloads.set(user.identity, []);
             }
             const payload = {
-              order_signed_id: row.order_signed_id,
+              order_id: row.order_id,
               instrument_id: row.instrument_id,
               user_id: row.user_id,
               side: row.side,

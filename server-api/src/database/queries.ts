@@ -113,7 +113,7 @@ export class DatabaseQueries {
     );
 
     const orders = result.rows.map((row) => ({
-      order_signed_id: row.order_signed_id,
+      order_id: row.order_id,
       instrument_id: row.instrument_id,
       user_id: row.user_id,
       side: row.side,
@@ -167,7 +167,7 @@ export class DatabaseQueries {
     );
 
     const orders = result.rows.map((row) => ({
-      order_signed_id: row.order_signed_id,
+      order_id: row.order_id,
       instrument_id: row.instrument_id,
       user_id: row.user_id,
       side: row.side,

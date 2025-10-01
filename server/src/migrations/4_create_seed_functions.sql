@@ -143,14 +143,14 @@ BEGIN
     FROM labeled l
   ),
   ins_signed_ids AS (
-    INSERT INTO order_signed_ids(order_signed_id, user_id)
+    INSERT INTO order_ids(order_id, user_id)
     SELECT ord_signed_id, ord_user_id
     FROM with_fill
-    RETURNING order_signed_id AS ret_signed_id
+    RETURNING order_id AS ret_signed_id
   ),
   ins_orders AS (
     INSERT INTO orders(
-      instrument_id, user_id, order_signed_id, side, type, price, qty, qty_filled, status
+      instrument_id, user_id, order_id, side, type, price, qty, qty_filled, status
     )
     SELECT
       wf.ord_instrument_id,

@@ -32,8 +32,8 @@ CREATE TABLE instruments (
     -- requires: order.qty % qty_step = 0
     qty_step bigint NOT NULL,
     -- eg. BTC/USDT => base=BTC, quote=USDT
-    base_asset_id bigserial NOT NULL REFERENCES assets (asset_id),
-    quote_asset_id bigserial NOT NULL REFERENCES assets (asset_id),
+    base_asset_id bigint NOT NULL REFERENCES assets (asset_id),
+    quote_asset_id bigint NOT NULL REFERENCES assets (asset_id),
     status market_status NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -98,10 +98,9 @@ CREATE TYPE order_status AS ENUM (
 );
 
 CREATE TABLE orders (
-    order_id bigserial PRIMARY KEY,
-    order_signed_id text NOT NULL,
-    user_id bigserial NOT NULL REFERENCES users (user_id),
-    instrument_id bigserial NOT NULL REFERENCES instruments (instrument_id),
+    order_id text NOT NULL PRIMARY KEY,
+    user_id bigint NOT NULL REFERENCES users (user_id),
+    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
     side order_side NOT NULL,
     type order_type NOT NULL,
     price bigint, -- fixed-point (nullable for market)
@@ -121,10 +120,11 @@ WITH (
 -- Filled from contract output: Vec<OrderbookEvent>
 -----------------------
 CREATE TABLE order_events (
+    commit_id bigint NOT NULL REFERENCES commits (commit_id),
     event_id bigserial PRIMARY KEY,
-    order_signed_id text NOT NULL,
+    order_id text NOT NULL,
     user_id bigint NOT NULL,
-    instrument_id bigserial NOT NULL,
+    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
     side order_side NOT NULL,
     type order_type NOT NULL,
     price bigint NOT NULL,
@@ -137,12 +137,13 @@ CREATE TABLE order_events (
 ;
 
 CREATE TABLE trade_events (
-    trade_id BIGSERIAL PRIMARY KEY,
-    maker_order_signed_id text NOT NULL,
-    taker_order_signed_id text NOT NULL,
+    commit_id bigint NOT NULL REFERENCES commits (commit_id),
+    trade_id bigserial PRIMARY KEY,
+    maker_order_id text NOT NULL,
+    taker_order_id text NOT NULL,
     maker_user_id bigint NOT NULL,
     taker_user_id bigint NOT NULL,
-    instrument_id bigint NOT NULL,
+    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
     price bigint NOT NULL,
     qty bigint NOT NULL,
     side order_side NOT NULL, -- côté du taker
@@ -150,3 +151,36 @@ CREATE TABLE trade_events (
 )
 -- PARTITION BY RANGE (trade_time)
 ;
+
+CREATE TYPE balance_event_kind AS ENUM (
+  'deposit', 'withdrawal',
+  'reserve_inc', 'reserve_dec',
+  'transfer',
+  'settlement',
+);
+
+CREATE TABLE balance_events (
+  commit_id   bigint NOT NULL REFERENCES commits(commit_id),
+  event_id    bigserial PRIMARY KEY,
+  user_id     bigint NOT NULL,
+  asset_id    bigint NOT NULL REFERENCES assets (asset_id),
+  total       bigint NOT NULL DEFAULT 0,
+  reserved    bigint NOT NULL DEFAULT 0,
+  kind        balance_event_kind NOT NULL,
+  ref_order_id text DEFAULT NULL,
+  ref_trade_signed_id text DEFAULT NULL,
+  event_time  timestamptz NOT NULL DEFAULT now(),
+);
+
+CREATE TABLE commits (
+  commit_id      bigserial PRIMARY KEY,
+  tx_hash        text NOT NULL,
+  authored_at    timestamptz NOT NULL DEFAULT now(),
+  message        text NOT NULL DEFAULT '',
+);
+
+CREATE UNIQUE INDEX commits_commit_id_idx ON commits(commit_id);
+CREATE UNIQUE INDEX commits_tx_hash_idx ON commits(tx_hash);
+
+CREATE INDEX order_events_commit_idx ON order_events(commit_id);
+CREATE INDEX trade_events_commit_idx ON trade_events(commit_id);
