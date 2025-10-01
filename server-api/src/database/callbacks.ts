@@ -22,6 +22,7 @@ export class DatabaseCallbacks {
   private last_seen_instrument_id: number = 0;
   private userService: UserService;
   private queries: DatabaseQueries;
+  private isShuttingDown: boolean = false;
 
   private constructor(pool: Pool) {
     this.pool = pool;
@@ -41,6 +42,14 @@ export class DatabaseCallbacks {
   }
 
   private async initializeNotificationConnection() {
+    // Don't attempt to reconnect if we're shutting down
+    if (this.isShuttingDown) {
+      console.log(
+        "Skipping notification connection initialization - shutting down"
+      );
+      return;
+    }
+
     try {
       // Create a dedicated connection for notifications
       this.notificationClient = await this.pool.connect();
@@ -77,20 +86,37 @@ export class DatabaseCallbacks {
       // Handle connection errors
       this.notificationClient.on("error", (err: Error) => {
         console.error("Notification connection error:", err);
-        // Attempt to reconnect
-        setTimeout(() => this.initializeNotificationConnection(), 1000);
+        // Only attempt to reconnect if not shutting down
+        if (!this.isShuttingDown) {
+          setTimeout(() => this.initializeNotificationConnection(), 1000);
+        }
       });
 
       this.notificationClient.on("end", () => {
         console.log(
           "Notification connection ended, attempting to reconnect..."
         );
-        setTimeout(() => this.initializeNotificationConnection(), 1000);
+        // Only attempt to reconnect if not shutting down
+        if (!this.isShuttingDown) {
+          setTimeout(() => this.initializeNotificationConnection(), 1000);
+        }
       });
     } catch (error) {
       console.error("Failed to initialize notification connection:", error);
-      // Retry after a delay
-      setTimeout(() => this.initializeNotificationConnection(), 1000);
+
+      // Check if the error is due to pool being ended
+      if (
+        error instanceof Error &&
+        error.message.includes("Cannot use a pool after calling end")
+      ) {
+        console.log("Pool has been ended, stopping reconnection attempts");
+        return;
+      }
+
+      // Only retry if not shutting down and it's not a pool end error
+      if (!this.isShuttingDown) {
+        setTimeout(() => this.initializeNotificationConnection(), 1000);
+      }
     }
   }
 
@@ -245,8 +271,13 @@ export class DatabaseCallbacks {
   }
 
   async close() {
+    console.log("Closing database callbacks...");
+    this.isShuttingDown = true;
+
     if (this.notificationClient) {
       try {
+        // Remove all event listeners to prevent reconnection attempts
+        this.notificationClient.removeAllListeners();
         await this.notificationClient.release();
         console.log("Notification connection released");
       } catch (error) {
