@@ -56,9 +56,11 @@ export class SWRQuery<T> {
     }
 }
 
-// Convenience wrapper
-export function useSWR<T>(fetcher: () => Promise<T>, options: UseSWROptions = { fetchOnMount: true }): SWRQuery<T> {
-    return new SWRQuery<T>(fetcher, options);
+// Convenience wrapper - calls watch() by default, so fetchOnMount is false.
+export function useSWR<T>(fetcher: () => Promise<T>, options: UseSWROptions = { fetchOnMount: false }): SWRQuery<T> {
+    const query = new SWRQuery<T>(fetcher, options);
+    query.watch();
+    return query;
 }
 
 export function useApi<T>(url: string, options?: RequestInit): SWRQuery<T> {
