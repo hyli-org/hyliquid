@@ -27,7 +27,7 @@ impl OrderManager {
     }
 
     /// Inserts a new order into the appropriate data structures
-    fn insert_order(
+    pub fn insert_order(
         &mut self,
         order: &Order,
         user_info_key: &H256,
@@ -238,8 +238,8 @@ impl OrderManager {
 
         if self_orders != other_orders {
             diff.insert(
-                format!("order_manager.{}", field_name),
-                format!("Mismatching {} orders", field_name),
+                format!("order_manager.{field_name}"),
+                format!("Mismatching {field_name} orders"),
             );
 
             let other_orders_map = other_orders.iter().collect();
@@ -248,7 +248,7 @@ impl OrderManager {
             let mismatching_orders = diff_maps(&other_orders_map, &self_orders_map);
             mismatching_orders.added.iter().for_each(|id| {
                 diff.insert(
-                    format!("order_manager.{}", field_name),
+                    format!("order_manager.{field_name}"),
                     format!(
                         "{}/{} {:?} != None",
                         id.0,
@@ -261,7 +261,7 @@ impl OrderManager {
             });
             mismatching_orders.removed.iter().for_each(|id| {
                 diff.insert(
-                    format!("order_manager.{}", field_name),
+                    format!("order_manager.{field_name}"),
                     format!(
                         "None != {}/{} {:?}",
                         id.0,
@@ -274,7 +274,7 @@ impl OrderManager {
             });
             mismatching_orders.changed.iter().for_each(|(id, _)| {
                 diff.insert(
-                    format!("order_manager.{}", field_name),
+                    format!("order_manager.{field_name}"),
                     format!(
                         "{}/{} {:?} != {}/{} {:?}",
                         id.0,
@@ -300,7 +300,7 @@ impl OrderManager {
         if self.orders != other.orders {
             diff.insert(
                 "order_manager.orders".to_string(),
-                format!("Mismatching orders"),
+                "Mismatching orders".to_string(),
             );
 
             let other_orders = other.orders.iter().collect();

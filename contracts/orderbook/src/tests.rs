@@ -366,11 +366,12 @@ mod orderbook_tests {
 
         let events = orderbook.deposit(&pair.1, 100, &bob).expect("bob deposit");
 
-        let zk_state = orderbook
-            .as_zkvm(&bob, &events)
+        let (zk_state, order_manager) = orderbook
+            .for_zkvm(&bob, &events)
             .expect("derive zkvm state from events");
 
         let mut zk_orderbook = orderbook.clone();
+        zk_orderbook.order_manager = order_manager;
         zk_orderbook.execution_state = ExecutionState::ZkVm(zk_state.clone());
 
         zk_orderbook

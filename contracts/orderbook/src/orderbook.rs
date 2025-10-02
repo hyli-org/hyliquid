@@ -73,8 +73,8 @@ impl ExecutionState {
                 let mut users_info_mt = SparseMerkleTree::default();
 
                 let leaves = users_info
-                    .iter()
-                    .map(|(_, user_info)| (user_info.get_key().into(), user_info.clone()))
+                    .values()
+                    .map(|user_info| (user_info.get_key().into(), user_info.clone()))
                     .collect();
                 users_info_mt
                     .update_all(leaves)
@@ -885,12 +885,7 @@ impl Orderbook {
             let mismatching_pairs = self
                 .pairs_info
                 .iter()
-                .filter(|(pair, info)| {
-                    other
-                        .pairs_info
-                        .get(pair)
-                        .map_or(true, |o_info| *info != o_info)
-                })
+                .filter(|(pair, info)| other.pairs_info.get(pair) != Some(*info))
                 .collect::<BTreeMap<&TokenPair, &PairInfo>>();
 
             mismatching_pairs.iter().for_each(|(pair, info)| {
