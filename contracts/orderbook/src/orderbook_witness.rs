@@ -322,7 +322,7 @@ impl Orderbook {
                         .or_default()
                         .insert(ui.get_key(), Balance(*amount));
                 }
-                OrderbookEvent::SessionKeyAdded { user } => {
+                OrderbookEvent::SessionKeyAdded { user, .. } => {
                     // Get user_info (if available)
                     let ui = match self.get_user_info(user) {
                         Ok(ui) => ui,

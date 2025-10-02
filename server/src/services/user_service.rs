@@ -1,4 +1,5 @@
 use client_sdk::contract_indexer::AppError;
+use orderbook::smt_values::UserInfo;
 use reqwest::StatusCode;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
@@ -26,21 +27,9 @@ pub struct UserBalances {
 
 impl UserService {
     pub async fn new(pool: PgPool) -> Self {
-        info!("Loading users into memory");
-        // Fetch all users from the database and store them in the user_id_map
-        let rows = sqlx::query("SELECT identity, user_id FROM users")
-            .fetch_all(&pool)
-            .await
-            .unwrap();
-
-        let user_id_map = rows
-            .iter()
-            .map(|row| (row.get("identity"), row.get("user_id")))
-            .collect();
-
         UserService {
             pool,
-            user_id_map: RwLock::new(user_id_map),
+            user_id_map: RwLock::new(HashMap::new()),
         }
     }
 
@@ -51,7 +40,7 @@ impl UserService {
             return Ok(*user_id);
         }
 
-        let row = sqlx::query("SELECT user_id FROM users WHERE identity = $1")
+        let row = sqlx::query("SELECT user_id, salt, nonce FROM users WHERE identity = $1")
             .bind(user)
             .fetch_one(&self.pool)
             .await
@@ -62,7 +51,8 @@ impl UserService {
                 )
             })?;
 
-        let user_id = row.get("user_id");
+        let user_id = row.get::<i64, _>("user_id");
+
         self.user_id_map
             .write()
             .unwrap()
@@ -101,5 +91,40 @@ impl UserService {
             .collect();
 
         Ok(UserBalances { balances })
+    }
+
+    pub async fn get_all_users(&self) -> HashMap<String, UserInfo> {
+        // Fetch all users from the database and store them in the user_id_map
+        info!("Fetching all users from the database");
+        // TODO this query might need to be optimized
+        let rows = sqlx::query(
+            "
+            SELECT u.identity, u.user_id, u.salt, u.nonce, 
+                   usk.session_keys as session_keys
+            FROM users u
+            LEFT JOIN user_session_keys usk ON u.user_id = usk.user_id
+            WHERE usk.commit_id = (SELECT MAX(commit_id) FROM user_session_keys WHERE user_id = u.user_id)
+        ",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .unwrap();
+
+        let users_map = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get("identity"),
+                    UserInfo {
+                        user: row.get("identity"),
+                        salt: row.get("salt"),
+                        nonce: row.get::<i64, _>("nonce") as u32,
+                        session_keys: row.get("session_keys"),
+                    },
+                )
+            })
+            .collect();
+
+        users_map
     }
 }

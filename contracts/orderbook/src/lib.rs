@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -140,7 +140,7 @@ impl sdk::ZkContract for Orderbook {
         };
 
         // cleaning sensitive fields before committing
-        state_to_commit.order_manager.orders_owner = HashMap::new();
+        state_to_commit.order_manager.orders_owner = BTreeMap::new();
 
         sdk::StateCommitment(borsh::to_vec(&state_to_commit).expect("Failed to encode Orderbook"))
     }

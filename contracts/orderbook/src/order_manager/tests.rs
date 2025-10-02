@@ -61,7 +61,7 @@ fn add_session_key_registers_new_key() {
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
-        OrderbookEvent::SessionKeyAdded { ref user } if user == "alice"
+        OrderbookEvent::SessionKeyAdded { ref user, .. } if user == "alice"
     ));
 
     let err = orderbook

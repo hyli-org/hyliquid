@@ -123,6 +123,14 @@ impl AssetService {
         self.instrument_map.get(symbol)
     }
 
+    pub async fn get_all_instruments(&self) -> &HashMap<String, Instrument> {
+        &self.instrument_map
+    }
+
+    pub async fn get_all_assets(&self) -> &HashMap<String, Asset> {
+        &self.asset_map
+    }
+
     pub async fn add_instrument(&mut self, instrument: Instrument) -> Result<(), AppError> {
         sqlx::query("INSERT INTO instruments (symbol, tick_size, qty_step, base_asset_id, quote_asset_id, status) VALUES ($1, $2, $3, $4, $5, $6, $7)")
             .bind(instrument.symbol.clone())
