@@ -1,50 +1,77 @@
-use borsh::{io::Error, BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
+use borsh::{BorshDeserialize, BorshSerialize};
+use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sparse_merkle_tree::default_store::DefaultStore;
-use sparse_merkle_tree::traits::Value;
-use sparse_merkle_tree::{SparseMerkleTree, H256};
-use std::collections::{BTreeMap, BTreeSet};
+use sparse_merkle_tree::SparseMerkleTree;
+use std::collections::{HashMap, HashSet};
 
 use crate::order_manager::OrderManager;
-use crate::smt_values::{Balance, UserInfo};
+use crate::orderbook_state::{FullState, LightState, ZkVmState};
+use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
 use sdk::{ContractName, LaneId, TxContext};
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
 pub struct Orderbook {
     // Server secret for authentication on permissionned actions
     pub hashed_secret: [u8; 32],
     // Registered token pairs with asset scales
-    pub pairs_info: BTreeMap<TokenPair, PairInfo>,
+    pub pairs_info: HashMap<TokenPair, PairInfo>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
 
     // Balances merkle tree root for each token
-    pub balances_merkle_roots: BTreeMap<TokenName, [u8; 32]>,
+    pub balances_merkle_roots: HashMap<TokenName, H256>,
     // Users info merkle root
-    pub users_info_merkle_root: [u8; 32],
+    pub users_info_merkle_root: H256,
 
     // Order manager handling all orders
     pub order_manager: OrderManager,
 
     /// These fields are not committed on-chain
-    #[borsh(skip)]
-    // TODO: use a new enum ExecutionType: full-mt-server, light-server, zkvm
-    pub server_execution: bool,
-    // User balances per token: token -> smt(hash(user) -> user_account))
-    #[borsh(skip)]
-    pub balances_mt:
-        BTreeMap<TokenName, SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>>,
-    #[borsh(skip)]
-    // Users info merkle tree
-    pub users_info_mt: SparseMerkleTree<SHA256Hasher, UserInfo, DefaultStore<UserInfo>>,
-    #[borsh(skip)]
-    // Users info salts. user -> salt
-    pub users_info_salt: BTreeMap<String, Vec<u8>>,
+    pub execution_state: ExecutionState,
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExecutionMode {
+    Light,
+    Full,
+    ZkVm,
+}
+
+#[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
+pub enum ExecutionState {
+    Light(LightState),
+    Full(FullState),
+    ZkVm(ZkVmState),
+}
+
+impl Default for ExecutionState {
+    fn default() -> Self {
+        ExecutionState::ZkVm(ZkVmState::default())
+    }
+}
+
+impl ExecutionState {
+    pub fn new(mode: ExecutionMode) -> Self {
+        match mode {
+            ExecutionMode::Light => ExecutionState::Light(LightState::default()),
+            ExecutionMode::Full => ExecutionState::Full(FullState::default()),
+            ExecutionMode::ZkVm => ExecutionState::ZkVm(ZkVmState::default()),
+        }
+    }
+
+    pub fn mode(&self) -> ExecutionMode {
+        match self {
+            ExecutionState::Light(_) => ExecutionMode::Light,
+            ExecutionState::Full(_) => ExecutionMode::Full,
+            ExecutionState::ZkVm(_) => ExecutionMode::ZkVm,
+        }
+    }
+}
+
+#[derive(
+    BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone, PartialEq,
+)]
 pub struct PairInfo {
     pub base_scale: u64,
     pub quote_scale: u64,
@@ -77,16 +104,15 @@ pub enum OrderType {
 /// Context struct for creating an order, containing all necessary proofs and mappings.
 #[derive(Debug, Clone)]
 pub struct CreateOrderCtx {
-    pub order_user_map: BTreeMap<OrderId, UserInfo>,
-    pub users_info: BTreeSet<UserInfo>,
+    pub users_info: HashSet<UserInfo>,
     pub users_info_proof: BorshableMerkleProof,
     pub user_info: UserInfo,
     pub user_info_proof: BorshableMerkleProof,
-    pub balances: BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
-    pub balances_proof: BTreeMap<TokenName, BorshableMerkleProof>,
+    pub balances: HashMap<TokenName, HashMap<UserInfo, Balance>>,
+    pub balances_proof: HashMap<TokenName, BorshableMerkleProof>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub struct Order {
     pub order_id: OrderId,
     pub order_type: OrderType,
@@ -100,7 +126,7 @@ pub type OrderId = String;
 pub type TokenName = String;
 pub type TokenPair = (TokenName, TokenName);
 
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub enum OrderbookEvent {
     PairCreated {
         pair: TokenPair,
@@ -135,47 +161,12 @@ pub enum OrderbookEvent {
     },
 }
 
-impl Clone for Orderbook {
-    fn clone(&self) -> Self {
-        let user_info_root: H256 = *self.users_info_mt.root();
-        let user_info_store = self.users_info_mt.store().clone();
-        let users_info = SparseMerkleTree::new(user_info_root, user_info_store);
-
-        // Clone the SparseMerkleTree balances using the new function
-        let mut balances: BTreeMap<
-            TokenName,
-            SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>,
-        > = BTreeMap::new();
-        for (token_name, tree) in &self.balances_mt {
-            let root = *tree.root();
-            let store = tree.store().clone();
-            let new_tree = SparseMerkleTree::new(root, store);
-            balances.insert(token_name.clone(), new_tree);
-        }
-
-        // Clone all the simple fields
-        Orderbook {
-            hashed_secret: self.hashed_secret,
-            pairs_info: self.pairs_info.clone(),
-            lane_id: self.lane_id.clone(),
-            users_info_merkle_root: self.users_info_merkle_root,
-            balances_merkle_roots: self.balances_merkle_roots.clone(),
-            users_info_mt: users_info,
-            users_info_salt: self.users_info_salt.clone(),
-            order_manager: self.order_manager.clone(),
-            server_execution: self.server_execution,
-            balances_mt: balances,
-        }
-    }
-}
-
-// TODO: refactor functions to distinguish business logic from state management.
-// FIXME: once the refactor is done; investigate is we can remove the usage if server_execution
+/// impl of functions for actions execution
 impl Orderbook {
     pub fn create_pair(
         &mut self,
-        pair: TokenPair,
-        info: PairInfo,
+        pair: &TokenPair,
+        info: &PairInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
         if info.base_scale >= 20 {
             return Err(format!(
@@ -188,23 +179,37 @@ impl Orderbook {
         // Initialize a new SparseMerkleTree for the token pair if not already present
         for token in &[&pair.0, &pair.1] {
             if !self.balances_merkle_roots.contains_key(*token) {
-                if self.server_execution {
-                    self.balances_mt.insert(
-                        (*token).clone(),
-                        SparseMerkleTree::new(H256::zero(), Default::default()),
-                    );
+                match &mut self.execution_state {
+                    ExecutionState::Full(state) => {
+                        state
+                            .balances_mt
+                            .entry((*token).clone())
+                            .or_insert_with(|| {
+                                SparseMerkleTree::new(
+                                    sparse_merkle_tree::H256::zero(),
+                                    Default::default(),
+                                )
+                            });
+                    }
+                    ExecutionState::Light(state) => {
+                        state.balances.entry((*token).clone()).or_default();
+                    }
+                    ExecutionState::ZkVm(_) => {}
                 }
                 self.balances_merkle_roots
-                    .insert((*token).clone(), H256::zero().into());
+                    .insert((*token).clone(), sparse_merkle_tree::H256::zero().into());
             }
         }
 
-        Ok(vec![OrderbookEvent::PairCreated { pair, info }])
+        Ok(vec![OrderbookEvent::PairCreated {
+            pair: pair.clone(),
+            info: info.clone(),
+        }])
     }
 
     pub fn add_session_key(
         &mut self,
-        user_info: &mut UserInfo,
+        mut user_info: UserInfo,
         pubkey: &Vec<u8>,
     ) -> Result<Vec<OrderbookEvent>, String> {
         if user_info.session_keys.contains(pubkey) {
@@ -214,95 +219,104 @@ impl Orderbook {
         // Add the session key to the user's list of session keys
         user_info.session_keys.push(pubkey.clone());
 
-        if self.server_execution {
-            // If the user is unknown, add a salt for them
-            if !self.users_info_salt.contains_key(&user_info.user) {
-                self.users_info_salt
-                    .insert(user_info.user.clone(), user_info.salt.clone());
-            }
+        let events = match &mut self.execution_state {
+            ExecutionState::Full(state) => {
+                state
+                    .users_info
+                    .insert(user_info.user.clone(), user_info.clone());
 
-            Ok(vec![OrderbookEvent::SessionKeyAdded {
-                user: user_info.user.to_string(),
-            }])
+                vec![OrderbookEvent::SessionKeyAdded {
+                    user: user_info.user.to_string(),
+                }]
+            }
+            ExecutionState::Light(state) => {
+                // Insert or update the user_info entry
+                state
+                    .users_info
+                    .insert(user_info.user.clone(), user_info.clone());
+
+                vec![OrderbookEvent::SessionKeyAdded {
+                    user: user_info.user.to_string(),
+                }]
+            }
+            ExecutionState::ZkVm(_) => vec![],
+        };
+        if user_info.nonce == 0 {
+            // We incremente nonce to be able to add it to the SMT
+            self.increment_nonce_and_save_user_info(&user_info)?;
         } else {
-            Ok(vec![])
+            self.update_user_info_merkle_root(&user_info)?;
         }
+
+        Ok(events)
     }
 
     pub fn deposit(
         &mut self,
-        token: String,
+        token: &str,
         amount: u64,
         user_info: &UserInfo,
-        balance: &mut Balance,
-        balance_proof: &BorshableMerkleProof,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Compute the new balance
+        let balance = self.get_balance(user_info, token);
         let new_balance = Balance(balance.0.checked_add(amount).ok_or("Balance overflow")?);
 
-        self.update_balances(
-            &token,
-            vec![(user_info, new_balance.clone())],
-            balance_proof,
-        )
-        .map_err(|e| e.to_string())?;
+        self.update_balances(token, vec![(user_info.get_key(), new_balance.clone())])
+            .map_err(|e| e.to_string())?;
 
-        if self.server_execution {
-            let user_balance = self.get_balance(user_info, &token);
-            Ok(vec![OrderbookEvent::BalanceUpdated {
-                user: user_info.user.clone(),
-                token,
-                amount: user_balance.0,
-            }])
-        } else {
-            Ok(vec![])
-        }
+        let events = match self.execution_state.mode() {
+            ExecutionMode::Full | ExecutionMode::Light => {
+                vec![OrderbookEvent::BalanceUpdated {
+                    user: user_info.user.clone(),
+                    token: token.to_string(),
+                    amount: new_balance.0,
+                }]
+            }
+            ExecutionMode::ZkVm => vec![],
+        };
+
+        Ok(events)
     }
 
     pub fn withdraw(
         &mut self,
-        token: String,
-        amount: u64,
+        token: &str,
+        amount: &u64,
         user_info: &UserInfo,
-        balances: &BTreeMap<UserInfo, Balance>,
-        balances_proof: &BorshableMerkleProof,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        let server_execution = self.server_execution;
+        let balance = self.get_balance(user_info, token);
 
-        let balance = balances.get(user_info).ok_or_else(|| {
-            format!(
-                "No balance found for user {} during withdrawal",
-                user_info.user
-            )
-        })?;
-
-        if balance.0 < amount {
+        if balance.0 < *amount {
             return Err(format!(
                 "Could not withdraw: Insufficient balance: user {} has {balance:?} {token} tokens, trying to withdraw {amount}", user_info.user
             ));
         }
 
-        self.deduct_from_account(&token, user_info, amount, balances, balances_proof)
+        self.deduct_from_account(token, user_info, *amount)
             .map_err(|e| e.to_string())?;
 
-        if server_execution {
-            let user_balance = self.get_balance(user_info, &token);
-            Ok(vec![OrderbookEvent::BalanceUpdated {
-                user: user_info.user.clone(),
-                token,
-                amount: user_balance.0,
-            }])
-        } else {
-            Ok(vec![])
-        }
+        let events = match self.execution_state.mode() {
+            ExecutionMode::Light | ExecutionMode::Full => {
+                let user_balance = self.get_balance(user_info, token);
+                vec![OrderbookEvent::BalanceUpdated {
+                    user: user_info.user.clone(),
+                    token: token.to_string(),
+                    amount: user_balance.0,
+                }]
+            }
+            ExecutionMode::ZkVm => vec![],
+        };
+
+        // Increment user's nonce
+        self.increment_nonce_and_save_user_info(user_info)?;
+
+        Ok(events)
     }
 
     pub fn cancel_order(
         &mut self,
         order_id: OrderId,
         user_info: &UserInfo,
-        balance: &Balance,
-        balance_proof: &BorshableMerkleProof,
     ) -> Result<Vec<OrderbookEvent>, String> {
         let order = self
             .order_manager
@@ -317,27 +331,26 @@ impl Orderbook {
         };
 
         // Refund the reserved amount to the user
-        self.fund_account(
-            &required_token,
-            user_info,
-            &Balance(order.quantity),
-            &BTreeMap::from([(user_info.clone(), balance.clone())]),
-            balance_proof,
-        )
-        .map_err(|e| e.to_string())?;
+        self.fund_account(&required_token, user_info, &Balance(order.quantity))
+            .map_err(|e| e.to_string())?;
 
         // Cancel order through order manager
         let mut cancel_events = self.order_manager.cancel_order(&order_id)?;
 
-        if self.server_execution {
-            let user_balance = self.get_balance(user_info, &required_token);
+        match self.execution_state.mode() {
+            ExecutionMode::Light | ExecutionMode::Full => {
+                let user_balance = self.get_balance(user_info, &required_token);
 
-            cancel_events.push(OrderbookEvent::BalanceUpdated {
-                user: user_info.user.clone(),
-                token: required_token.to_string(),
-                amount: user_balance.0,
-            });
+                cancel_events.push(OrderbookEvent::BalanceUpdated {
+                    user: user_info.user.clone(),
+                    token: required_token.to_string(),
+                    amount: user_balance.0,
+                });
+            }
+            ExecutionMode::ZkVm => {}
         }
+        self.increment_nonce_and_save_user_info(user_info)?;
+
         Ok(cancel_events)
     }
 
@@ -357,14 +370,12 @@ impl Orderbook {
         &mut self,
         user_info: &UserInfo,
         order: Order,
-        order_user_map: BTreeMap<OrderId, UserInfo>,
-        balances: &BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
-        balances_proof: &BTreeMap<TokenName, BorshableMerkleProof>,
     ) -> Result<Vec<OrderbookEvent>, String> {
         if self.order_manager.orders.contains_key(&order.order_id) {
             return Err(format!("Order with id {} already exists", order.order_id));
         }
 
+        let user_info_key = &user_info.get_key();
         let mut events = Vec::new();
 
         // Use OrderManager to handle order logic
@@ -375,44 +386,55 @@ impl Orderbook {
             .base_scale as usize];
 
         // Delegate order execution to the manager
-        let order_events = self.order_manager.execute_order(user_info, &order)?;
+        let order_events = self.order_manager.execute_order(user_info_key, &order)?;
+
         events.extend(order_events);
 
         // Balance change aggregation system based on events
-        let mut balance_changes: BTreeMap<TokenName, BTreeMap<UserInfo, Balance>> =
-            balances.clone();
+        let mut balance_changes: HashMap<TokenName, HashMap<H256, Balance>> = self.get_balances();
+        let mut touched_accounts: HashMap<TokenName, HashSet<H256>> = HashMap::new();
 
         // Helper function to record balance changes
         fn record_balance_change(
-            balance_changes: &mut BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
-            user_info: UserInfo,
+            balance_changes: &mut HashMap<TokenName, HashMap<H256, Balance>>,
+            touched_accounts: &mut HashMap<TokenName, HashSet<H256>>,
+            user_info_key: &H256,
             token: &TokenName,
             amount: i128,
         ) -> Result<(), String> {
-            let user = user_info.user.clone();
-            let token_balances = balance_changes.entry(token.clone()).or_default();
-            let balance = token_balances.entry(user_info).or_default();
+            let token_balances = balance_changes.get_mut(token);
+            let token_balances = match token_balances {
+                Some(tb) => tb,
+                None => return Err(format!("Token {token} not found in balance_changes")),
+            };
+
+            let balance = token_balances.entry(*user_info_key).or_default();
 
             let new_value: u64 = ((balance.0 as i128) + amount).try_into().map_err(|e| {
                 format!(
-                    "User {user} cannot perform token {token} exchange: balance is {}, attempted to add {amount}: {e}", balance.0
+                    "User with key {} cannot perform token {token} exchange: balance is {}, attempted to add {amount}: {e}", hex::encode(user_info_key.as_slice()), balance.0
                 )
             })?;
 
             *balance = Balance(new_value);
+            touched_accounts
+                .entry(token.clone())
+                .or_default()
+                .insert(*user_info_key);
             Ok(())
         }
 
         // Helper function to record transfers between users
         fn record_transfer(
-            balance_changes: &mut BTreeMap<TokenName, BTreeMap<UserInfo, Balance>>,
-            from: UserInfo,
-            to: UserInfo,
+            balance_changes: &mut HashMap<TokenName, HashMap<H256, Balance>>,
+            touched_accounts: &mut HashMap<TokenName, HashSet<H256>>,
+            from: &H256,
+            to: &H256,
             token: &TokenName,
             amount: i128,
         ) -> Result<(), String> {
-            record_balance_change(balance_changes, from, token, -amount)?;
-            record_balance_change(balance_changes, to, token, amount)?;
+            record_balance_change(balance_changes, touched_accounts, from, token, -amount)?;
+            record_balance_change(balance_changes, touched_accounts, to, token, amount)?;
             Ok(())
         }
 
@@ -433,34 +455,29 @@ impl Orderbook {
                             (created_order.quantity as i128, created_order.pair.0.clone())
                         }
                     };
-
                     record_balance_change(
                         &mut balance_changes,
-                        user_info.clone(),
+                        &mut touched_accounts,
+                        user_info_key,
                         &token,
                         quantity,
                     )?;
                 }
-                OrderbookEvent::OrderExecuted {
-                    order_id,
-                    taker_order_id,
-                    pair,
-                } => {
+                OrderbookEvent::OrderExecuted { order_id, pair, .. } => {
                     let base_token = &pair.0;
                     let quote_token = &pair.1;
 
                     // Special case: the current order has been fully executed.
-                    if taker_order_id == &order.order_id {
+                    if order_id == &order.order_id {
                         // We don't process it as it would be counted twice with other matching executed orders
                         continue;
                     };
 
-                    let executed_order_user_info =
-                        order_user_map.get(taker_order_id).ok_or_else(|| {
-                            format!(
-                                "Executed order owner info (order_id: {taker_order_id}) not provided",
-                            )
-                        })?;
+                    let executed_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
+                        format!(
+                            "Executed order owner info (order_id: {order_id}) not found in order manager",
+                        )
+                    })?;
 
                     // Transfer token logic for executed orders
                     if let Some(executed_order) = self.order_manager.orders.get(order_id) {
@@ -469,26 +486,33 @@ impl Orderbook {
                                 // Executed order owner receives base token deducted to user
                                 record_transfer(
                                     &mut balance_changes,
-                                    user_info.clone(),
-                                    executed_order_user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
+                                    executed_order_user_info,
                                     base_token,
                                     executed_order.quantity as i128,
                                 )?;
                                 // User receives quote token
                                 record_balance_change(
                                     &mut balance_changes,
-                                    user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
                                     quote_token,
                                     (executed_order.price.unwrap() * executed_order.quantity
                                         / base_scale) as i128,
                                 )?;
+                                touched_accounts
+                                    .entry(quote_token.clone())
+                                    .or_default()
+                                    .insert(*executed_order_user_info);
                             }
                             OrderSide::Ask => {
                                 // Executed order owner receives quote token deducted to user
                                 record_transfer(
                                     &mut balance_changes,
-                                    user_info.clone(),
-                                    executed_order_user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
+                                    executed_order_user_info,
                                     quote_token,
                                     (executed_order.price.unwrap() * executed_order.quantity
                                         / base_scale) as i128,
@@ -496,7 +520,8 @@ impl Orderbook {
                                 // User receives base token
                                 record_balance_change(
                                     &mut balance_changes,
-                                    user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
                                     base_token,
                                     executed_order.quantity as i128,
                                 )?;
@@ -512,9 +537,10 @@ impl Orderbook {
                     executed_quantity,
                     ..
                 } => {
-                    let executed_order_user_info =
-                        order_user_map.get(order_id).ok_or_else(|| {
-                            format!("Updated order owner info (order_id: {order_id}) not provided",)
+                    let executed_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
+                            format!(
+                                "Executed order owner info (order_id: {order_id}) not found in order manager",
+                            )
                         })?;
 
                     let base_token = &pair.0;
@@ -527,26 +553,33 @@ impl Orderbook {
                                 // Executed order owner receives base token deducted to user
                                 record_transfer(
                                     &mut balance_changes,
-                                    user_info.clone(),
-                                    executed_order_user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
+                                    executed_order_user_info,
                                     base_token,
                                     *executed_quantity as i128,
                                 )?;
                                 // User receives quote token
                                 record_balance_change(
                                     &mut balance_changes,
-                                    user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
                                     quote_token,
                                     (updated_order.price.unwrap() * executed_quantity / base_scale)
                                         as i128,
                                 )?;
+                                touched_accounts
+                                    .entry(quote_token.clone())
+                                    .or_default()
+                                    .insert(*executed_order_user_info);
                             }
                             OrderSide::Ask => {
                                 // Executed order owner receives quote token deducted to user
                                 record_transfer(
                                     &mut balance_changes,
-                                    user_info.clone(),
-                                    executed_order_user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
+                                    executed_order_user_info,
                                     quote_token,
                                     (updated_order.price.unwrap() * executed_quantity / base_scale)
                                         as i128,
@@ -554,7 +587,8 @@ impl Orderbook {
                                 // User receives base token
                                 record_balance_change(
                                     &mut balance_changes,
-                                    user_info.clone(),
+                                    &mut touched_accounts,
+                                    user_info_key,
                                     base_token,
                                     *executed_quantity as i128,
                                 )?;
@@ -568,270 +602,122 @@ impl Orderbook {
             }
         }
 
+        // Clear executed orders from the order manager
+        self.order_manager.clear_executed_orders(&events);
+
         // Updating balances
-        for (token, user_balances) in balance_changes {
-            let balances_to_update: Vec<(&UserInfo, Balance)> = user_balances
-                .iter()
-                .map(|(user_info, amount)| {
-                    if self.server_execution {
-                        events.push(OrderbookEvent::BalanceUpdated {
-                            user: user_info.user.clone(),
-                            token: token.clone(),
-                            amount: amount.0,
-                        });
-                    }
-                    (user_info, amount.clone())
-                })
-                .collect();
+        for (token, user_keys) in touched_accounts {
+            let token_balances = balance_changes
+                .get(&token)
+                .ok_or_else(|| format!("Token {token} not found in balance_changes"))?;
 
-            let balances_proof = balances_proof.get(&token).ok_or_else(|| {
-                format!("No balance proof provided for token {token} during update")
-            })?;
+            let mut balances_to_update: Vec<(H256, Balance)> = Vec::new();
+            for user_key in user_keys {
+                let amount = token_balances.get(&user_key).ok_or_else(|| {
+                    format!(
+                        "User with key {} not found in balance_changes for token {token}",
+                        hex::encode(user_key.as_slice())
+                    )
+                })?;
 
-            self.update_balances(&token, balances_to_update, balances_proof)?;
+                if !matches!(self.execution_state.mode(), ExecutionMode::ZkVm) {
+                    let user_info = self.get_user_info_from_key(&user_key).unwrap();
+                    events.push(OrderbookEvent::BalanceUpdated {
+                        user: user_info.user.clone(),
+                        token: token.clone(),
+                        amount: amount.0,
+                    });
+                }
+
+                balances_to_update.push((user_key, amount.clone()));
+            }
+
+            self.update_balances(&token, balances_to_update)?;
         }
+
+        self.increment_nonce_and_save_user_info(user_info)?;
 
         Ok(events)
     }
 }
 
-// TODO: make clear which function are used in the contract and which are used only by the server
 impl Orderbook {
-    pub fn init(lane_id: LaneId, server_execution: bool, secret: Vec<u8>) -> Result<Self, String> {
-        let users_info_mt = SparseMerkleTree::default();
-        let users_info_merkle_root = (*users_info_mt.root()).into();
+    pub fn init(lane_id: LaneId, mode: ExecutionMode, secret: Vec<u8>) -> Result<Self, String> {
+        let execution_state = ExecutionState::new(mode);
+        let users_info_merkle_root = match &execution_state {
+            ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
+            _ => sparse_merkle_tree::H256::zero().into(),
+        };
         let hashed_secret = Sha256::digest(&secret).into();
 
         Ok(Orderbook {
             hashed_secret,
-            pairs_info: BTreeMap::new(),
+            pairs_info: HashMap::new(),
             lane_id,
-            server_execution,
-            users_info_mt,
+            balances_merkle_roots: HashMap::new(),
             users_info_merkle_root,
-            balances_mt: BTreeMap::new(),
-            balances_merkle_roots: BTreeMap::new(),
-            ..Default::default()
+            order_manager: OrderManager::default(),
+            execution_state,
         })
     }
 
-    pub fn update_user_info_merkle_root(
-        &mut self,
-        user_info: &UserInfo,
-        user_info_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        let new_users_info_merkle_root = if self.server_execution {
-            // Update the users_info the root *and the merkle tree* only for server execution
-            (*self
-                .users_info_mt
-                .update(user_info.get_key(), user_info.clone())
-                .map_err(|e| format!("Failed to update user info in SMT: {e}"))?)
-            .into()
-        } else {
-            // Update the only users_info_merkle_root
-            user_info_proof
-                .0
-                .clone()
-                .compute_root::<SHA256Hasher>(vec![(user_info.get_key(), user_info.to_h256())])
-                .unwrap_or_else(|e| {
-                    panic!("Failed to compute new root on user_info merkle tree: {e}")
-                })
-                .into()
-        };
-
-        self.users_info_merkle_root = new_users_info_merkle_root;
-        Ok(())
-    }
-
-    pub fn fund_account(
-        &mut self,
-        token: &str,
-        user_info: &UserInfo,
-        amount: &Balance,
-        balances: &BTreeMap<UserInfo, Balance>,
-        balances_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        let current_balance = balances.get(user_info).ok_or_else(|| {
-            format!(
-                "No balance found for user {} during update of token {token}",
-                user_info.user
-            )
-        })?;
-
-        self.update_balances(
-            token,
-            vec![(user_info, Balance(current_balance.0 + amount.0))],
-            balances_proof,
-        )
-        .map_err(|e| e.to_string())
-    }
-
-    pub fn deduct_from_account(
-        &mut self,
-        token: &str,
-        user_info: &UserInfo,
-        amount: u64,
-        balances: &BTreeMap<UserInfo, Balance>,
-        balances_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        let current_balance = balances.get(user_info).ok_or_else(|| {
-            format!(
-                "No balance found for user {} during update of token {token}",
-                user_info.user
-            )
-        })?;
-
-        if current_balance.0 < amount {
-            return Err(format!(
-                "Insufficient balance: user {} has {} {} tokens, trying to remove {}",
-                user_info.user, current_balance.0, token, amount
-            ));
+    pub fn get_balances(&self) -> HashMap<TokenName, HashMap<H256, Balance>> {
+        match &self.execution_state {
+            ExecutionState::Full(state) => {
+                let mut balances = HashMap::new();
+                for (token, balances_mt) in state.balances_mt.iter() {
+                    let token_store = balances_mt.store();
+                    let token_balances: HashMap<H256, Balance> = token_store
+                        .leaves_map()
+                        .iter()
+                        .map(|(k, v)| ((*k).into(), v.clone()))
+                        .collect();
+                    balances.insert(token.clone(), token_balances.clone());
+                }
+                balances
+            }
+            ExecutionState::Light(state) => state.balances.clone(),
+            ExecutionState::ZkVm(state) => {
+                let mut balances: HashMap<TokenName, HashMap<H256, Balance>> = HashMap::new();
+                for (token, witness) in state.balances.iter() {
+                    balances.insert(token.clone(), witness.value.clone());
+                }
+                balances
+            }
         }
-
-        self.update_balances(
-            token,
-            vec![(user_info, Balance(current_balance.0 - amount))],
-            balances_proof,
-        )
-        .map_err(|e| e.to_string())
     }
 
-    pub fn update_balances(
-        &mut self,
-        token: &str,
-        balances_to_update: Vec<(&UserInfo, Balance)>,
-        balances_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        let new_balance_merkle_root = if self.server_execution {
-            // Update the balances root *and the merkle tree* for server execution
-            let tree = self
+    pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
+        match &self.execution_state {
+            ExecutionState::Full(state) => state
                 .balances_mt
-                .entry(token.to_string())
-                .or_insert_with(|| SparseMerkleTree::new(H256::zero(), Default::default()));
-            let leaves = balances_to_update
-                .iter()
-                .map(|(user_info, balance)| (user_info.get_key(), balance.clone()))
-                .collect();
-            (*tree
-                .update_all(leaves)
-                .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?)
-            .into()
-        } else {
-            // Only update the merkle root using the proof and new leaves
-            let leaves = balances_to_update
-                .iter()
-                .map(|(user_info, balance)| (user_info.get_key(), balance.to_h256()))
-                .collect();
-            balances_proof
-                .0
-                .clone()
-                .compute_root::<SHA256Hasher>(leaves)
-                .unwrap_or_else(|e| panic!("Failed to compute new root on token {token}: {e}"))
-                .into()
-        };
+                .get(token)
+                .and_then(|tree| tree.get(&user.get_key()).ok())
+                .unwrap_or_default(),
+            ExecutionState::Light(state) => state
+                .balances
+                .get(token)
+                .and_then(|balances| balances.get(&user.get_key()).cloned())
+                .unwrap_or_default(),
+            ExecutionState::ZkVm(state) => {
+                let user_key = match state
+                    .users_info
+                    .value
+                    .iter()
+                    .find(|user_info| user_info.user == user.user)
+                    .map(|ui| ui.get_key())
+                {
+                    Some(key) => key,
+                    None => return Balance(0),
+                };
 
-        self.balances_merkle_roots
-            .insert(token.to_string(), new_balance_merkle_root);
-        Ok(())
-    }
-
-    pub fn verify_user_info_proof(
-        &self,
-        user_info: &UserInfo,
-        user_info_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        // Verify that users info are correct
-        user_info_proof
-            .0
-            .clone()
-            .verify::<SHA256Hasher>(
-                &TryInto::<[u8; 32]>::try_into(self.users_info_merkle_root.as_slice())
-                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                    .into(),
-                vec![(user_info.get_key(), user_info.to_h256())],
-            )
-            .expect("Failed to verify proof");
-        Ok(())
-    }
-
-    pub fn verify_users_info_proof(
-        &self,
-        users_info: &BTreeSet<UserInfo>,
-        user_info_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        // Verify that users info are correct
-        let leaves: Vec<_> = users_info
-            .iter()
-            .map(|user_info| (user_info.get_key(), user_info.to_h256()))
-            .collect();
-
-        user_info_proof
-            .0
-            .clone()
-            .verify::<SHA256Hasher>(
-                &TryInto::<[u8; 32]>::try_into(self.users_info_merkle_root.as_slice())
-                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                    .into(),
-                leaves,
-            )
-            .expect("Failed to verify proof");
-        Ok(())
-    }
-
-    pub fn verify_balance_proof(
-        &self,
-        token: &TokenName,
-        user_info: &UserInfo,
-        balance: &Balance,
-        balance_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        // Verify that users balance are correct
-        let token_root = self
-            .balances_merkle_roots
-            .get(token.as_str())
-            .ok_or(format!("Token {token} not found in balances merkle roots"))?;
-
-        balance_proof
-            .0
-            .clone()
-            .verify::<SHA256Hasher>(
-                &TryInto::<[u8; 32]>::try_into(token_root.as_slice())
-                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                    .into(),
-                vec![(user_info.get_key(), balance.to_h256())],
-            )
-            .expect("Failed to verify proof");
-        Ok(())
-    }
-
-    pub fn verify_balances_proof(
-        &self,
-        token: &TokenName,
-        balances: &BTreeMap<UserInfo, Balance>,
-        balance_proof: &BorshableMerkleProof,
-    ) -> Result<(), String> {
-        // Verify that users balance are correct
-        let token_root = self
-            .balances_merkle_roots
-            .get(token.as_str())
-            .ok_or(format!("Token {token} not found in balances merkle roots"))?;
-
-        let leaves = balances
-            .iter()
-            .map(|(user, balance)| (user.get_key(), balance.to_h256()))
-            .collect::<Vec<_>>();
-
-        balance_proof
-            .0
-            .clone()
-            .verify::<SHA256Hasher>(
-                &TryInto::<[u8; 32]>::try_into(token_root.as_slice())
-                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                    .into(),
-                leaves,
-            )
-            .expect("Failed to verify proof");
-        Ok(())
+                state
+                    .balances
+                    .get(token)
+                    .and_then(|user_balances| user_balances.value.get(&user_key).cloned())
+                    .unwrap_or_default()
+            }
+        }
     }
 
     pub fn is_blob_whitelisted(&self, contract_name: &ContractName) -> bool {
@@ -843,252 +729,42 @@ impl Orderbook {
             .keys()
             .any(|pair| pair.0 == contract_name.0 || pair.1 == contract_name.0)
     }
-
-    pub fn as_bytes(&self) -> Result<Vec<u8>, Error> {
-        borsh::to_vec(self)
-    }
 }
 
 /// Implementation of functions that are only used by the server.
 impl Orderbook {
-    pub fn get_orders(&self) -> BTreeMap<String, Order> {
+    pub fn get_orders(&self) -> HashMap<String, Order> {
         self.order_manager.orders.clone()
     }
 
+    pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {
+        self.order_manager.orders_owner.get(order_id)
+    }
+
     pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
-        let salt = self
-            .users_info_salt
-            .get(user)
-            .ok_or_else(|| format!("No salt found for user '{user}'"))?;
-        let key = UserInfo::compute_key(user, salt.as_slice());
-        self.users_info_mt.get(&key).map_err(|e| {
-            format!("Failed to get user info for user '{user}' with key {key:?}: {e}",)
-        })
-    }
-
-    pub fn get_user_info_proofs(
-        &self,
-        user_info: &UserInfo,
-    ) -> Result<BorshableMerkleProof, String> {
-        Ok(BorshableMerkleProof(
-            self.users_info_mt
-                .merkle_proof(vec![user_info.get_key()])
-                .map_err(|e| {
+        match &self.execution_state {
+            ExecutionState::Full(state) => {
+                let user_info = state
+                    .users_info
+                    .get(user)
+                    .ok_or_else(|| format!("No salt found for user '{user}'"))?;
+                let key = user_info.get_key();
+                state.users_info_mt.get(&key).map_err(|e| {
                     format!(
-                        "Failed to create merkle proof for user {:?}: {e}",
-                        user_info.user
+                        "Failed to get user info for user '{user}' with key {:?}: {e}",
+                        hex::encode(key.as_slice())
                     )
-                })?,
-        ))
-    }
-
-    pub fn get_users_info_proofs(
-        &self,
-        users_info: &BTreeSet<UserInfo>,
-    ) -> Result<BorshableMerkleProof, String> {
-        Ok(BorshableMerkleProof(
-            self.users_info_mt
-                .merkle_proof(users_info.iter().map(|u| u.get_key()).collect::<Vec<_>>())
-                .map_err(|e| {
-                    format!("Failed to create merkle proof for users {users_info:?}: {e}")
-                })?,
-        ))
-    }
-
-    pub fn get_user_info_with_proof(
-        &self,
-        user: &str,
-    ) -> Result<(UserInfo, BorshableMerkleProof), String> {
-        let user_info = self
-            .users_info_salt
-            .get(user)
-            .and_then(|salt| {
-                let key = UserInfo::compute_key(user, salt.as_slice());
-                self.users_info_mt.get(&key).ok()
-            })
-            .ok_or_else(|| format!("User info not found for user '{user}'"))?;
-
-        let proof = BorshableMerkleProof(
-            self.users_info_mt
-                .merkle_proof(vec![user_info.get_key()])
-                .map_err(|e| {
-                    format!(
-                        "Failed to create merkle proof for user {:?}: {e}",
-                        user_info.user
-                    )
-                })?,
-        );
-
-        Ok((user_info, proof))
-    }
-
-    /// Returns a mapping from order IDs to user names
-    pub fn get_order_user_map(
-        &self,
-        order_side: &OrderSide,
-        pair: &TokenPair,
-    ) -> Result<BTreeMap<OrderId, UserInfo>, String> {
-        let mut map = BTreeMap::new();
-        let user_map = self.order_manager.get_order_user_map(order_side, pair);
-
-        for (order_id, username) in user_map {
-            let user_info = self.get_user_info(&username)?;
-            map.insert(order_id, user_info);
-        }
-
-        Ok(map)
-    }
-
-    pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
-        self.balances_mt
-            .get(token)
-            .and_then(|tree| tree.get(&user.get_key()).ok())
-            .unwrap_or_default()
-    }
-
-    pub fn get_balances(&self) -> BTreeMap<TokenName, BTreeMap<String, u64>> {
-        // Create an inverse hashmap: key -> username
-        let mut key_to_username = BTreeMap::new();
-        for (username, salt) in self.users_info_salt.iter() {
-            let user_key = UserInfo::compute_key(username, salt);
-            key_to_username.insert(user_key, username.clone());
-        }
-
-        let mut balances = BTreeMap::new();
-        for (token, balances_mt) in self.balances_mt.iter() {
-            let token_store = balances_mt.store();
-            let token_balances = balances.entry(token.clone()).or_insert_with(BTreeMap::new);
-            for (user_info_key, balance) in token_store.leaves_map().iter() {
-                let user_identifier = key_to_username
-                    .get(user_info_key)
-                    .cloned()
-                    .unwrap_or_else(|| hex::encode(user_info_key.as_slice()));
-                token_balances.insert(user_identifier, balance.0);
+                })
+            }
+            ExecutionState::Light(state) => state
+                .users_info
+                .get(user)
+                .cloned()
+                .ok_or_else(|| format!("User info not found for user '{user}'")),
+            ExecutionState::ZkVm(_) => {
+                Err("User info lookup is not available in ZkVm execution mode".to_string())
             }
         }
-        balances
-    }
-
-    pub fn get_balances_for_account(
-        &self,
-        user: &str,
-    ) -> Result<BTreeMap<TokenName, Balance>, String> {
-        // First compute the users key
-        let user_salt = self
-            .users_info_salt
-            .get(user)
-            .ok_or_else(|| format!("No salt found for user '{user}'"))?;
-
-        let user_key = UserInfo::compute_key(user, user_salt);
-
-        let mut balances = BTreeMap::new();
-        for (token, balances_mt) in self.balances_mt.iter() {
-            let token_store = balances_mt.store();
-            let user_balance = token_store
-                .leaves_map()
-                .get(&user_key)
-                .cloned()
-                .unwrap_or_default();
-            balances.insert(token.clone(), user_balance);
-        }
-        Ok(balances)
-    }
-
-    pub fn get_balances_with_proof(
-        &self,
-        users_info: &[UserInfo],
-        token: &TokenName,
-    ) -> Result<(BTreeMap<UserInfo, Balance>, BorshableMerkleProof), String> {
-        let mut balances_map = BTreeMap::new();
-        for user_info in users_info {
-            let balance = self.get_balance(user_info, token);
-            balances_map.insert(user_info.clone(), balance);
-        }
-
-        let users: Vec<UserInfo> = balances_map.keys().cloned().collect();
-        let tree = self.balances_mt.get(token).unwrap();
-        let proof = BorshableMerkleProof(
-            tree.merkle_proof(users.iter().map(|u| u.get_key()).collect::<Vec<_>>())
-                .map_err(|e| {
-                    format!(
-                        "Failed to create merkle proof for token {token} and users {:?}: {e}",
-                        users_info
-                            .iter()
-                            .map(|u| u.user.clone())
-                            .collect::<Vec<_>>()
-                    )
-                })?,
-        );
-
-        Ok((balances_map, proof))
-    }
-
-    pub fn get_balance_with_proof(
-        &self,
-        user_info: &UserInfo,
-        token: &TokenName,
-    ) -> Result<(Balance, BorshableMerkleProof), String> {
-        let balance = self.get_balance(user_info, token);
-
-        let tree = self.balances_mt.get(token).unwrap();
-        let proof =
-            BorshableMerkleProof(tree.merkle_proof(vec![user_info.get_key()]).map_err(|e| {
-                format!(
-                    "Failed to create merkle proof for token {token} and user {:?}: {e}",
-                    user_info.user
-                )
-            })?);
-        Ok((balance, proof))
-    }
-
-    pub fn get_create_order_ctx(
-        &self,
-        user: &str,
-        order: &Order,
-    ) -> Result<CreateOrderCtx, String> {
-        let order_user_map = self.get_order_user_map(&order.order_side, &order.pair)?;
-
-        let user_info = self.get_user_info(user)?;
-        let user_info_proof = self.get_user_info_proofs(&user_info.clone())?;
-
-        let mut users_info: BTreeSet<_> = order_user_map.values().cloned().collect();
-        users_info.insert(user_info.clone());
-
-        let users_info_proof = self.get_users_info_proofs(&users_info)?;
-
-        // Determine which token to fetch balances for, based on order_side
-        let [token_all_users, token_only_user] = match &order.order_side {
-            OrderSide::Bid => [&order.pair.1, &order.pair.0], // For buy, interested in base token
-            OrderSide::Ask => [&order.pair.0, &order.pair.1], // For sell, interested in quote token
-        };
-
-        // impacted users
-        let users_info_vec: Vec<_> = users_info.iter().cloned().collect();
-        let (balances_all_users, balances_proof_all_users) =
-            self.get_balances_with_proof(&users_info_vec, token_all_users)?;
-
-        // user
-        let (balances_only_user, balances_proof_only_user) =
-            self.get_balances_with_proof(&[user_info.clone()], token_only_user)?;
-
-        let balances = BTreeMap::from([
-            (token_all_users.clone(), balances_all_users),
-            (token_only_user.clone(), balances_only_user),
-        ]);
-        let balances_proof = BTreeMap::from([
-            (token_all_users.clone(), balances_proof_all_users),
-            (token_only_user.clone(), balances_proof_only_user),
-        ]);
-
-        Ok(CreateOrderCtx {
-            order_user_map,
-            users_info,
-            users_info_proof,
-            user_info,
-            user_info_proof,
-            balances,
-            balances_proof,
-        })
     }
 }
 

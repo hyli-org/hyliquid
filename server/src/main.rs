@@ -16,7 +16,7 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
-use orderbook::orderbook::{Orderbook, OrderbookEvent};
+use orderbook::orderbook::{ExecutionMode, Orderbook, OrderbookEvent};
 use prometheus::Registry;
 use sdk::{api::NodeInfo, info, Calldata, ZkContract};
 use server::{
@@ -190,8 +190,14 @@ async fn main() -> Result<()> {
 
     // TODO: make a proper secret management
     let secret = vec![1, 2, 3];
-    let default_state =
-        Orderbook::init(validator_lane_id.clone(), true, secret).map_err(anyhow::Error::msg)?;
+    let default_state = Orderbook::init(
+        validator_lane_id.clone(),
+        ExecutionMode::Light,
+        secret.clone(),
+    )
+    .map_err(anyhow::Error::msg)?;
+    let prover_state = Orderbook::init(validator_lane_id.clone(), ExecutionMode::Full, secret)
+        .map_err(anyhow::Error::msg)?;
 
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
@@ -232,6 +238,7 @@ async fn main() -> Result<()> {
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
         lane_id: validator_lane_id,
+        initial_orderbook: prover_state,
     });
 
     let api_module_ctx = Arc::new(ApiModuleCtx {
