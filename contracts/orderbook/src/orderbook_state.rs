@@ -3,14 +3,13 @@ use std::collections::{HashMap, HashSet};
 use borsh::{BorshDeserialize, BorshSerialize};
 use monotree::{hasher::Sha2, Monotree};
 use monotree::{DefaultDatabase, Hash as MonotreeHash};
-use sdk::merkle_utils::SHA256Hasher;
-use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkleTree};
 
+use crate::monotree_proof::compute_root_from_proof;
 use crate::orderbook::{OrderbookEvent, TokenName};
 use crate::orderbook_witness::ZkVmWitness;
 use crate::{
     orderbook::{ExecutionState, Orderbook},
-    smt_values::{Balance, BorshableH256 as H256, UserInfo},
+    smt_values::{Balance, BorshableH256 as H256, MonotreeValue, UserInfo},
 };
 
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
@@ -100,11 +99,8 @@ impl Orderbook {
                 state
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
-                let sparse_root = state
-                    .users_info_mt
-                    .compute_sparse_root()
-                    .map_err(|e| format!("Failed to compute users info sparse root: {e}"))?;
-                self.users_info_merkle_root = sparse_root.into();
+                self.users_info_merkle_root =
+                    monotree_root_to_borshable(state.users_info_mt.root.as_ref());
             }
             ExecutionState::Light(state) => {
                 state
@@ -114,30 +110,20 @@ impl Orderbook {
                     .users_info
                     .entry(user_info.user.clone())
                     .or_insert_with(|| user_info.clone());
-                self.users_info_merkle_root = sparse_merkle_tree::H256::zero().into();
+                self.users_info_merkle_root = H256::from([0u8; 32]);
             }
             ExecutionState::ZkVm(state) => {
-                let users_info_proof = &state.users_info.proof;
-                let leaves = state
-                    .users_info
-                    .value
-                    .iter()
-                    .map(|ui| {
-                        if ui.user == user_info.user {
-                            (ui.get_key().into(), user_info.to_h256())
-                        } else {
-                            (ui.get_key().into(), ui.to_h256())
-                        }
-                    })
-                    .collect::<Vec<_>>();
-                let new_root = users_info_proof
-                    .0
-                    .clone()
-                    .compute_root::<SHA256Hasher>(leaves)
-                    .unwrap_or_else(|e| {
-                        panic!("Failed to compute new root on user_info merkle tree: {e}")
-                    });
-                self.users_info_merkle_root = new_root.into();
+                let key = user_info.get_key();
+                let proof = state.users_info.proofs.get(&key).ok_or_else(|| {
+                    format!(
+                        "No users_info proof found for user {} with key {}",
+                        user_info.user,
+                        hex::encode(key.as_slice())
+                    )
+                })?;
+                let leaf_hash = user_info.to_hash_bytes();
+                let new_root = compute_root_from_proof(&leaf_hash, &proof.0);
+                self.users_info_merkle_root = H256::from(new_root);
             }
         }
         Ok(())
@@ -157,11 +143,10 @@ impl Orderbook {
                 tree.upsert_batch(&balances_to_update).map_err(|e| {
                     format!("Failed to update balances on token {token} in monotree: {e}")
                 })?;
-                let sparse_root = tree
-                    .compute_sparse_root()
-                    .map_err(|e| format!("Failed to compute balances sparse root: {e}"))?;
-                self.balances_merkle_roots
-                    .insert(token.to_string(), sparse_root.into());
+                self.balances_merkle_roots.insert(
+                    token.to_string(),
+                    monotree_root_to_borshable(tree.root.as_ref()),
+                );
             }
             ExecutionState::Light(state) => {
                 let token_entry = state
@@ -173,25 +158,34 @@ impl Orderbook {
                 }
                 self.balances_merkle_roots
                     .entry(token.to_string())
-                    .or_insert_with(|| sparse_merkle_tree::H256::zero().into());
+                    .or_insert_with(|| H256::from([0u8; 32]));
             }
             ExecutionState::ZkVm(state) => {
                 let witness = state.balances.get(token).ok_or_else(|| {
                     format!("No balance witness found for token {token} while running in ZkVm mode")
                 })?;
-                let leaves = balances_to_update
-                    .iter()
-                    .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.to_h256()))
-                    .collect();
+                if balances_to_update.is_empty() {
+                    return Ok(());
+                }
+                let mut current_root = self
+                    .balances_merkle_roots
+                    .get(token)
+                    .map(|h| h.as_slice().try_into().unwrap())
+                    .unwrap_or([0u8; 32]);
 
-                let new_root = &witness
-                    .proof
-                    .0
-                    .clone()
-                    .compute_root::<SHA256Hasher>(leaves)
-                    .unwrap_or_else(|e| panic!("Failed to compute new root on token {token}: {e}"));
+                for (user_info_key, balance) in balances_to_update.iter() {
+                    let proof = witness.proofs.get(user_info_key).ok_or_else(|| {
+                        format!(
+                            "Missing balance proof for token {token} and user key {}",
+                            hex::encode(user_info_key.as_slice())
+                        )
+                    })?;
+                    let leaf_hash = balance.to_hash_bytes();
+                    current_root = compute_root_from_proof(&leaf_hash, &proof.0);
+                }
+
                 self.balances_merkle_roots
-                    .insert(token.to_string(), (*new_root).into());
+                    .insert(token.to_string(), H256::from(current_root));
             }
         }
 
@@ -218,19 +212,26 @@ impl borsh::BorshDeserialize for FullState {
 
 type Sha256Monotree = Monotree<DefaultDatabase, Sha2>;
 
-pub struct MonotreeMap<T: Value> {
+pub(crate) fn monotree_root_to_borshable(root: Option<&MonotreeHash>) -> H256 {
+    match root {
+        Some(hash) => H256::from(*hash),
+        None => H256::from([0u8; 32]),
+    }
+}
+
+pub struct MonotreeMap<T: MonotreeValue + Clone> {
     pub tree: Sha256Monotree,
     pub root: Option<MonotreeHash>,
     pub data: HashMap<H256, T>,
 }
 
-impl<T: Value> Default for MonotreeMap<T> {
+impl<T: MonotreeValue + Clone> Default for MonotreeMap<T> {
     fn default() -> Self {
         Self::new("monotree")
     }
 }
 
-impl<T: Value> MonotreeMap<T> {
+impl<T: MonotreeValue + Clone> MonotreeMap<T> {
     pub fn new(namespace: &str) -> Self {
         Self {
             tree: Sha256Monotree::new(namespace),
@@ -245,7 +246,7 @@ impl<T: Value> MonotreeMap<T> {
 
     pub fn upsert(&mut self, key: &H256, value: T) -> monotree::Result<()> {
         let key_bytes: [u8; 32] = (*key).into();
-        let leaf_hash: [u8; 32] = value.to_h256().into();
+        let leaf_hash: [u8; 32] = value.to_hash_bytes();
         self.root = self
             .tree
             .insert(self.root.as_ref(), &key_bytes, &leaf_hash)?;
@@ -253,10 +254,7 @@ impl<T: Value> MonotreeMap<T> {
         Ok(())
     }
 
-    pub fn upsert_batch(&mut self, entries: &[(H256, T)]) -> monotree::Result<()>
-    where
-        T: Clone,
-    {
+    pub fn upsert_batch(&mut self, entries: &[(H256, T)]) -> monotree::Result<()> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -265,7 +263,7 @@ impl<T: Value> MonotreeMap<T> {
         let mut current_root = self.root;
         for (key, value) in entries.iter() {
             let key_bytes: [u8; 32] = (*key).into();
-            let leaf_hash: [u8; 32] = value.to_h256().into();
+            let leaf_hash: [u8; 32] = value.to_hash_bytes();
             current_root = self
                 .tree
                 .insert(current_root.as_ref(), &key_bytes, &leaf_hash)?;
@@ -276,26 +274,7 @@ impl<T: Value> MonotreeMap<T> {
         Ok(())
     }
 }
-
-impl<T: Value + Clone + Default> MonotreeMap<T> {
-    pub fn compute_sparse_root(&self) -> Result<sparse_merkle_tree::H256, String> {
-        if self.data.is_empty() {
-            return Ok(sparse_merkle_tree::H256::zero());
-        }
-
-        let mut tree: SparseMerkleTree<SHA256Hasher, T, DefaultStore<T>> =
-            SparseMerkleTree::default();
-        let leaves = self
-            .data
-            .iter()
-            .map(|(key, value)| ((*key).into(), value.clone()))
-            .collect::<Vec<_>>();
-        tree.update_all(leaves)
-            .map_err(|e| format!("Failed to compute sparse root: {e}"))?;
-        Ok(*tree.root())
-    }
-}
-impl<T: Value + Clone> Clone for MonotreeMap<T> {
+impl<T: MonotreeValue + Clone> Clone for MonotreeMap<T> {
     fn clone(&self) -> Self {
         let mut clone = MonotreeMap::new("monotree-clone");
         clone.data = self.data.clone();
@@ -304,8 +283,7 @@ impl<T: Value + Clone> Clone for MonotreeMap<T> {
         clone.tree.prepare();
         for (key, value) in &self.data {
             let key_bytes: [u8; 32] = (*key).into();
-            let leaf_hash = value.to_h256();
-            let leaf_bytes: [u8; 32] = leaf_hash.into();
+            let leaf_bytes: [u8; 32] = value.to_hash_bytes();
             root = clone
                 .tree
                 .insert(root.as_ref(), &key_bytes, &leaf_bytes)
@@ -317,7 +295,7 @@ impl<T: Value + Clone> Clone for MonotreeMap<T> {
     }
 }
 
-impl<T: Value> std::fmt::Debug for MonotreeMap<T> {
+impl<T: MonotreeValue + Clone> std::fmt::Debug for MonotreeMap<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MonotreeMap")
             .field("root", &self.root.map(hex::encode))

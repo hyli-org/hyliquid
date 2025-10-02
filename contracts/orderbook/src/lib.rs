@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use sdk::{merkle_utils::BorshableMerkleProof, RunResult};
+use sdk::RunResult;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -13,6 +13,7 @@ use crate::{
     smt_values::UserInfo,
 };
 
+pub mod monotree_proof;
 pub mod order_manager;
 pub mod orderbook;
 pub mod orderbook_state;
@@ -315,7 +316,7 @@ pub struct WithdrawPrivateInput {
 pub struct EscapePrivateInput {
     // Used to assert and increment user's nonce
     pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
+    pub user_info_proof: crate::monotree_proof::BorshableMonotreeProof,
 }
 
 /// Enum representing possible calls to the contract functions.

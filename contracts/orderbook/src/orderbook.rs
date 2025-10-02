@@ -1,9 +1,9 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::monotree_proof::BorshableMonotreeProof;
 use crate::order_manager::OrderManager;
 use crate::orderbook_state::{FullState, LightState, MonotreeMap, ZkVmState};
 use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
@@ -146,11 +146,11 @@ pub enum OrderType {
 #[derive(Debug, Clone)]
 pub struct CreateOrderCtx {
     pub users_info: HashSet<UserInfo>,
-    pub users_info_proof: BorshableMerkleProof,
+    pub users_info_proof: BorshableMonotreeProof,
     pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
+    pub user_info_proof: BorshableMonotreeProof,
     pub balances: HashMap<TokenName, HashMap<UserInfo, Balance>>,
-    pub balances_proof: HashMap<TokenName, BorshableMerkleProof>,
+    pub balances_proof: HashMap<TokenName, BorshableMonotreeProof>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
@@ -240,7 +240,7 @@ impl Orderbook {
                     ExecutionState::ZkVm(_) => {}
                 }
                 self.balances_merkle_roots
-                    .insert((*token).clone(), sparse_merkle_tree::H256::zero().into());
+                    .insert((*token).clone(), H256::from([0u8; 32]));
             }
         }
 
@@ -407,7 +407,7 @@ impl Orderbook {
         &mut self,
         _tx_ctx: &TxContext,
         _user_info: &UserInfo,
-        _user_info_proof: &BorshableMerkleProof,
+        _user_info_proof: &BorshableMonotreeProof,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Logic to allow user to escape with their funds
         // This could involve transferring all their balances to a safe contract or address
@@ -722,24 +722,22 @@ impl Orderbook {
         };
 
         let users_info_merkle_root = match &full_state {
-            ExecutionState::Full(state) => state
-                .users_info_mt
-                .compute_sparse_root()
-                .map_err(|e| format!("Failed to compute users info root: {e}"))?
-                .into(),
+            ExecutionState::Full(state) => crate::orderbook_state::monotree_root_to_borshable(
+                state.users_info_mt.root.as_ref(),
+            ),
             _ => panic!("Business logic error. full_state should be Full"),
         };
         let balances_merkle_roots = match &full_state {
-            ExecutionState::Full(state) => {
-                let mut roots = BTreeMap::new();
-                for (token, balances) in &state.balances_mt {
-                    let root = balances.compute_sparse_root().map_err(|e| {
-                        format!("Failed to compute sparse root for token {token}: {e}")
-                    })?;
-                    roots.insert(token.clone(), root.into());
-                }
-                roots
-            }
+            ExecutionState::Full(state) => state
+                .balances_mt
+                .iter()
+                .map(|(token, balances)| {
+                    (
+                        token.clone(),
+                        crate::orderbook_state::monotree_root_to_borshable(balances.root.as_ref()),
+                    )
+                })
+                .collect(),
             _ => panic!("Business logic error. full_state should be Full"),
         };
         let hashed_secret = Sha256::digest(&secret).into();

@@ -1,27 +1,24 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
-use sparse_merkle_tree::default_store::DefaultStore;
-use sparse_merkle_tree::traits::Value;
-use sparse_merkle_tree::MerkleProof;
-use sparse_merkle_tree::SparseMerkleTree;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    monotree_proof::{compute_root_from_proof, BorshableMonotreeProof},
     orderbook::{ExecutionMode, ExecutionState, Order, Orderbook, OrderbookEvent, TokenName},
     orderbook_state::ZkVmState,
-    smt_values::{Balance, BorshableH256 as H256, UserInfo},
+    smt_values::{Balance, BorshableH256 as H256, MonotreeValue, UserInfo},
 };
+use monotree::{hasher::Sha2, verify_proof, Hasher};
 
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmWitness<T: BorshDeserialize + BorshSerialize + Default> {
     pub value: T,
-    pub proof: BorshableMerkleProof,
+    pub proofs: HashMap<H256, BorshableMonotreeProof>,
 }
 impl<T: BorshDeserialize + BorshSerialize + Default> Default for ZkVmWitness<T> {
     fn default() -> Self {
         ZkVmWitness {
             value: T::default(),
-            proof: BorshableMerkleProof(MerkleProof::new(vec![], vec![])),
+            proofs: HashMap::new(),
         }
     }
 }
@@ -32,12 +29,12 @@ impl Orderbook {
         &self,
         users: &HashSet<UserInfo>,
     ) -> Result<ZkVmWitness<HashSet<UserInfo>>, String> {
-        let proof = self.get_users_info_proofs(users)?;
         let mut set = HashSet::new();
+        let proofs = self.get_users_info_proofs(users)?;
         for user in users {
             set.insert(user.clone());
         }
-        Ok(ZkVmWitness { value: set, proof })
+        Ok(ZkVmWitness { value: set, proofs })
     }
 
     fn create_balances_witness(
@@ -45,70 +42,47 @@ impl Orderbook {
         token: &TokenName,
         users: &[UserInfo],
     ) -> Result<ZkVmWitness<HashMap<H256, Balance>>, String> {
-        let (balances, proof) = self.get_balances_with_proof(users, token)?;
+        let (balances, proofs) = self.get_balances_with_proof(users, token)?;
         let mut map = HashMap::new();
         for (user_info, balance) in balances {
             map.insert(user_info.get_key(), balance);
         }
-        Ok(ZkVmWitness { value: map, proof })
+        Ok(ZkVmWitness { value: map, proofs })
     }
-
-    fn build_users_info_smt(
-        &self,
-        state: &crate::orderbook_state::FullState,
-    ) -> Result<SparseMerkleTree<SHA256Hasher, UserInfo, DefaultStore<UserInfo>>, String> {
-        let mut tree = SparseMerkleTree::default();
-        if !state.users_info_mt.data.is_empty() {
-            let leaves = state
-                .users_info_mt
-                .data
-                .iter()
-                .map(|(key, user)| ((*key).into(), user.clone()))
-                .collect::<Vec<_>>();
-            tree.update_all(leaves)
-                .map_err(|e| format!("Failed to populate users info SMT: {e}"))?;
-        }
-        Ok(tree)
-    }
-
-    fn build_token_smt(
-        &self,
-        tree: &crate::orderbook_state::MonotreeMap<Balance>,
-    ) -> Result<SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>, String> {
-        let mut smt = SparseMerkleTree::default();
-        if !tree.data.is_empty() {
-            let leaves = tree
-                .data
-                .iter()
-                .map(|(key, balance)| ((*key).into(), balance.clone()))
-                .collect::<Vec<_>>();
-            smt.update_all(leaves)
-                .map_err(|e| format!("Failed to populate balances SMT: {e}"))?;
-        }
-        Ok(smt)
-    }
-
     fn get_users_info_proofs(
         &self,
         users_info: &HashSet<UserInfo>,
-    ) -> Result<BorshableMerkleProof, String> {
+    ) -> Result<HashMap<H256, BorshableMonotreeProof>, String> {
+        let mut proofs = HashMap::new();
         if users_info.is_empty() {
-            return Ok(BorshableMerkleProof(MerkleProof::new(vec![], vec![])));
+            return Ok(proofs);
         }
         match &self.execution_state {
             ExecutionState::Full(state) => {
-                let tree = self.build_users_info_smt(state)?;
-                Ok(BorshableMerkleProof(
-                    tree.merkle_proof(
-                        users_info
-                            .iter()
-                            .map(|u| u.get_key().into())
-                            .collect::<Vec<_>>(),
-                    )
-                    .map_err(|e| {
-                        format!("Failed to create merkle proof for users {users_info:?}: {e}")
-                    })?,
-                ))
+                let mut tree = state.users_info_mt.clone();
+                for user in users_info {
+                    tree.upsert(&user.get_key(), user.clone())
+                        .map_err(|e| format!("Failed to update users info clone: {e}"))?;
+                }
+                for user in users_info {
+                    let key = user.get_key();
+                    let key_bytes: [u8; 32] = (*key).into();
+                    let proof = tree
+                        .tree
+                        .get_merkle_proof(tree.root.as_ref(), &key_bytes)
+                        .map_err(|e| {
+                            format!("Failed to create merkle proof for user {}: {e}", user.user)
+                        })?
+                        .ok_or_else(|| {
+                            format!(
+                                "No merkle proof found for user {} with key {}",
+                                user.user,
+                                hex::encode(key.as_slice())
+                            )
+                        })?;
+                    proofs.insert(key, BorshableMonotreeProof(proof));
+                }
+                Ok(proofs)
             }
             ExecutionState::Light(_) => {
                 Err("Light execution mode does not maintain merkle proofs".to_string())
@@ -123,12 +97,15 @@ impl Orderbook {
         &self,
         users_info: &[UserInfo],
         token: &TokenName,
-    ) -> Result<(HashMap<UserInfo, Balance>, BorshableMerkleProof), String> {
+    ) -> Result<
+        (
+            HashMap<UserInfo, Balance>,
+            HashMap<H256, BorshableMonotreeProof>,
+        ),
+        String,
+    > {
         if users_info.is_empty() {
-            return Ok((
-                HashMap::new(),
-                BorshableMerkleProof(MerkleProof::new(vec![], vec![])),
-            ));
+            return Ok((HashMap::new(), HashMap::new()));
         }
         match &self.execution_state {
             ExecutionState::Full(state) => {
@@ -138,26 +115,41 @@ impl Orderbook {
                     balances_map.insert(user_info.clone(), balance);
                 }
 
-                let users: Vec<UserInfo> = balances_map.keys().cloned().collect();
-                let tree = state
+                let mut proofs = HashMap::new();
+                let mut tree = state
                     .balances_mt
                     .get(token)
-                    .ok_or_else(|| format!("No balances tree found for token {token}"))?;
-                let smt = self.build_token_smt(tree)?;
-                let proof = BorshableMerkleProof(
-                    smt.merkle_proof(users.iter().map(|u| u.get_key().into()).collect::<Vec<_>>())
+                    .ok_or_else(|| format!("No balances tree found for token {token}"))?
+                    .clone();
+
+                for (user, balance) in &balances_map {
+                    tree.upsert(&user.get_key(), balance.clone()).map_err(|e| {
+                        format!("Failed to update balances clone for token {token}: {e}")
+                    })?;
+                }
+
+                for user in users_info {
+                    let key = user.get_key();
+                    let key_bytes: [u8; 32] = (*key).into();
+                    let proof = tree
+                        .tree
+                        .get_merkle_proof(tree.root.as_ref(), &key_bytes)
                         .map_err(|e| {
                             format!(
-                                "Failed to create merkle proof for token {token} and users {:?}: {e}",
-                                users_info
-                                    .iter()
-                                    .map(|u| u.user.clone())
-                                    .collect::<Vec<_>>()
+                                "Failed to create merkle proof for token {token} and user {}: {e}",
+                                user.user
                             )
-                        })?,
-                );
+                        })?
+                        .ok_or_else(|| {
+                            format!(
+                                "No merkle proof found for token {token} and user {}",
+                                user.user
+                            )
+                        })?;
+                    proofs.insert(key, BorshableMonotreeProof(proof));
+                }
 
-                Ok((balances_map, proof))
+                Ok((balances_map, proofs))
             }
             ExecutionState::Light(_) => {
                 Err("Light execution mode does not maintain merkle proofs".to_string())
@@ -207,43 +199,49 @@ impl Orderbook {
         match &self.execution_state {
             ExecutionState::Light(_) | ExecutionState::Full(_) => Ok(()),
             ExecutionState::ZkVm(state) => {
-                if self.users_info_merkle_root == sparse_merkle_tree::H256::zero().into() {
+                if self.users_info_merkle_root.as_slice() == &[0u8; 32] {
                     return Ok(());
                 }
 
-                let leaves = state
-                    .users_info
-                    .value
-                    .iter()
-                    .map(|user_info| (user_info.get_key().into(), user_info.to_h256()))
-                    .collect::<Vec<_>>();
-
-                if leaves.is_empty() {
-                    if state.users_info.proof.0 == MerkleProof::new(vec![], vec![]) {
+                if state.users_info.value.is_empty() {
+                    if state.users_info.proofs.is_empty() {
                         return Ok(());
                     }
-                    return Err("No leaves in users_info proof, proof should be empty".to_string());
+                    return Err("No users provided but proofs were supplied".to_string());
                 }
 
-                let is_valid = state
-                    .users_info
-                    .proof
-                    .0
-                    .clone()
-                    .verify::<SHA256Hasher>(
-                        &TryInto::<[u8; 32]>::try_into(self.users_info_merkle_root.as_slice())
-                            .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                            .into(),
-                        leaves,
-                    )
-                    .map_err(|e| format!("Failed to verify users_info proof: {e}"))?;
+                let root_bytes: [u8; 32] =
+                    self.users_info_merkle_root.as_slice().try_into().unwrap();
+                let hasher = Sha2::new();
+                let mut verified_keys = HashSet::new();
 
-                if !is_valid {
-                    return Err(format!(
-                        "Invalid users_info proof; root is {}, value: {:?}",
-                        hex::encode(self.users_info_merkle_root.as_slice()),
-                        state.users_info.value
-                    ));
+                for user_info in state.users_info.value.iter() {
+                    let key = user_info.get_key();
+                    let leaf_hash = user_info.to_hash_bytes();
+                    let proof = state.users_info.proofs.get(&key).ok_or_else(|| {
+                        format!(
+                            "Missing users_info proof for user {} with key {}",
+                            user_info.user,
+                            hex::encode(key.as_slice())
+                        )
+                    })?;
+
+                    let is_valid =
+                        verify_proof(&hasher, Some(&root_bytes), &leaf_hash, Some(&proof.0));
+
+                    if !is_valid {
+                        return Err(format!(
+                            "Invalid users_info proof for user {} with key {}",
+                            user_info.user,
+                            hex::encode(key.as_slice())
+                        ));
+                    }
+
+                    verified_keys.insert(key);
+                }
+
+                if verified_keys.len() != state.users_info.proofs.len() {
+                    return Err("Unused users_info proofs detected".to_string());
                 }
                 Ok(())
             }
@@ -275,39 +273,43 @@ impl Orderbook {
                         }
                     }
 
-                    let leaves = witness
-                        .value
-                        .iter()
-                        .map(|(user_info_key, balance)| {
-                            ((*user_info_key).into(), balance.to_h256())
-                        })
-                        .collect::<Vec<_>>();
-
-                    if leaves.is_empty() {
-                        if witness.proof.0 == MerkleProof::new(vec![], vec![]) {
-                            return Ok(());
+                    if witness.value.is_empty() {
+                        if witness.proofs.is_empty() {
+                            continue;
                         }
-                        return Err(
-                            "No leaves in users_info proof, proof should be empty".to_string()
-                        );
+                        return Err(format!(
+                            "No balances provided for token {token} but proofs were supplied"
+                        ));
                     }
 
-                    let is_valid = &witness
-                        .proof
-                        .0
-                        .clone()
-                        .verify::<SHA256Hasher>(
-                            &TryInto::<[u8; 32]>::try_into(token_root.as_slice())
-                                .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                                .into(),
-                            leaves,
-                        )
-                        .map_err(|e| {
-                            format!("Failed to verify balances proof for token {token}: {e}")
+                    let root_bytes: [u8; 32] = token_root.as_slice().try_into().unwrap();
+                    let hasher = Sha2::new();
+                    let mut verified_keys = HashSet::new();
+
+                    for (user_info_key, balance) in witness.value.iter() {
+                        let leaf_hash = balance.to_hash_bytes();
+                        let proof = witness.proofs.get(user_info_key).ok_or_else(|| {
+                            format!(
+                                "Missing balance proof for token {token} and user key {}",
+                                hex::encode(user_info_key.as_slice())
+                            )
                         })?;
 
-                    if !is_valid {
-                        return Err(format!("Invalid balances proof for token {token}"));
+                        let is_valid =
+                            verify_proof(&hasher, Some(&root_bytes), &leaf_hash, Some(&proof.0));
+
+                        if !is_valid {
+                            return Err(format!(
+                                "Invalid balances proof for token {token} and user key {}",
+                                hex::encode(user_info_key.as_slice())
+                            ));
+                        }
+
+                        verified_keys.insert(*user_info_key);
+                    }
+
+                    if verified_keys.len() != witness.proofs.len() {
+                        return Err(format!("Unused balance proofs detected for token {token}"));
                     }
                 }
                 Ok(())
@@ -422,7 +424,7 @@ impl Orderbook {
             return Err("Can only generate zkvm commitment in FullMode".to_string());
         }
 
-        let zk_orderbook = Orderbook {
+        let mut zk_orderbook = Orderbook {
             hashed_secret: self.hashed_secret,
             pairs_info: self.pairs_info.clone(),
             lane_id: self.lane_id.clone(),
@@ -431,6 +433,57 @@ impl Orderbook {
             order_manager: self.order_manager.clone(),
             execution_state: ExecutionState::ZkVm(self.as_zkvm(user_info, events)?),
         };
+
+        if let ExecutionState::ZkVm(state) = &zk_orderbook.execution_state {
+            if !state.users_info.value.is_empty() {
+                let mut computed_root = None;
+                for user in state.users_info.value.iter() {
+                    if let Some(proof) = state.users_info.proofs.get(&user.get_key()) {
+                        let leaf_hash = user.to_hash_bytes();
+                        let candidate = compute_root_from_proof(&leaf_hash, &proof.0);
+                        match computed_root {
+                            Some(existing) if existing != candidate => {
+                                return Err("Inconsistent users_info proofs provided".to_string())
+                            }
+                            _ => computed_root = Some(candidate),
+                        }
+                    }
+                }
+                if let Some(root) = computed_root {
+                    zk_orderbook.users_info_merkle_root = root.into();
+                }
+            }
+
+            let mut new_balance_roots = zk_orderbook.balances_merkle_roots.clone();
+            for (token, witness) in &state.balances {
+                if witness.value.is_empty() {
+                    continue;
+                }
+
+                let mut computed_root = None;
+                for (user_key, balance) in witness.value.iter() {
+                    if let Some(proof) = witness.proofs.get(user_key) {
+                        let leaf_hash = balance.to_hash_bytes();
+                        let candidate = compute_root_from_proof(&leaf_hash, &proof.0);
+                        match computed_root {
+                            Some(existing) if existing != candidate => {
+                                return Err(format!(
+                                    "Inconsistent balance proofs provided for token {}",
+                                    token
+                                ));
+                            }
+                            _ => computed_root = Some(candidate),
+                        }
+                    }
+                }
+
+                if let Some(root) = computed_root {
+                    new_balance_roots.insert(token.clone(), root.into());
+                }
+            }
+
+            zk_orderbook.balances_merkle_roots = new_balance_roots;
+        }
 
         borsh::to_vec(&zk_orderbook)
             .map_err(|e| format!("Failed to serialize ZkVm orderbook metadata: {e}"))

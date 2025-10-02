@@ -1,19 +1,22 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sparse_merkle_tree::{traits::Value, H256};
 
 use monotree::Hash as MonotreeHash;
+
+pub trait MonotreeValue {
+    fn to_hash_bytes(&self) -> MonotreeHash;
+}
 
 #[derive(
     Debug, Default, Clone, PartialEq, BorshDeserialize, BorshSerialize, Serialize, Deserialize,
 )]
 pub struct Balance(pub u64);
 
-impl Value for Balance {
-    fn to_h256(&self) -> H256 {
+impl MonotreeValue for Balance {
+    fn to_hash_bytes(&self) -> MonotreeHash {
         if self.0 == 0 {
-            return H256::zero();
+            return [0u8; 32];
         }
         let serialized = borsh::to_vec(self).unwrap();
         let mut hasher = Sha256::new();
@@ -21,11 +24,7 @@ impl Value for Balance {
         let result = hasher.finalize();
         let mut h = [0u8; 32];
         h.copy_from_slice(&result);
-        H256::from(h)
-    }
-
-    fn zero() -> Self {
-        Balance(0)
+        h
     }
 }
 
@@ -41,10 +40,9 @@ pub struct UserInfo {
 
 impl std::hash::Hash for UserInfo {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // to_h256() already returns a SHA256 hash, we directly use the first 8 bytes
+        // to_hash_bytes() already returns a SHA256 hash, we directly use the first 8 bytes
         // instead of re-hashing the entire content
-        let h256 = self.to_h256();
-        let bytes = h256.as_slice();
+        let bytes = self.to_hash_bytes();
         let hash_value = u64::from_le_bytes(bytes[..8].try_into().unwrap());
         state.write_u64(hash_value);
     }
@@ -71,10 +69,10 @@ impl UserInfo {
     }
 }
 
-impl Value for UserInfo {
-    fn to_h256(&self) -> H256 {
+impl MonotreeValue for UserInfo {
+    fn to_hash_bytes(&self) -> MonotreeHash {
         if self.nonce == 0 {
-            return H256::zero();
+            return [0u8; 32];
         }
 
         let serialized = borsh::to_vec(self).unwrap();
@@ -83,16 +81,7 @@ impl Value for UserInfo {
         let result = hasher.finalize();
         let mut h = [0u8; 32];
         h.copy_from_slice(&result);
-        H256::from(h)
-    }
-
-    fn zero() -> Self {
-        UserInfo {
-            user: String::new(),
-            salt: Vec::new(),
-            nonce: 0,
-            session_keys: Vec::new(),
-        }
+        h
     }
 }
 
@@ -146,8 +135,8 @@ impl BorshableH256 {
         &self.0
     }
 
-    pub fn as_h256(&self) -> H256 {
-        H256::from(self.0)
+    pub fn as_h256(&self) -> [u8; 32] {
+        self.0
     }
 }
 
@@ -157,28 +146,8 @@ impl From<[u8; 32]> for BorshableH256 {
     }
 }
 
-impl From<&H256> for BorshableH256 {
-    fn from(h: &H256) -> Self {
-        let bytes: [u8; 32] = (*h).into();
-        BorshableH256(bytes)
-    }
-}
-
 impl From<BorshableH256> for [u8; 32] {
     fn from(h: BorshableH256) -> Self {
         h.0
-    }
-}
-
-impl From<H256> for BorshableH256 {
-    fn from(h: H256) -> Self {
-        let bytes: [u8; 32] = h.into();
-        BorshableH256(bytes)
-    }
-}
-
-impl From<BorshableH256> for H256 {
-    fn from(h: BorshableH256) -> Self {
-        H256::from(h.0)
     }
 }
