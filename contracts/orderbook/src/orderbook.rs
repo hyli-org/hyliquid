@@ -159,6 +159,10 @@ pub enum OrderbookEvent {
     SessionKeyAdded {
         user: String,
     },
+    NonceIncremented {
+        user: String,
+        nonce: u32,
+    },
 }
 
 /// impl of functions for actions execution
@@ -219,7 +223,7 @@ impl Orderbook {
         // Add the session key to the user's list of session keys
         user_info.session_keys.push(pubkey.clone());
 
-        let events = match &mut self.execution_state {
+        let mut events = match &mut self.execution_state {
             ExecutionState::Full(state) => {
                 state
                     .users_info
@@ -243,7 +247,7 @@ impl Orderbook {
         };
         if user_info.nonce == 0 {
             // We incremente nonce to be able to add it to the SMT
-            self.increment_nonce_and_save_user_info(&user_info)?;
+            events.push(self.increment_nonce_and_save_user_info(&user_info)?);
         } else {
             self.update_user_info_merkle_root(&user_info)?;
         }
@@ -295,7 +299,7 @@ impl Orderbook {
         self.deduct_from_account(token, user_info, *amount)
             .map_err(|e| e.to_string())?;
 
-        let events = match self.execution_state.mode() {
+        let mut events = match self.execution_state.mode() {
             ExecutionMode::Light | ExecutionMode::Full => {
                 let user_balance = self.get_balance(user_info, token);
                 vec![OrderbookEvent::BalanceUpdated {
@@ -308,7 +312,7 @@ impl Orderbook {
         };
 
         // Increment user's nonce
-        self.increment_nonce_and_save_user_info(user_info)?;
+        events.push(self.increment_nonce_and_save_user_info(user_info)?);
 
         Ok(events)
     }
@@ -335,13 +339,13 @@ impl Orderbook {
             .map_err(|e| e.to_string())?;
 
         // Cancel order through order manager
-        let mut cancel_events = self.order_manager.cancel_order(&order_id)?;
+        let mut events = self.order_manager.cancel_order(&order_id)?;
 
         match self.execution_state.mode() {
             ExecutionMode::Light | ExecutionMode::Full => {
                 let user_balance = self.get_balance(user_info, &required_token);
 
-                cancel_events.push(OrderbookEvent::BalanceUpdated {
+                events.push(OrderbookEvent::BalanceUpdated {
                     user: user_info.user.clone(),
                     token: required_token.to_string(),
                     amount: user_balance.0,
@@ -349,9 +353,9 @@ impl Orderbook {
             }
             ExecutionMode::ZkVm => {}
         }
-        self.increment_nonce_and_save_user_info(user_info)?;
+        events.push(self.increment_nonce_and_save_user_info(user_info)?);
 
-        Ok(cancel_events)
+        Ok(events)
     }
 
     pub fn escape(
@@ -635,7 +639,7 @@ impl Orderbook {
             self.update_balances(&token, balances_to_update)?;
         }
 
-        self.increment_nonce_and_save_user_info(user_info)?;
+        events.push(self.increment_nonce_and_save_user_info(user_info)?);
 
         Ok(events)
     }

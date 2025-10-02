@@ -5,7 +5,7 @@ use sdk::merkle_utils::SHA256Hasher;
 use sparse_merkle_tree::SparseMerkleTree;
 use sparse_merkle_tree::{default_store::DefaultStore, traits::Value};
 
-use crate::orderbook::TokenName;
+use crate::orderbook::{OrderbookEvent, TokenName};
 use crate::orderbook_witness::ZkVmWitness;
 use crate::{
     orderbook::{ExecutionState, Orderbook},
@@ -74,13 +74,17 @@ impl Orderbook {
     pub fn increment_nonce_and_save_user_info(
         &mut self,
         user_info: &UserInfo,
-    ) -> Result<(), String> {
+    ) -> Result<OrderbookEvent, String> {
         let mut updated_user_info = user_info.clone();
         updated_user_info.nonce = updated_user_info
             .nonce
             .checked_add(1)
             .ok_or("Nonce overflow")?;
-        self.update_user_info_merkle_root(&updated_user_info)
+        self.update_user_info_merkle_root(&updated_user_info)?;
+        Ok(OrderbookEvent::NonceIncremented {
+            user: user_info.user.clone(),
+            nonce: updated_user_info.nonce,
+        })
     }
 
     pub fn update_user_info_merkle_root(&mut self, user_info: &UserInfo) -> Result<(), String> {
