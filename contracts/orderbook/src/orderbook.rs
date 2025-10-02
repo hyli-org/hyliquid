@@ -143,17 +143,6 @@ pub enum OrderType {
     StopLimit,
 }
 
-/// Context struct for creating an order, containing all necessary proofs and mappings.
-#[derive(Debug, Clone)]
-pub struct CreateOrderCtx {
-    pub users_info: HashSet<UserInfo>,
-    pub users_info_proof: BorshableMerkleProof,
-    pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
-    pub balances: HashMap<TokenName, HashMap<UserInfo, Balance>>,
-    pub balances_proof: HashMap<TokenName, BorshableMerkleProof>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub struct Order {
     pub order_id: OrderId,
