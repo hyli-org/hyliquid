@@ -4,7 +4,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use monotree::{hasher::Sha2, Monotree};
 use monotree::{DefaultDatabase, Hash as MonotreeHash};
 use sdk::merkle_utils::SHA256Hasher;
-use sparse_merkle_tree::traits::Value;
+use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkleTree};
 
 use crate::orderbook::{OrderbookEvent, TokenName};
 use crate::orderbook_witness::ZkVmWitness;
@@ -100,7 +100,11 @@ impl Orderbook {
                 state
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
-                self.users_info_merkle_root = root_to_borshable(state.users_info_mt.root.as_ref());
+                let sparse_root = state
+                    .users_info_mt
+                    .compute_sparse_root()
+                    .map_err(|e| format!("Failed to compute users info sparse root: {e}"))?;
+                self.users_info_merkle_root = sparse_root.into();
             }
             ExecutionState::Light(state) => {
                 state
@@ -153,8 +157,11 @@ impl Orderbook {
                 tree.upsert_batch(&balances_to_update).map_err(|e| {
                     format!("Failed to update balances on token {token} in monotree: {e}")
                 })?;
+                let sparse_root = tree
+                    .compute_sparse_root()
+                    .map_err(|e| format!("Failed to compute balances sparse root: {e}"))?;
                 self.balances_merkle_roots
-                    .insert(token.to_string(), root_to_borshable(tree.root.as_ref()));
+                    .insert(token.to_string(), sparse_root.into());
             }
             ExecutionState::Light(state) => {
                 let token_entry = state
@@ -210,11 +217,6 @@ impl borsh::BorshDeserialize for FullState {
 }
 
 type Sha256Monotree = Monotree<DefaultDatabase, Sha2>;
-
-fn root_to_borshable(root: Option<&MonotreeHash>) -> H256 {
-    root.map(|bytes| sparse_merkle_tree::H256::from(*bytes).into())
-        .unwrap_or_else(|| sparse_merkle_tree::H256::zero().into())
-}
 
 pub struct MonotreeMap<T: Value> {
     pub tree: Sha256Monotree,
@@ -272,6 +274,25 @@ impl<T: Value> MonotreeMap<T> {
         self.tree.commit();
         self.root = current_root;
         Ok(())
+    }
+}
+
+impl<T: Value + Clone + Default> MonotreeMap<T> {
+    pub fn compute_sparse_root(&self) -> Result<sparse_merkle_tree::H256, String> {
+        if self.data.is_empty() {
+            return Ok(sparse_merkle_tree::H256::zero());
+        }
+
+        let mut tree: SparseMerkleTree<SHA256Hasher, T, DefaultStore<T>> =
+            SparseMerkleTree::default();
+        let leaves = self
+            .data
+            .iter()
+            .map(|(key, value)| ((*key).into(), value.clone()))
+            .collect::<Vec<_>>();
+        tree.update_all(leaves)
+            .map_err(|e| format!("Failed to compute sparse root: {e}"))?;
+        Ok(*tree.root())
     }
 }
 impl<T: Value + Clone> Clone for MonotreeMap<T> {

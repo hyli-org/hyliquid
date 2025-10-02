@@ -58,10 +58,14 @@ fn add_session_key_registers_new_key() {
         .expect("user should exist after adding session key");
 
     assert_eq!(user.session_keys, vec![key.clone()]);
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert!(matches!(
         events[0],
         OrderbookEvent::SessionKeyAdded { ref user, .. } if user == "alice"
+    ));
+    assert!(matches!(
+        events[1],
+        OrderbookEvent::NonceIncremented { ref user, nonce } if user == "alice" && nonce == 1
     ));
 
     let err = orderbook
@@ -157,11 +161,15 @@ fn withdraw_deducts_balance() {
         .expect("withdraw should succeed");
 
     assert_eq!(orderbook.get_balance(&user, &pair.1).0, 600);
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert!(matches!(
         events[0],
         OrderbookEvent::BalanceUpdated { ref user, ref token, amount }
             if user == "carol" && token == &pair.1 && amount == 600
+    ));
+    assert!(matches!(
+        events[1],
+        OrderbookEvent::NonceIncremented { ref user, nonce } if user == "carol" && nonce == 1
     ));
 
     let err = orderbook

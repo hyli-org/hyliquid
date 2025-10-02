@@ -1,5 +1,4 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use monotree::Hash as MonotreeHash;
 use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -9,11 +8,6 @@ use crate::order_manager::OrderManager;
 use crate::orderbook_state::{FullState, LightState, MonotreeMap, ZkVmState};
 use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
 use sdk::{ContractName, LaneId, TxContext};
-
-fn monotree_root_to_h256(root: Option<&MonotreeHash>) -> H256 {
-    root.map(|bytes| sparse_merkle_tree::H256::from(*bytes).into())
-        .unwrap_or_else(|| sparse_merkle_tree::H256::zero().into())
-}
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
 pub struct Orderbook {
@@ -728,17 +722,24 @@ impl Orderbook {
         };
 
         let users_info_merkle_root = match &full_state {
-            ExecutionState::Full(state) => monotree_root_to_h256(state.users_info_mt.root.as_ref()),
+            ExecutionState::Full(state) => state
+                .users_info_mt
+                .compute_sparse_root()
+                .map_err(|e| format!("Failed to compute users info root: {e}"))?
+                .into(),
             _ => panic!("Business logic error. full_state should be Full"),
         };
         let balances_merkle_roots = match &full_state {
-            ExecutionState::Full(state) => state
-                .balances_mt
-                .iter()
-                .map(|(token, balances)| {
-                    (token.clone(), monotree_root_to_h256(balances.root.as_ref()))
-                })
-                .collect(),
+            ExecutionState::Full(state) => {
+                let mut roots = BTreeMap::new();
+                for (token, balances) in &state.balances_mt {
+                    let root = balances.compute_sparse_root().map_err(|e| {
+                        format!("Failed to compute sparse root for token {token}: {e}")
+                    })?;
+                    roots.insert(token.clone(), root.into());
+                }
+                roots
+            }
             _ => panic!("Business logic error. full_state should be Full"),
         };
         let hashed_secret = Sha256::digest(&secret).into();

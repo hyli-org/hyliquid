@@ -261,6 +261,20 @@ impl Orderbook {
                         .get(token.as_str())
                         .ok_or(format!("Token {token} not found in balances merkle roots"))?;
 
+                    for user_info_key in witness.value.keys() {
+                        let has_user = state
+                            .users_info
+                            .value
+                            .iter()
+                            .any(|info| info.get_key() == *user_info_key);
+                        if !has_user {
+                            return Err(format!(
+                                "Missing user info for user {} while verifying balances of token {token}",
+                                hex::encode(user_info_key.as_slice())
+                            ));
+                        }
+                    }
+
                     let leaves = witness
                         .value
                         .iter()
@@ -353,7 +367,9 @@ impl Orderbook {
                             }
                         }
                     };
-                    users_info_needed.insert(ui.clone());
+                    if *user == user_info.user {
+                        users_info_needed.insert(ui.clone());
+                    }
 
                     balances_needed
                         .entry(token.clone())

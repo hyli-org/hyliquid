@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sparse_merkle_tree::{traits::Value, H256};
 
+use monotree::Hash as MonotreeHash;
+
 #[derive(
     Debug, Default, Clone, PartialEq, BorshDeserialize, BorshSerialize, Serialize, Deserialize,
 )]
@@ -95,27 +97,26 @@ impl Value for UserInfo {
 }
 
 #[derive(Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
-pub struct BorshableH256(pub H256);
+pub struct BorshableH256(pub MonotreeHash);
 
 impl std::hash::Hash for BorshableH256 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // BorshableH256 is already a hash, we directly use the first 8 bytes
         // instead of re-hashing the entire content
-        let hash_value = u64::from_le_bytes(self.0.as_slice()[..8].try_into().unwrap());
+        let hash_value = u64::from_le_bytes(self.0[..8].try_into().unwrap());
         state.write_u64(hash_value);
     }
 }
 
 impl std::fmt::Debug for BorshableH256 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "BorshableH256({})", hex::encode(self.0.as_slice()))
+        write!(f, "BorshableH256({})", hex::encode(self.0))
     }
 }
 
 impl borsh::BorshSerialize for BorshableH256 {
     fn serialize<W: std::io::Write>(&self, writer: &mut W) -> std::io::Result<()> {
-        let bytes: [u8; 32] = self.0.into();
-        writer.write_all(&bytes)
+        writer.write_all(&self.0)
     }
 }
 
@@ -123,12 +124,12 @@ impl borsh::BorshDeserialize for BorshableH256 {
     fn deserialize_reader<R: std::io::Read>(reader: &mut R) -> std::io::Result<Self> {
         let mut bytes = [0u8; 32];
         reader.read_exact(&mut bytes)?;
-        Ok(BorshableH256(H256::from(bytes)))
+        Ok(BorshableH256(bytes))
     }
 }
 
 impl std::ops::Deref for BorshableH256 {
-    type Target = H256;
+    type Target = MonotreeHash;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
@@ -136,49 +137,48 @@ impl std::ops::Deref for BorshableH256 {
 
 impl AsRef<[u8]> for BorshableH256 {
     fn as_ref(&self) -> &[u8] {
-        self.0.as_slice()
+        &self.0
     }
 }
 
 impl BorshableH256 {
+    pub fn as_slice(&self) -> &[u8] {
+        &self.0
+    }
+
     pub fn as_h256(&self) -> H256 {
-        self.0
+        H256::from(self.0)
     }
 }
 
 impl From<[u8; 32]> for BorshableH256 {
     fn from(bytes: [u8; 32]) -> Self {
-        BorshableH256(bytes.into())
+        BorshableH256(bytes)
     }
 }
 
 impl From<&H256> for BorshableH256 {
     fn from(h: &H256) -> Self {
-        BorshableH256(*h)
-    }
-}
-
-impl<'a> From<&'a H256> for &'a BorshableH256 {
-    fn from(h: &'a H256) -> &'a BorshableH256 {
-        // SAFETY: This is only safe if the memory layout of H256 and BorshableH256 is the same.
-        unsafe { &*(h as *const H256 as *const BorshableH256) }
+        let bytes: [u8; 32] = (*h).into();
+        BorshableH256(bytes)
     }
 }
 
 impl From<BorshableH256> for [u8; 32] {
     fn from(h: BorshableH256) -> Self {
-        h.0.into()
+        h.0
     }
 }
 
 impl From<H256> for BorshableH256 {
     fn from(h: H256) -> Self {
-        BorshableH256(h)
+        let bytes: [u8; 32] = h.into();
+        BorshableH256(bytes)
     }
 }
 
 impl From<BorshableH256> for H256 {
     fn from(h: BorshableH256) -> Self {
-        h.0
+        H256::from(h.0)
     }
 }
