@@ -1,21 +1,21 @@
 use crate::smt_values::BorshableH256 as H256;
 use borsh::{BorshDeserialize, BorshSerialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{HashMap, VecDeque};
 
 use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, TokenPair};
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
 pub struct OrderManager {
     // All orders indexed by order_id
-    pub orders: BTreeMap<OrderId, Order>,
+    pub orders: HashMap<OrderId, Order>,
     // Buy orders sorted by price (highest first) for each token pair
-    pub buy_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
+    pub buy_orders: HashMap<TokenPair, VecDeque<OrderId>>,
     // Sell orders sorted by price (lowest first) for each token pair
-    pub sell_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
+    pub sell_orders: HashMap<TokenPair, VecDeque<OrderId>>,
 
     // Mapping of order IDs to their owners
     // This field will not be commited.
-    pub orders_owner: BTreeMap<OrderId, H256>,
+    pub orders_owner: HashMap<OrderId, H256>,
 }
 
 #[cfg(test)]

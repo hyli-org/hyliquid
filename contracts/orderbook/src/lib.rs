@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
@@ -8,14 +8,15 @@ use sha2::{Digest, Sha256};
 
 use crate::{
     orderbook::{
-        ExecutionMode, ExecutionState, Order, OrderSide, OrderType, Orderbook, OrderbookEvent,
-        PairInfo, TokenPair,
+        ExecutionState, Order, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair,
     },
     smt_values::UserInfo,
 };
 
 pub mod order_manager;
 pub mod orderbook;
+pub mod orderbook_state;
+pub mod orderbook_witness;
 pub mod smt_values;
 mod tests;
 pub mod utils;
@@ -29,12 +30,12 @@ impl sdk::ZkContract for Orderbook {
         let (action, ctx) = sdk::utils::parse_raw_calldata::<OrderbookAction>(calldata)?;
 
         let Some(tx_ctx) = &calldata.tx_ctx else {
-            return Err("tx_ctx is missing".to_string());
+            panic!("tx_ctx is missing");
         };
 
         // The contract must be provided with all blobs
         if calldata.blobs.len() != calldata.tx_blob_count {
-            return Err("Calldata is not composed with all tx's blobs".to_string());
+            panic!("Calldata is not composed with all tx's blobs");
         }
 
         // Check if blobs in the calldata are all whitelisted
@@ -47,28 +48,13 @@ impl sdk::ZkContract for Orderbook {
             }
         }
 
-        let is_server_execution = matches!(
-            self.execution_state.mode(),
-            ExecutionMode::Full | ExecutionMode::Light
-        );
-
         // Verify that balances are correct
-        self.verify_balances_proof().map_err(|err| {
-            if is_server_execution {
-                format!("Failed to verify balances proof: {err}")
-            } else {
-                panic!("Failed to verify balances proof: {err}")
-            }
-        })?;
+        self.verify_balances_proof()
+            .unwrap_or_else(|e| panic!("Failed to verify balances proof: {e}"));
 
         // Verify that users info proof are correct
-        self.verify_users_info_proof().map_err(|e| {
-            if is_server_execution {
-                format!("Failed to verify users info proof: {e}")
-            } else {
-                panic!("Failed to verify users info proof: {e}")
-            }
-        })?;
+        self.verify_users_info_proof()
+            .unwrap_or_else(|e| panic!("Failed to verify users info proof: {e}"));
 
         let res = match action {
             OrderbookAction::PermissionnedOrderbookAction(action) => {
@@ -77,50 +63,29 @@ impl sdk::ZkContract for Orderbook {
                 }
 
                 let permissionned_private_input: PermissionnedPrivateInput =
-                    borsh::from_slice(&calldata.private_input).map_err(|e| {
-                        if is_server_execution {
-                            format!("Failed to deserialize PermissionnedPrivateInput: {e}")
-                        } else {
-                            panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
-                        }
-                    })?;
+                    borsh::from_slice(&calldata.private_input).unwrap_or_else(|e| {
+                        panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
+                    });
 
                 let user_info = permissionned_private_input.user_info.clone();
 
                 // Assert that used user_info is correct
-                self.has_user_info_key(user_info.get_key()).map_err(|e| {
-                    if is_server_execution {
-                        format!("User info provided by server is incorrect: {e}")
-                    } else {
-                        panic!("User info provided by server is incorrect: {e}")
-                    }
-                })?;
+                self.has_user_info_key(user_info.get_key())
+                    .unwrap_or_else(|e| panic!("User info provided by server is incorrect: {e}"));
 
                 let hashed_secret = Sha256::digest(&permissionned_private_input.secret)
                     .as_slice()
                     .to_vec();
                 if hashed_secret != self.hashed_secret {
-                    if is_server_execution {
-                        return Err("Invalid secret in private input".to_string());
-                    } else {
-                        panic!("Invalid secret in private input");
-                    }
+                    panic!("Invalid secret in private input");
                 }
 
                 // Execute the given action
-                let events = self
-                    .execute_permissionned_action(
-                        user_info,
-                        action,
-                        &permissionned_private_input.private_input,
-                    )
-                    .map_err(|e| {
-                        if is_server_execution {
-                            format!("Failed to execute permissioned action: {e}")
-                        } else {
-                            panic!("Failed to execute permissioned action: {e}")
-                        }
-                    })?;
+                let events = self.execute_permissionned_action(
+                    user_info,
+                    action,
+                    &permissionned_private_input.private_input,
+                )?;
 
                 let res = borsh::to_vec(&events)
                     .map_err(|e| format!("Failed to encode OrderbookEvents: {e}"))?;
@@ -132,34 +97,21 @@ impl sdk::ZkContract for Orderbook {
                 let events = match action {
                     PermissionlessOrderbookAction::Escape { user_key } => {
                         let escape_private_input: EscapePrivateInput =
-                            borsh::from_slice(&calldata.private_input).map_err(|e| {
-                                if is_server_execution {
-                                    format!("Failed to deserialize PermissionnedPrivateInput: {e}")
-                                } else {
-                                    panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
-                                }
-                            })?;
+                            borsh::from_slice(&calldata.private_input).unwrap_or_else(|e| {
+                                panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
+                            });
 
                         let user_info = escape_private_input.user_info.clone();
                         let user_info_proof = escape_private_input.user_info_proof.clone();
 
                         // Assert that used user_info is correct
-                        self.has_user_info_key(user_info.get_key()).map_err(|e| {
-                            if is_server_execution {
-                                format!("User info provided by server is incorrect: {e}")
-                            } else {
+                        self.has_user_info_key(user_info.get_key())
+                            .unwrap_or_else(|e| {
                                 panic!("User info provided by server is incorrect: {e}")
-                            }
-                        })?;
+                            });
 
                         if user_key != std::convert::Into::<[u8; 32]>::into(user_info.get_key()) {
-                            if is_server_execution {
-                                return Err(
-                                    "User info does not correspond with user_key used".to_string()
-                                );
-                            } else {
-                                panic!("User info does not correspond with user_key used")
-                            }
+                            panic!("User info does not correspond with user_key used")
                         }
                         self.escape(tx_ctx, &user_info, &user_info_proof)?
                     }
@@ -175,7 +127,7 @@ impl sdk::ZkContract for Orderbook {
         Ok((res, ctx, vec![]))
     }
 
-    /// We serialize a currated version of the state on-chain
+    /// We serialize a curated version of the state on-chain
     fn commit(&self) -> sdk::StateCommitment {
         let mut state_to_commit = Orderbook {
             hashed_secret: self.hashed_secret,
@@ -188,7 +140,7 @@ impl sdk::ZkContract for Orderbook {
         };
 
         // cleaning sensitive fields before committing
-        state_to_commit.order_manager.orders_owner = BTreeMap::new();
+        state_to_commit.order_manager.orders_owner = HashMap::new();
 
         sdk::StateCommitment(borsh::to_vec(&state_to_commit).expect("Failed to encode Orderbook"))
     }

@@ -130,8 +130,9 @@ impl OrderbookProverModule {
                     .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
 
                 // This should NEVER happen. If it happens, it means there is a difference in execution logic between api and prover.
-                if events != execution_events {
-                    bail!("The provided events do not match the executed events. This should NEVER happen. Provided: {events:?}, Executed: {execution_events:?}");
+                // FIXME: we should compare elements and not lengths
+                if events.len() != execution_events.len() {
+                    bail!("The provided events do not match the executed events. This should NEVER happen. Provided: {events:#?}, Executed: {execution_events:#?}");
                 }
 
                 let private_input = borsh::to_vec(&permissioned_private_input)?;

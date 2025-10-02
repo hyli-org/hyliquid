@@ -37,6 +37,17 @@ pub struct UserInfo {
     pub session_keys: Vec<Vec<u8>>,
 }
 
+impl std::hash::Hash for UserInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // to_h256() already returns a SHA256 hash, we directly use the first 8 bytes
+        // instead of re-hashing the entire content
+        let h256 = self.to_h256();
+        let bytes = h256.as_slice();
+        let hash_value = u64::from_le_bytes(bytes[..8].try_into().unwrap());
+        state.write_u64(hash_value);
+    }
+}
+
 impl UserInfo {
     pub fn new(user: String, salt: Vec<u8>) -> Self {
         UserInfo {
@@ -85,6 +96,15 @@ impl Value for UserInfo {
 
 #[derive(Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BorshableH256(pub H256);
+
+impl std::hash::Hash for BorshableH256 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // BorshableH256 is already a hash, we directly use the first 8 bytes
+        // instead of re-hashing the entire content
+        let hash_value = u64::from_le_bytes(self.0.as_slice()[..8].try_into().unwrap());
+        state.write_u64(hash_value);
+    }
+}
 
 impl std::fmt::Debug for BorshableH256 {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
