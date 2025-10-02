@@ -1,7 +1,9 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
+use sparse_merkle_tree::default_store::DefaultStore;
 use sparse_merkle_tree::traits::Value;
 use sparse_merkle_tree::MerkleProof;
+use sparse_merkle_tree::SparseMerkleTree;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
@@ -51,6 +53,41 @@ impl Orderbook {
         Ok(ZkVmWitness { value: map, proof })
     }
 
+    fn build_users_info_smt(
+        &self,
+        state: &crate::orderbook_state::FullState,
+    ) -> Result<SparseMerkleTree<SHA256Hasher, UserInfo, DefaultStore<UserInfo>>, String> {
+        let mut tree = SparseMerkleTree::default();
+        if !state.users_info_mt.data.is_empty() {
+            let leaves = state
+                .users_info_mt
+                .data
+                .iter()
+                .map(|(key, user)| ((*key).into(), user.clone()))
+                .collect::<Vec<_>>();
+            tree.update_all(leaves)
+                .map_err(|e| format!("Failed to populate users info SMT: {e}"))?;
+        }
+        Ok(tree)
+    }
+
+    fn build_token_smt(
+        &self,
+        tree: &crate::orderbook_state::MonotreeMap<Balance>,
+    ) -> Result<SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>, String> {
+        let mut smt = SparseMerkleTree::default();
+        if !tree.data.is_empty() {
+            let leaves = tree
+                .data
+                .iter()
+                .map(|(key, balance)| ((*key).into(), balance.clone()))
+                .collect::<Vec<_>>();
+            smt.update_all(leaves)
+                .map_err(|e| format!("Failed to populate balances SMT: {e}"))?;
+        }
+        Ok(smt)
+    }
+
     fn get_users_info_proofs(
         &self,
         users_info: &HashSet<UserInfo>,
@@ -59,10 +96,10 @@ impl Orderbook {
             return Ok(BorshableMerkleProof(MerkleProof::new(vec![], vec![])));
         }
         match &self.execution_state {
-            ExecutionState::Full(state) => Ok(BorshableMerkleProof(
-                state
-                    .users_info_mt
-                    .merkle_proof(
+            ExecutionState::Full(state) => {
+                let tree = self.build_users_info_smt(state)?;
+                Ok(BorshableMerkleProof(
+                    tree.merkle_proof(
                         users_info
                             .iter()
                             .map(|u| u.get_key().into())
@@ -71,7 +108,8 @@ impl Orderbook {
                     .map_err(|e| {
                         format!("Failed to create merkle proof for users {users_info:?}: {e}")
                     })?,
-            )),
+                ))
+            }
             ExecutionState::Light(_) => {
                 Err("Light execution mode does not maintain merkle proofs".to_string())
             }
@@ -105,8 +143,9 @@ impl Orderbook {
                     .balances_mt
                     .get(token)
                     .ok_or_else(|| format!("No balances tree found for token {token}"))?;
+                let smt = self.build_token_smt(tree)?;
                 let proof = BorshableMerkleProof(
-                    tree.merkle_proof(users.iter().map(|u| u.get_key().into()).collect::<Vec<_>>())
+                    smt.merkle_proof(users.iter().map(|u| u.get_key().into()).collect::<Vec<_>>())
                         .map_err(|e| {
                             format!(
                                 "Failed to create merkle proof for token {token} and users {:?}: {e}",
@@ -131,11 +170,10 @@ impl Orderbook {
 
     pub fn get_user_info_from_key(&self, key: &H256) -> Result<UserInfo, String> {
         match &self.execution_state {
-            ExecutionState::Full(state) => state.users_info_mt.get(key).map_err(|e| {
+            ExecutionState::Full(state) => state.users_info_mt.get(key).cloned().ok_or_else(|| {
                 format!(
-                    "No user info found for key {:?}: {}",
-                    hex::encode(key.as_slice()),
-                    e
+                    "No user info found for key {:?}",
+                    hex::encode(key.as_slice())
                 )
             }),
             ExecutionState::Light(state) => state

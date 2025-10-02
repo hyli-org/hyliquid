@@ -1,14 +1,19 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use monotree::Hash as MonotreeHash;
 use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sparse_merkle_tree::SparseMerkleTree;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::order_manager::OrderManager;
-use crate::orderbook_state::{FullState, LightState, ZkVmState};
+use crate::orderbook_state::{FullState, LightState, MonotreeMap, ZkVmState};
 use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
 use sdk::{ContractName, LaneId, TxContext};
+
+fn monotree_root_to_h256(root: Option<&MonotreeHash>) -> H256 {
+    root.map(|bytes| sparse_merkle_tree::H256::from(*bytes).into())
+        .unwrap_or_else(|| sparse_merkle_tree::H256::zero().into())
+}
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
 pub struct Orderbook {
@@ -70,25 +75,25 @@ impl ExecutionState {
                 balances,
             })),
             ExecutionMode::Full => {
-                let mut users_info_mt = SparseMerkleTree::default();
-
-                let leaves = users_info
+                let mut users_info_mt = MonotreeMap::default();
+                let user_entries = users_info
                     .iter()
-                    .map(|(_, user_info)| (user_info.get_key().into(), user_info.clone()))
-                    .collect();
+                    .map(|(_, user_info)| (user_info.get_key(), user_info.clone()))
+                    .collect::<Vec<_>>();
                 users_info_mt
-                    .update_all(leaves)
-                    .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
+                    .upsert_batch(&user_entries)
+                    .map_err(|e| format!("Failed to update users info in monotree: {e}"))?;
 
                 let mut balances_mt = HashMap::new();
                 for (token, token_balances) in balances.iter() {
-                    let mut tree = SparseMerkleTree::default();
+                    let mut tree = MonotreeMap::default();
                     let leaves = token_balances
                         .iter()
-                        .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
-                        .collect();
-                    tree.update_all(leaves)
-                        .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?;
+                        .map(|(user_info_key, balance)| (*user_info_key, balance.clone()))
+                        .collect::<Vec<_>>();
+                    tree.upsert_batch(&leaves).map_err(|e| {
+                        format!("Failed to update balances on token {token} in monotree: {e}")
+                    })?;
                     balances_mt.insert(token.clone(), tree);
                 }
 
@@ -225,7 +230,7 @@ impl Orderbook {
         }
         self.pairs_info.insert(pair.clone(), info.clone());
 
-        // Initialize a new SparseMerkleTree for the token pair if not already present
+        // Initialize a new Monotree for the token pair if not already present
         for token in &[&pair.0, &pair.1] {
             if !self.balances_merkle_roots.contains_key(*token) {
                 match &mut self.execution_state {
@@ -233,12 +238,7 @@ impl Orderbook {
                         state
                             .balances_mt
                             .entry((*token).clone())
-                            .or_insert_with(|| {
-                                SparseMerkleTree::new(
-                                    sparse_merkle_tree::H256::zero(),
-                                    Default::default(),
-                                )
-                            });
+                            .or_insert_with(MonotreeMap::default);
                     }
                     ExecutionState::Light(state) => {
                         state.balances.entry((*token).clone()).or_default();
@@ -728,14 +728,16 @@ impl Orderbook {
         };
 
         let users_info_merkle_root = match &full_state {
-            ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
+            ExecutionState::Full(state) => monotree_root_to_h256(state.users_info_mt.root.as_ref()),
             _ => panic!("Business logic error. full_state should be Full"),
         };
         let balances_merkle_roots = match &full_state {
             ExecutionState::Full(state) => state
                 .balances_mt
                 .iter()
-                .map(|(token, balances)| (token.clone(), (*balances.root()).into()))
+                .map(|(token, balances)| {
+                    (token.clone(), monotree_root_to_h256(balances.root.as_ref()))
+                })
                 .collect(),
             _ => panic!("Business logic error. full_state should be Full"),
         };
@@ -760,19 +762,11 @@ impl Orderbook {
 
     pub fn get_balances(&self) -> HashMap<TokenName, HashMap<H256, Balance>> {
         match &self.execution_state {
-            ExecutionState::Full(state) => {
-                let mut balances = HashMap::new();
-                for (token, balances_mt) in state.balances_mt.iter() {
-                    let token_store = balances_mt.store();
-                    let token_balances: HashMap<H256, Balance> = token_store
-                        .leaves_map()
-                        .iter()
-                        .map(|(k, v)| ((*k).into(), v.clone()))
-                        .collect();
-                    balances.insert(token.clone(), token_balances.clone());
-                }
-                balances
-            }
+            ExecutionState::Full(state) => state
+                .balances_mt
+                .iter()
+                .map(|(token, merkle_map)| (token.clone(), merkle_map.data.clone()))
+                .collect(),
             ExecutionState::Light(state) => state.balances.clone(),
             ExecutionState::ZkVm(state) => {
                 let mut balances: HashMap<TokenName, HashMap<H256, Balance>> = HashMap::new();
@@ -789,7 +783,7 @@ impl Orderbook {
             ExecutionState::Full(state) => state
                 .balances_mt
                 .get(token)
-                .and_then(|tree| tree.get(&user.get_key()).ok())
+                .and_then(|map| map.get(&user.get_key()).cloned())
                 .unwrap_or_default(),
             ExecutionState::Light(state) => state
                 .balances
@@ -846,9 +840,9 @@ impl Orderbook {
                     .get(user)
                     .ok_or_else(|| format!("No salt found for user '{user}'"))?;
                 let key = user_info.get_key();
-                state.users_info_mt.get(&key).map_err(|e| {
+                state.users_info_mt.get(&key).cloned().ok_or_else(|| {
                     format!(
-                        "Failed to get user info for user '{user}' with key {:?}: {e}",
+                        "Failed to get user info for user '{user}' with key {:?}",
                         hex::encode(key.as_slice())
                     )
                 })

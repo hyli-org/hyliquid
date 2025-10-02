@@ -1,9 +1,10 @@
 use std::collections::{HashMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
+use monotree::{hasher::Sha2, Monotree};
+use monotree::{DefaultDatabase, Hash as MonotreeHash};
 use sdk::merkle_utils::SHA256Hasher;
-use sparse_merkle_tree::SparseMerkleTree;
-use sparse_merkle_tree::{default_store::DefaultStore, traits::Value};
+use sparse_merkle_tree::traits::Value;
 
 use crate::orderbook::{OrderbookEvent, TokenName};
 use crate::orderbook_witness::ZkVmWitness;
@@ -18,11 +19,10 @@ pub struct LightState {
     pub balances: HashMap<TokenName, HashMap<H256, Balance>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct FullState {
-    pub users_info_mt: SparseMerkleTree<SHA256Hasher, UserInfo, DefaultStore<UserInfo>>,
-    pub balances_mt:
-        HashMap<TokenName, SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>>,
+    pub users_info_mt: MonotreeMap<UserInfo>,
+    pub balances_mt: HashMap<TokenName, MonotreeMap<Balance>>,
     pub users_info: HashMap<String, UserInfo>,
 }
 
@@ -93,15 +93,14 @@ impl Orderbook {
         }
         match &mut self.execution_state {
             ExecutionState::Full(state) => {
-                let new_root = state
+                state
                     .users_info_mt
-                    .update(user_info.get_key().into(), user_info.clone())
-                    .map_err(|e| format!("Failed to update user info in SMT: {e}"))?;
+                    .upsert(&user_info.get_key(), user_info.clone())
+                    .map_err(|e| format!("Failed to update user info in monotree: {e}"))?;
                 state
                     .users_info
-                    .entry(user_info.user.clone())
-                    .or_insert_with(|| user_info.clone());
-                self.users_info_merkle_root = (*new_root).into();
+                    .insert(user_info.user.clone(), user_info.clone());
+                self.users_info_merkle_root = root_to_borshable(state.users_info_mt.root.as_ref());
             }
             ExecutionState::Light(state) => {
                 state
@@ -150,18 +149,12 @@ impl Orderbook {
                 let tree = state
                     .balances_mt
                     .entry(token.to_string())
-                    .or_insert_with(|| {
-                        SparseMerkleTree::new(sparse_merkle_tree::H256::zero(), Default::default())
-                    });
-                let leaves = balances_to_update
-                    .iter()
-                    .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
-                    .collect();
-                let new_root = tree
-                    .update_all(leaves)
-                    .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?;
+                    .or_insert_with(MonotreeMap::default);
+                tree.upsert_batch(&balances_to_update).map_err(|e| {
+                    format!("Failed to update balances on token {token} in monotree: {e}")
+                })?;
                 self.balances_merkle_roots
-                    .insert(token.to_string(), (*new_root).into());
+                    .insert(token.to_string(), root_to_borshable(tree.root.as_ref()));
             }
             ExecutionState::Light(state) => {
                 let token_entry = state
@@ -216,22 +209,121 @@ impl borsh::BorshDeserialize for FullState {
     }
 }
 
+type Sha256Monotree = Monotree<DefaultDatabase, Sha2>;
+
+fn root_to_borshable(root: Option<&MonotreeHash>) -> H256 {
+    root.map(|bytes| sparse_merkle_tree::H256::from(*bytes).into())
+        .unwrap_or_else(|| sparse_merkle_tree::H256::zero().into())
+}
+
+pub struct MonotreeMap<T: Value> {
+    pub tree: Sha256Monotree,
+    pub root: Option<MonotreeHash>,
+    pub data: HashMap<H256, T>,
+}
+
+impl<T: Value> Default for MonotreeMap<T> {
+    fn default() -> Self {
+        Self::new("monotree")
+    }
+}
+
+impl<T: Value> MonotreeMap<T> {
+    pub fn new(namespace: &str) -> Self {
+        Self {
+            tree: Sha256Monotree::new(namespace),
+            root: None,
+            data: HashMap::new(),
+        }
+    }
+
+    pub fn get(&self, key: &H256) -> Option<&T> {
+        self.data.get(key)
+    }
+
+    pub fn upsert(&mut self, key: &H256, value: T) -> monotree::Result<()> {
+        let key_bytes: [u8; 32] = (*key).into();
+        let leaf_hash: [u8; 32] = value.to_h256().into();
+        self.root = self
+            .tree
+            .insert(self.root.as_ref(), &key_bytes, &leaf_hash)?;
+        self.data.insert(*key, value);
+        Ok(())
+    }
+
+    pub fn upsert_batch(&mut self, entries: &[(H256, T)]) -> monotree::Result<()>
+    where
+        T: Clone,
+    {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        self.tree.prepare();
+        let mut current_root = self.root;
+        for (key, value) in entries.iter() {
+            let key_bytes: [u8; 32] = (*key).into();
+            let leaf_hash: [u8; 32] = value.to_h256().into();
+            current_root = self
+                .tree
+                .insert(current_root.as_ref(), &key_bytes, &leaf_hash)?;
+            self.data.insert(*key, value.clone());
+        }
+        self.tree.commit();
+        self.root = current_root;
+        Ok(())
+    }
+}
+impl<T: Value + Clone> Clone for MonotreeMap<T> {
+    fn clone(&self) -> Self {
+        let mut clone = MonotreeMap::new("monotree-clone");
+        clone.data = self.data.clone();
+
+        let mut root = None;
+        clone.tree.prepare();
+        for (key, value) in &self.data {
+            let key_bytes: [u8; 32] = (*key).into();
+            let leaf_hash = value.to_h256();
+            let leaf_bytes: [u8; 32] = leaf_hash.into();
+            root = clone
+                .tree
+                .insert(root.as_ref(), &key_bytes, &leaf_bytes)
+                .expect("Failed to insert into monotree clone");
+        }
+        clone.tree.commit();
+        clone.root = root;
+        clone
+    }
+}
+
+impl<T: Value> std::fmt::Debug for MonotreeMap<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MonotreeMap")
+            .field("root", &self.root.map(hex::encode))
+            .field("entries", &self.data.len())
+            .finish()
+    }
+}
+
+impl Default for FullState {
+    fn default() -> Self {
+        Self {
+            users_info_mt: MonotreeMap::new("users-info"),
+            balances_mt: HashMap::new(),
+            users_info: HashMap::new(),
+        }
+    }
+}
+
 impl Clone for FullState {
     fn clone(&self) -> Self {
-        let user_info_root = *self.users_info_mt.root();
-        let user_info_store = self.users_info_mt.store().clone();
-        let users_info_mt = SparseMerkleTree::new(user_info_root, user_info_store);
-
         let mut balances_mt = HashMap::new();
         for (token_name, tree) in &self.balances_mt {
-            let root = *tree.root();
-            let store = tree.store().clone();
-            let new_tree = SparseMerkleTree::new(root, store);
-            balances_mt.insert(token_name.clone(), new_tree);
+            balances_mt.insert(token_name.clone(), tree.clone());
         }
 
         Self {
-            users_info_mt,
+            users_info_mt: self.users_info_mt.clone(),
             balances_mt,
             users_info: self.users_info.clone(),
         }
