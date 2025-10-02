@@ -561,6 +561,7 @@ impl BookService {
         JOIN assets base_asset ON i.base_asset_id = base_asset.asset_id
         JOIN assets quote_asset ON i.quote_asset_id = quote_asset.asset_id
         JOIN users u ON o.user_id = u.user_id
+        ORDER BY o.created_at ASC
         ",
         )
         .fetch_all(&self.pool)
@@ -586,23 +587,24 @@ impl BookService {
             })
             .collect();
 
-        let buy_orders = orders
+        let buy_orders = rows
             .iter()
-            .filter(|(_, (order, _))| order.order_side == OrderSide::Bid)
-            .fold(BTreeMap::new(), |mut acc, (_, (order, _u))| {
-                acc.entry(order.pair.clone())
+            .rev()
+            .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Bid)
+            .fold(BTreeMap::new(), |mut acc, row| {
+                acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
                     .or_insert_with(VecDeque::new)
-                    .push_back(order.order_id.clone());
+                    .push_back(row.get("order_id"));
                 acc
             });
 
-        let sell_orders = orders
+        let sell_orders = rows
             .iter()
-            .filter(|(_, (order, _u))| order.order_side == OrderSide::Ask)
-            .fold(BTreeMap::new(), |mut acc, (_, (order, _u))| {
-                acc.entry(order.pair.clone())
+            .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Ask)
+            .fold(BTreeMap::new(), |mut acc, row| {
+                acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
                     .or_insert_with(VecDeque::new)
-                    .push_back(order.order_id.clone());
+                    .push_back(row.get("order_id"));
                 acc
             });
 

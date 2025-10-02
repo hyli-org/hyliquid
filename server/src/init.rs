@@ -161,8 +161,16 @@ pub async fn init_orderbook_from_database(
     info!(
         "✅ Orders loaded: {} (buy: {}, sell: {})",
         order_manager.orders.len(),
-        order_manager.buy_orders.len(),
-        order_manager.sell_orders.len()
+        order_manager
+            .buy_orders
+            .iter()
+            .map(|(_, orders)| orders.len())
+            .sum::<usize>(),
+        order_manager
+            .sell_orders
+            .iter()
+            .map(|(_, orders)| orders.len())
+            .sum::<usize>(),
     );
 
     let light_orderbook = Orderbook::from_data(
