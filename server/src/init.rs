@@ -158,7 +158,12 @@ pub async fn init_orderbook_from_database(
     info!("✅ Users info loaded: {}", users_info.len());
     info!("✅ Balances loaded: {}", balances.len());
     info!("✅ Pairs info loaded: {}", pairs_info.len());
-    info!("✅ Order manager loaded: {}", order_manager.orders.len());
+    info!(
+        "✅ Orders loaded: {} (buy: {}, sell: {})",
+        order_manager.orders.len(),
+        order_manager.buy_orders.len(),
+        order_manager.sell_orders.len()
+    );
 
     let light_orderbook = Orderbook::from_data(
         lane_id.clone(),
@@ -180,6 +185,13 @@ pub async fn init_orderbook_from_database(
         balances,
     )
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+    if light_orderbook.commit() != full_orderbook.commit() {
+        return Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            anyhow::anyhow!("Business logic error: Light and full orderbook commitments mismatch"),
+        ));
+    }
 
     if let Ok(existing) = node.get_contract(ContractName::from("orderbook")).await {
         let onchain = Orderbook::from(existing.state_commitment.clone());

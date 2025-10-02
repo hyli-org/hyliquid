@@ -225,3 +225,174 @@ impl OrderManager {
         }
     }
 }
+
+impl OrderManager {
+    /// Helper function to compare order maps and generate diff entries
+    fn diff_order_maps(
+        &self,
+        self_orders: &BTreeMap<TokenPair, VecDeque<OrderId>>,
+        other_orders: &BTreeMap<TokenPair, VecDeque<OrderId>>,
+        field_name: &str,
+    ) -> BTreeMap<String, String> {
+        let mut diff = BTreeMap::new();
+
+        if self_orders != other_orders {
+            diff.insert(
+                format!("order_manager.{}", field_name),
+                format!("Mismatching {} orders", field_name),
+            );
+
+            let other_orders_map = other_orders.iter().collect();
+            let self_orders_map = self_orders.iter().collect();
+
+            let mismatching_orders = diff_maps(&other_orders_map, &self_orders_map);
+            mismatching_orders.added.iter().for_each(|id| {
+                diff.insert(
+                    format!("order_manager.{}", field_name),
+                    format!(
+                        "{}/{} {:?} != None",
+                        id.0,
+                        id.1,
+                        self_orders
+                            .get(id)
+                            .map_or("None".to_string(), |o| format!("{o:?}"))
+                    ),
+                );
+            });
+            mismatching_orders.removed.iter().for_each(|id| {
+                diff.insert(
+                    format!("order_manager.{}", field_name),
+                    format!(
+                        "None != {}/{} {:?}",
+                        id.0,
+                        id.1,
+                        other_orders
+                            .get(id)
+                            .map_or("None".to_string(), |o| format!("{o:?}"))
+                    ),
+                );
+            });
+            mismatching_orders.changed.iter().for_each(|(id, _)| {
+                diff.insert(
+                    format!("order_manager.{}", field_name),
+                    format!(
+                        "{}/{} {:?} != {}/{} {:?}",
+                        id.0,
+                        id.1,
+                        self_orders
+                            .get(id)
+                            .map_or("None".to_string(), |o| format!("{o:?}")),
+                        id.0,
+                        id.1,
+                        other_orders
+                            .get(id)
+                            .map_or("None".to_string(), |o| format!("{o:?}"))
+                    ),
+                );
+            });
+        }
+
+        diff
+    }
+
+    pub fn diff(&self, other: &OrderManager) -> BTreeMap<String, String> {
+        let mut diff = BTreeMap::new();
+        if self.orders != other.orders {
+            diff.insert(
+                "order_manager.orders".to_string(),
+                format!("Mismatching orders"),
+            );
+
+            let other_orders = other.orders.iter().collect();
+            let self_orders = self.orders.iter().collect();
+
+            let mismatching_orders = diff_maps(&other_orders, &self_orders);
+            mismatching_orders.added.iter().for_each(|id| {
+                diff.insert(
+                    "order_manager.orders".to_string(),
+                    format!(
+                        "{id:?}: {:?} != None",
+                        self_orders
+                            .get(*id)
+                            .map_or("None".to_string(), |o| format!("{o:?}"))
+                    ),
+                );
+            });
+            mismatching_orders.removed.iter().for_each(|id| {
+                diff.insert(
+                    "order_manager.orders".to_string(),
+                    format!(
+                        "None != {id:?}: {:?}",
+                        other_orders
+                            .get(*id)
+                            .map_or("None".to_string(), |o| format!("{o:?}"))
+                    ),
+                );
+            });
+            mismatching_orders.changed.iter().for_each(|(id, _)| {
+                diff.insert(
+                    "order_manager.orders".to_string(),
+                    format!(
+                        "{id:?}: {:?} != {id:?}: {:?}",
+                        self_orders
+                            .get(*id)
+                            .map_or("None".to_string(), |o| format!("{o:?}")),
+                        other_orders
+                            .get(*id)
+                            .map_or("None".to_string(), |o| format!("{o:?}"))
+                    ),
+                );
+            });
+        }
+
+        diff.extend(self.diff_order_maps(&self.buy_orders, &other.buy_orders, "buy_orders"));
+        diff.extend(self.diff_order_maps(&self.sell_orders, &other.sell_orders, "sell_orders"));
+
+        // TODO check order_owner
+
+        diff
+    }
+}
+
+use std::collections::{HashMap, HashSet};
+
+#[derive(Debug, Default)]
+struct MapDiff<'a, K, V> {
+    added: HashSet<&'a K>,
+    removed: HashSet<&'a K>,
+    changed: HashMap<&'a K, (&'a V, &'a V)>, // (old, new)
+}
+
+fn diff_maps<'a, K, V>(old: &'a HashMap<K, V>, new: &'a HashMap<K, V>) -> MapDiff<'a, K, V>
+where
+    K: std::hash::Hash + Eq,
+    V: PartialEq,
+{
+    let mut d = MapDiff {
+        added: HashSet::new(),
+        removed: HashSet::new(),
+        changed: HashMap::new(),
+    };
+
+    // supprimées + modifiées
+    for (k, old_v) in old.iter() {
+        match new.get(k) {
+            None => {
+                d.removed.insert(k);
+            }
+            Some(new_v) if new_v != old_v => {
+                d.changed.insert(k, (old_v, new_v));
+            }
+            _ => {}
+        }
+    }
+
+    // ajoutées
+    for k in new.keys() {
+        if !old.contains_key(k) {
+            d.added.insert(k);
+        }
+    }
+
+    d
+}

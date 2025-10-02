@@ -419,7 +419,15 @@ impl BookWriterService {
                     )?;
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
-                    info!("Updating nonce for user {} to {}", user, nonce);
+                    info!("Incrementing nonce for user {}", user);
+                    log_error!(
+                        sqlx::query("UPDATE users SET nonce = $1 WHERE identity = $2")
+                            .bind(nonce as i64)
+                            .bind(user)
+                            .execute(&mut *tx)
+                            .await,
+                        "Failed to increment nonce"
+                    )?;
                 }
             }
         }

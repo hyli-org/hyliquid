@@ -893,13 +893,9 @@ impl Orderbook {
                 })
                 .collect::<BTreeMap<&TokenPair, &PairInfo>>();
 
-            diff.insert(
-                "pairs_info".to_string(),
-                mismatching_pairs
-                    .iter()
-                    .map(|(pair, info)| format!("{pair:?}: {info:?}"))
-                    .collect::<String>(),
-            );
+            mismatching_pairs.iter().for_each(|(pair, info)| {
+                diff.insert("pairs_info".to_string(), format!("{pair:?}: {info:?}"));
+            });
         }
 
         if self.lane_id != other.lane_id {
@@ -935,10 +931,7 @@ impl Orderbook {
         }
 
         if self.order_manager != other.order_manager {
-            diff.insert(
-                "order_manager".to_string(),
-                format!("{:?} != {:?}", self.order_manager, other.order_manager),
-            );
+            diff.extend(self.order_manager.diff(&other.order_manager));
         }
         if self.execution_state.mode() != other.execution_state.mode() {
             diff.insert(
