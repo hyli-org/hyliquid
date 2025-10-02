@@ -65,8 +65,18 @@ CREATE TABLE users (
     user_id bigserial PRIMARY KEY,
     commit_id bigint NOT NULL REFERENCES commits (commit_id),
     identity TEXT UNIQUE NOT NULL,
+    salt BYTEA NOT NULL,
+    nonce bigint NOT NULL DEFAULT 0,
     status user_status NOT NULL DEFAULT 'active',
     created_at timestamptz NOT NULL DEFAULT now()
+);
+
+-- Append only, latest line (max commit_id) has all session keys for a user
+CREATE TABLE user_session_keys (
+    user_id bigint NOT NULL REFERENCES users (user_id),
+    commit_id bigint NOT NULL REFERENCES commits (commit_id),
+    session_keys BYTEA[] NOT NULL,
+    PRIMARY KEY (user_id, session_keys)
 );
 
 CREATE TABLE balances (

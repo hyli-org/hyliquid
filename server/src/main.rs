@@ -16,7 +16,7 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
-use orderbook::orderbook::{ExecutionMode, Orderbook, OrderbookEvent};
+use orderbook::orderbook::OrderbookEvent;
 use prometheus::Registry;
 use sdk::{api::NodeInfo, info, Calldata, ZkContract};
 use server::{
@@ -40,7 +40,7 @@ pub struct Args {
     #[arg(long, default_value = "orderbook")]
     pub orderbook_cn: String,
 
-    #[arg(long, default_value = "true")]
+    #[arg(long, default_value = "false")]
     pub clean_db: bool,
 
     /// Clean the data directory before starting the server
@@ -168,13 +168,6 @@ async fn main() -> Result<()> {
         server::services::book_service::BookService::new(pool.clone()),
     ));
 
-    info!("Setup sp1 prover client");
-    let local_client = ProverClient::builder().cpu().build();
-    let (pk, _) = local_client.setup(ORDERBOOK_ELF);
-
-    info!("Building Proving Key");
-    let prover = SP1Prover::new(pk).await;
-
     let validator_lane_id = node_client
         .get_node_info()
         .await?
@@ -190,19 +183,29 @@ async fn main() -> Result<()> {
 
     // TODO: make a proper secret management
     let secret = vec![1, 2, 3];
-    let default_state = Orderbook::init(
+
+    let (light_state, full_state) = server::init::init_orderbook_from_database(
         validator_lane_id.clone(),
-        ExecutionMode::Light,
         secret.clone(),
+        asset_service.clone(),
+        user_service.clone(),
+        book_service.clone(),
+        &node_client,
     )
-    .map_err(anyhow::Error::msg)?;
-    let prover_state = Orderbook::init(validator_lane_id.clone(), ExecutionMode::Full, secret)
-        .map_err(anyhow::Error::msg)?;
+    .await
+    .map_err(|e| anyhow::Error::msg(e.1))?;
+
+    info!("Setup sp1 prover client");
+    let local_client = ProverClient::builder().cpu().build();
+    let (pk, _) = local_client.setup(ORDERBOOK_ELF);
+
+    info!("Building Proving Key");
+    let prover = SP1Prover::new(pk).await;
 
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
         program_id: <SP1Prover as ClientSdkProver<Calldata>>::program_id(&prover).0,
-        initial_state: default_state.commit(),
+        initial_state: light_state.commit(),
     }];
 
     match server::init::init_node(node_client.clone(), indexer_client.clone(), contracts).await {
@@ -228,7 +231,7 @@ async fn main() -> Result<()> {
         api: api_ctx.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         lane_id: validator_lane_id.clone(),
-        default_state: default_state.clone(),
+        default_state: light_state.clone(),
         book_writer_service,
         asset_service,
     });
@@ -238,7 +241,7 @@ async fn main() -> Result<()> {
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
         lane_id: validator_lane_id,
-        initial_orderbook: prover_state,
+        initial_orderbook: full_state,
     });
 
     let api_module_ctx = Arc::new(ApiModuleCtx {

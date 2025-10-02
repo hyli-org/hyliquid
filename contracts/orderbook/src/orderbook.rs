@@ -3,7 +3,7 @@ use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sparse_merkle_tree::SparseMerkleTree;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::order_manager::OrderManager;
 use crate::orderbook_state::{FullState, LightState, ZkVmState};
@@ -15,12 +15,12 @@ pub struct Orderbook {
     // Server secret for authentication on permissionned actions
     pub hashed_secret: [u8; 32],
     // Registered token pairs with asset scales
-    pub pairs_info: HashMap<TokenPair, PairInfo>,
+    pub pairs_info: BTreeMap<TokenPair, PairInfo>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
 
     // Balances merkle tree root for each token
-    pub balances_merkle_roots: HashMap<TokenName, H256>,
+    pub balances_merkle_roots: BTreeMap<TokenName, H256>,
     // Users info merkle root
     pub users_info_merkle_root: H256,
 
@@ -57,6 +57,48 @@ impl ExecutionState {
             ExecutionMode::Light => ExecutionState::Light(LightState::default()),
             ExecutionMode::Full => ExecutionState::Full(FullState::default()),
             ExecutionMode::ZkVm => ExecutionState::ZkVm(ZkVmState::default()),
+        }
+    }
+    pub fn from_data(
+        mode: ExecutionMode,
+        users_info: HashMap<String, UserInfo>,
+        balances: HashMap<TokenName, HashMap<H256, Balance>>,
+    ) -> Result<Self, String> {
+        match mode {
+            ExecutionMode::Light => Ok(ExecutionState::Light(LightState {
+                users_info,
+                balances,
+            })),
+            ExecutionMode::Full => {
+                let mut users_info_mt = SparseMerkleTree::default();
+
+                let leaves = users_info
+                    .iter()
+                    .map(|(_, user_info)| (user_info.get_key().into(), user_info.clone()))
+                    .collect();
+                users_info_mt
+                    .update_all(leaves)
+                    .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
+
+                let mut balances_mt = HashMap::new();
+                for (token, token_balances) in balances.iter() {
+                    let mut tree = SparseMerkleTree::default();
+                    let leaves = token_balances
+                        .iter()
+                        .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
+                        .collect();
+                    tree.update_all(leaves)
+                        .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?;
+                    balances_mt.insert(token.clone(), tree);
+                }
+
+                Ok(ExecutionState::Full(FullState {
+                    users_info_mt,
+                    balances_mt,
+                    users_info,
+                }))
+            }
+            ExecutionMode::ZkVm => Ok(ExecutionState::ZkVm(ZkVmState::default())),
         }
     }
 
@@ -158,6 +200,9 @@ pub enum OrderbookEvent {
     },
     SessionKeyAdded {
         user: String,
+        salt: Vec<u8>,
+        nonce: u32,
+        session_keys: Vec<Vec<u8>>,
     },
     NonceIncremented {
         user: String,
@@ -231,6 +276,9 @@ impl Orderbook {
 
                 vec![OrderbookEvent::SessionKeyAdded {
                     user: user_info.user.to_string(),
+                    salt: user_info.salt.clone(),
+                    nonce: user_info.nonce,
+                    session_keys: user_info.session_keys.clone(),
                 }]
             }
             ExecutionState::Light(state) => {
@@ -241,6 +289,9 @@ impl Orderbook {
 
                 vec![OrderbookEvent::SessionKeyAdded {
                     user: user_info.user.to_string(),
+                    salt: user_info.salt.clone(),
+                    nonce: user_info.nonce,
+                    session_keys: user_info.session_keys.clone(),
                 }]
             }
             ExecutionState::ZkVm(_) => vec![],
@@ -647,22 +698,64 @@ impl Orderbook {
 
 impl Orderbook {
     pub fn init(lane_id: LaneId, mode: ExecutionMode, secret: Vec<u8>) -> Result<Self, String> {
-        let execution_state = ExecutionState::new(mode);
-        let users_info_merkle_root = match &execution_state {
+        Self::from_data(
+            lane_id,
+            mode,
+            secret,
+            BTreeMap::new(),
+            OrderManager::default(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+    }
+
+    pub fn from_data(
+        lane_id: LaneId,
+        mode: ExecutionMode,
+        secret: Vec<u8>,
+        pairs_info: BTreeMap<TokenPair, PairInfo>,
+        order_manager: OrderManager,
+        users_info: HashMap<String, UserInfo>,
+        balances: HashMap<TokenName, HashMap<H256, Balance>>,
+    ) -> Result<Self, String> {
+        let full_state =
+            ExecutionState::from_data(ExecutionMode::Full, users_info.clone(), balances.clone())?;
+
+        let execution_state = if mode == ExecutionMode::Full {
+            full_state.clone()
+        } else {
+            ExecutionState::from_data(mode, users_info, balances)?
+        };
+
+        let users_info_merkle_root = match &full_state {
             ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
-            _ => sparse_merkle_tree::H256::zero().into(),
+            _ => panic!("Business logic error. full_state should be Full"),
+        };
+        let balances_merkle_roots = match &full_state {
+            ExecutionState::Full(state) => state
+                .balances_mt
+                .iter()
+                .map(|(token, balances)| (token.clone(), (*balances.root()).into()))
+                .collect(),
+            _ => panic!("Business logic error. full_state should be Full"),
         };
         let hashed_secret = Sha256::digest(&secret).into();
 
-        Ok(Orderbook {
+        let mut orderbook = Orderbook {
             hashed_secret,
-            pairs_info: HashMap::new(),
+            pairs_info: BTreeMap::new(),
             lane_id,
-            balances_merkle_roots: HashMap::new(),
+            balances_merkle_roots,
             users_info_merkle_root,
-            order_manager: OrderManager::default(),
+            order_manager,
             execution_state,
-        })
+        };
+
+        for (pair, info) in pairs_info {
+            orderbook.create_pair(&pair, &info)?;
+        }
+
+        Ok(orderbook)
     }
 
     pub fn get_balances(&self) -> HashMap<TokenName, HashMap<H256, Balance>> {
@@ -737,7 +830,7 @@ impl Orderbook {
 
 /// Implementation of functions that are only used by the server.
 impl Orderbook {
-    pub fn get_orders(&self) -> HashMap<String, Order> {
+    pub fn get_orders(&self) -> BTreeMap<String, Order> {
         self.order_manager.orders.clone()
     }
 
@@ -769,6 +862,88 @@ impl Orderbook {
                 Err("User info lookup is not available in ZkVm execution mode".to_string())
             }
         }
+    }
+}
+
+impl Orderbook {
+    // Detects differences between two orderbooks
+    // It is used to detect differences between on-chain and db orderbooks
+    pub fn diff(&self, other: &Orderbook) -> BTreeMap<String, String> {
+        let mut diff = BTreeMap::new();
+        if self.hashed_secret != other.hashed_secret {
+            diff.insert(
+                "hashed_secret".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(self.hashed_secret.as_slice()),
+                    hex::encode(other.hashed_secret.as_slice())
+                ),
+            );
+        }
+
+        if self.pairs_info != other.pairs_info {
+            let mismatching_pairs = self
+                .pairs_info
+                .iter()
+                .filter(|(pair, info)| {
+                    other
+                        .pairs_info
+                        .get(pair)
+                        .map_or(true, |o_info| *info != o_info)
+                })
+                .collect::<BTreeMap<&TokenPair, &PairInfo>>();
+
+            mismatching_pairs.iter().for_each(|(pair, info)| {
+                diff.insert("pairs_info".to_string(), format!("{pair:?}: {info:?}"));
+            });
+        }
+
+        if self.lane_id != other.lane_id {
+            diff.insert(
+                "lane_id".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(&self.lane_id.0 .0),
+                    hex::encode(&other.lane_id.0 .0)
+                ),
+            );
+        }
+
+        if self.balances_merkle_roots != other.balances_merkle_roots {
+            diff.insert(
+                "balances_merkle_roots".to_string(),
+                format!(
+                    "{:?} != {:?}",
+                    self.balances_merkle_roots, other.balances_merkle_roots
+                ),
+            );
+        }
+
+        if self.users_info_merkle_root != other.users_info_merkle_root {
+            diff.insert(
+                "users_info_merkle_root".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(self.users_info_merkle_root.as_slice()),
+                    hex::encode(other.users_info_merkle_root.as_slice())
+                ),
+            );
+        }
+
+        if self.order_manager != other.order_manager {
+            diff.extend(self.order_manager.diff(&other.order_manager));
+        }
+        if self.execution_state.mode() != other.execution_state.mode() {
+            diff.insert(
+                "execution_state".to_string(),
+                format!(
+                    "{:?} != {:?}",
+                    self.execution_state.mode(),
+                    other.execution_state.mode()
+                ),
+            );
+        }
+        diff
     }
 }
 

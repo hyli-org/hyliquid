@@ -1,9 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 use client_sdk::contract_indexer::AppError;
 use hyli_modules::log_error;
-use orderbook::orderbook::OrderbookEvent;
+use orderbook::order_manager::OrderManager;
+use orderbook::orderbook::{Order, OrderSide, OrderbookEvent};
+use orderbook::smt_values::UserInfo;
 use reqwest::StatusCode;
 use sdk::TxHash;
 use serde::Serialize;
@@ -373,22 +375,59 @@ impl BookWriterService {
                         "Failed to insert trade event"
                     )?;
                 }
-                OrderbookEvent::SessionKeyAdded { user } => {
-                    info!("Creating user {}", user);
+                OrderbookEvent::SessionKeyAdded {
+                    user,
+                    salt,
+                    nonce,
+                    session_keys,
+                } => {
+                    let fetched_user_id = self.user_service.read().await.get_user_id(&user).await;
+
+                    let user_id = if let Err(e) = fetched_user_id {
+                        if e.0 == StatusCode::NOT_FOUND {
+                            info!("Creating user {}", user);
+                            let row = log_error!(
+                                sqlx::query(
+                                    "INSERT INTO users (commit_id, identity, salt, nonce) VALUES ($1, $2, $3, $4) ON CONFLICT (identity) DO UPDATE SET nonce = EXCLUDED.nonce RETURNING user_id"
+                                )
+                                .bind(commit_id)
+                                .bind(user.clone())
+                                .bind(salt)
+                                .bind(nonce as i64)
+                                .fetch_one(&mut *tx)
+                                .await,
+                                "Failed to create user"
+                            )?;
+                            row.get::<i64, _>("user_id")
+                        } else {
+                            return Err(e);
+                        }
+                    } else {
+                        fetched_user_id?
+                    };
+
+                    info!("Setting user session keys for user {}", user);
 
                     log_error!(
-                        sqlx::query(
-                            "INSERT INTO users (commit_id, identity) VALUES ($1, $2) ON CONFLICT DO NOTHING"
-                        )
+                        sqlx::query("INSERT INTO user_session_keys (commit_id, user_id, session_keys) VALUES ($1, $2, $3)")
                         .bind(commit_id)
-                        .bind(user)
+                        .bind(user_id)
+                        .bind(session_keys)
                         .execute(&mut *tx)
                         .await,
-                        "Failed to create user"
+                        "Failed to create user session key"
                     )?;
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
-                    info!("Updating nonce for user {} to {}", user, nonce);
+                    info!("Incrementing nonce for user {}", user);
+                    log_error!(
+                        sqlx::query("UPDATE users SET nonce = $1 WHERE identity = $2")
+                            .bind(nonce as i64)
+                            .bind(user)
+                            .execute(&mut *tx)
+                            .await,
+                        "Failed to increment nonce"
+                    )?;
                 }
             }
         }
@@ -501,13 +540,93 @@ impl BookService {
 
         Ok(OrderbookAPI { bids, asks })
     }
-}
 
-#[derive(Debug, Serialize, sqlx::Type)]
-#[sqlx(type_name = "order_side", rename_all = "lowercase")]
-pub enum OrderSide {
-    Bid, // Buy
-    Ask, // Sell
+    pub async fn get_order_manager(
+        &self,
+        users_info: &HashMap<String, UserInfo>,
+    ) -> Result<OrderManager, AppError> {
+        let rows = sqlx::query(
+            "
+        SELECT 
+            o.order_id, 
+            o.type, 
+            o.side, 
+            o.price, 
+            o.qty_remaining, 
+            u.identity,
+            base_asset.symbol as base_asset_symbol,
+            quote_asset.symbol as quote_asset_symbol
+        FROM orders o
+        JOIN instruments i ON o.instrument_id = i.instrument_id
+        JOIN assets base_asset ON i.base_asset_id = base_asset.asset_id
+        JOIN assets quote_asset ON i.quote_asset_id = quote_asset.asset_id
+        JOIN users u ON o.user_id = u.user_id
+        ORDER BY o.created_at ASC
+        ",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let orders: HashMap<String, (Order, String)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get("order_id"),
+                    (
+                        Order {
+                            order_id: row.get("order_id"),
+                            order_type: row.get("type"),
+                            order_side: row.get("side"),
+                            price: row.try_get("price").map(|p: i64| p as u64).ok(),
+                            pair: (row.get("base_asset_symbol"), row.get("quote_asset_symbol")),
+                            quantity: row.get::<i64, _>("qty_remaining") as u64,
+                        },
+                        row.get("identity"),
+                    ),
+                )
+            })
+            .collect();
+
+        let buy_orders = rows
+            .iter()
+            .rev()
+            .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Bid)
+            .fold(BTreeMap::new(), |mut acc, row| {
+                acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
+                    .or_insert_with(VecDeque::new)
+                    .push_back(row.get("order_id"));
+                acc
+            });
+
+        let sell_orders = rows
+            .iter()
+            .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Ask)
+            .fold(BTreeMap::new(), |mut acc, row| {
+                acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
+                    .or_insert_with(VecDeque::new)
+                    .push_back(row.get("order_id"));
+                acc
+            });
+
+        let orders_owner = orders
+            .iter()
+            .map(|(_, (order, user))| {
+                (
+                    order.order_id.clone(),
+                    users_info.get(user).unwrap().get_key(),
+                )
+            })
+            .collect();
+
+        let orders = orders.into_iter().map(|(k, (o, _))| (k, o)).collect();
+
+        Ok(OrderManager {
+            orders,
+            buy_orders,
+            sell_orders,
+            orders_owner,
+        })
+    }
 }
 
 #[derive(Debug, Serialize)]
