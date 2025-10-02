@@ -3,7 +3,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     monotree_proof::{compute_root_from_proof, BorshableMonotreeProof},
-    orderbook::{ExecutionMode, ExecutionState, Order, Orderbook, OrderbookEvent, TokenName},
+    order_manager::OrderManager,
+    orderbook::{ExecutionMode, ExecutionState, Orderbook, OrderbookEvent, TokenName},
     orderbook_state::ZkVmState,
     smt_values::{Balance, BorshableH256 as H256, MonotreeValue, UserInfo},
 };
@@ -317,6 +318,28 @@ impl Orderbook {
         }
     }
 
+    pub fn verify_orders_owners(&self) -> Result<(), String> {
+        for (order_id, user_info_key) in &self.order_manager.orders_owner {
+            // Verify that the order exists
+            if !self.order_manager.orders.contains_key(order_id) {
+                return Err(format!("Order with id {order_id} does not exist"));
+            }
+            // Verify that user info exists
+            if !self.has_user_info_key(*user_info_key).map_err(|e| {
+                format!(
+                    "Failed to get user info for key {}: {e}",
+                    hex::encode(user_info_key)
+                )
+            })? {
+                return Err(format!(
+                    "Missing user info for user {}",
+                    hex::encode(user_info_key)
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn has_user_info_key(&self, user_info_key: H256) -> Result<bool, String> {
         match &self.execution_state {
             ExecutionState::Full(_) | ExecutionState::Light(_) => Ok(true),
@@ -328,12 +351,17 @@ impl Orderbook {
         }
     }
 
-    pub fn as_zkvm(
+    pub fn for_zkvm(
         &self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
-    ) -> Result<ZkVmState, String> {
-        let mut order_user_map = HashMap::new();
+    ) -> Result<(ZkVmState, OrderManager), String> {
+        // Atm, we copy everything (will be merklized in a future version)
+        let mut zkvm_order_manager = self.order_manager.clone();
+
+        // We clear orders_owner and re-populate it based on events with only needed values
+        zkvm_order_manager.orders_owner.clear();
+
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
         let mut balances_needed: HashMap<String, HashMap<H256, Balance>> = HashMap::new();
 
@@ -343,15 +371,11 @@ impl Orderbook {
                 OrderbookEvent::OrderExecuted { order_id, .. }
                 | OrderbookEvent::OrderUpdate { order_id, .. }
                 | OrderbookEvent::OrderCancelled { order_id, .. } => {
-                    if let Some(user_key) = self.order_manager.orders_owner.get(order_id) {
-                        order_user_map.insert(order_id.clone(), *user_key);
+                    if let Some(order_owner) = self.order_manager.orders_owner.get(order_id) {
+                        zkvm_order_manager
+                            .orders_owner
+                            .insert(order_id.clone(), *order_owner);
                     }
-                }
-                OrderbookEvent::OrderCreated {
-                    order: Order { order_id, .. },
-                    ..
-                } => {
-                    order_user_map.insert(order_id.clone(), user_info.get_key());
                 }
                 OrderbookEvent::BalanceUpdated {
                     user,
@@ -409,10 +433,13 @@ impl Orderbook {
 
         let users_info = self.create_users_info_witness(&users_info_needed)?;
 
-        Ok(ZkVmState {
-            users_info,
-            balances,
-        })
+        Ok((
+            ZkVmState {
+                users_info,
+                balances,
+            },
+            zkvm_order_manager,
+        ))
     }
 
     pub fn derive_zkvm_commitment_metadata_from_events(
@@ -424,14 +451,16 @@ impl Orderbook {
             return Err("Can only generate zkvm commitment in FullMode".to_string());
         }
 
+        let (zkvm_state, order_manager) = self.for_zkvm(user_info, events)?;
+
         let mut zk_orderbook = Orderbook {
             hashed_secret: self.hashed_secret,
             pairs_info: self.pairs_info.clone(),
             lane_id: self.lane_id.clone(),
             balances_merkle_roots: self.balances_merkle_roots.clone(),
             users_info_merkle_root: self.users_info_merkle_root,
-            order_manager: self.order_manager.clone(),
-            execution_state: ExecutionState::ZkVm(self.as_zkvm(user_info, events)?),
+            order_manager,
+            execution_state: ExecutionState::ZkVm(zkvm_state),
         };
 
         if let ExecutionState::ZkVm(state) = &zk_orderbook.execution_state {

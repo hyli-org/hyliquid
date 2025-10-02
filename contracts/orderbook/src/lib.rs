@@ -57,6 +57,10 @@ impl sdk::ZkContract for Orderbook {
         self.verify_users_info_proof()
             .unwrap_or_else(|e| panic!("Failed to verify users info proof: {e}"));
 
+        // Verify that orderbook_manager.order_owners is populated with valid users info
+        self.verify_orders_owners()
+            .unwrap_or_else(|e| panic!("Failed to verify orders owners: {e}"));
+
         let res = match action {
             OrderbookAction::PermissionnedOrderbookAction(action) => {
                 if tx_ctx.lane_id != self.lane_id {
@@ -183,26 +187,6 @@ impl Orderbook {
                     borsh::from_slice::<CreateOrderPrivateInput>(private_input).map_err(|e| {
                         format!("Failed to deserialize CreateOrderPrivateInput: {e}")
                     })?;
-
-                // Verify that orderbook_manager.order_owners is populated with valid users info
-                for (order_id, user_info_key) in &self.order_manager.orders_owner {
-                    // Verify that the order exists
-                    if !self.order_manager.orders.contains_key(order_id) {
-                        return Err(format!("Order with id {order_id} does not exist"));
-                    }
-                    // Verify that user info exists
-                    if !self.has_user_info_key(*user_info_key).map_err(|e| {
-                        format!(
-                            "Failed to get user info for key {}: {e}",
-                            hex::encode(user_info_key)
-                        )
-                    })? {
-                        return Err(format!(
-                            "Missing user info for user {}",
-                            hex::encode(user_info_key)
-                        ));
-                    }
-                }
 
                 // Verify user signature authorization
                 // On this step, signature is provided in private_input and hence is never public.

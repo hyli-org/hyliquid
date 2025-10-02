@@ -119,14 +119,14 @@ pub async fn init_orderbook_from_database(
         let base_asset = assets.get(base_asset_symbol).ok_or_else(|| {
             AppError(
                 StatusCode::NOT_FOUND,
-                anyhow::anyhow!("Base asset not found: {}", base_asset_symbol),
+                anyhow::anyhow!("Base asset not found: {base_asset_symbol}"),
             )
         })?;
 
         let quote_asset = assets.get(quote_asset_symbol).ok_or_else(|| {
             AppError(
                 StatusCode::NOT_FOUND,
-                anyhow::anyhow!("Quote asset not found: {}", quote_asset_symbol),
+                anyhow::anyhow!("Quote asset not found: {quote_asset_symbol}"),
             )
         })?;
 
@@ -147,7 +147,7 @@ pub async fn init_orderbook_from_database(
         for balance in balance.balances {
             balances
                 .entry(balance.token.clone())
-                .or_insert_with(HashMap::new)
+                .or_default()
                 .insert(user.get_key(), Balance(balance.total as u64));
         }
     }
@@ -163,13 +163,13 @@ pub async fn init_orderbook_from_database(
         order_manager.orders.len(),
         order_manager
             .buy_orders
-            .iter()
-            .map(|(_, orders)| orders.len())
+            .values()
+            .map(|orders| orders.len())
             .sum::<usize>(),
         order_manager
             .sell_orders
-            .iter()
-            .map(|(_, orders)| orders.len())
+            .values()
+            .map(|orders| orders.len())
             .sum::<usize>(),
     );
 

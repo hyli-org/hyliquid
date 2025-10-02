@@ -152,7 +152,6 @@ pub struct CreateOrderCtx {
     pub balances: HashMap<TokenName, HashMap<UserInfo, Balance>>,
     pub balances_proof: HashMap<TokenName, BorshableMonotreeProof>,
 }
-
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub struct Order {
     pub order_id: OrderId,
@@ -878,12 +877,7 @@ impl Orderbook {
             let mismatching_pairs = self
                 .pairs_info
                 .iter()
-                .filter(|(pair, info)| {
-                    other
-                        .pairs_info
-                        .get(pair)
-                        .map_or(true, |o_info| *info != o_info)
-                })
+                .filter(|(pair, info)| other.pairs_info.get(pair) != Some(*info))
                 .collect::<BTreeMap<&TokenPair, &PairInfo>>();
 
             mismatching_pairs.iter().for_each(|(pair, info)| {
