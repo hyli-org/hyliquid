@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, TokenPair};
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq)]
 pub struct OrderManager {
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,

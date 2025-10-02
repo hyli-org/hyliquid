@@ -8,13 +8,16 @@ use orderbook::{
     smt_values::{Balance, BorshableH256, UserInfo},
 };
 use reqwest::StatusCode;
-use sdk::{api::APIRegisterContract, info, ContractName, LaneId, ProgramId, StateCommitment};
+use sdk::{
+    api::APIRegisterContract, info, ContractName, LaneId, ProgramId, StateCommitment, ZkContract,
+};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
     time::Duration,
 };
 use tokio::{sync::RwLock, time::timeout};
+use tracing::{error, warn};
 
 use crate::services::{
     asset_service::AssetService, book_service::BookService, user_service::UserService,
@@ -58,7 +61,6 @@ async fn init_contract(
             if contract.initial_state.0 != existing.state_commitment {
                 bail!("Invalid state commitment for {}.", contract.name);
             }
-            info!("✅ {} contract state commitment is correct", contract.name);
         }
         Err(_) => {
             info!("🚀 Registering {} contract", contract.name);
@@ -100,6 +102,7 @@ pub async fn init_orderbook_from_database(
     asset_service: Arc<RwLock<AssetService>>,
     user_service: Arc<RwLock<UserService>>,
     book_service: Arc<RwLock<BookService>>,
+    node: &NodeApiHttpClient,
 ) -> Result<(Orderbook, Orderbook), AppError> {
     let asset_service = asset_service.read().await;
     let user_service = user_service.read().await;
@@ -177,6 +180,36 @@ pub async fn init_orderbook_from_database(
         balances,
     )
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+    if let Ok(existing) = node.get_contract(ContractName::from("orderbook")).await {
+        let onchain = Orderbook::from(existing.state_commitment.clone());
+        // Log existing & new orderbook and spot diff
+        let diff = onchain.diff(&light_orderbook);
+        if !diff.is_empty() {
+            warn!("⚠️ Differences (onchain vs db):");
+            for (key, value) in diff.iter() {
+                warn!("  {}: {}", key, value);
+            }
+
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow::anyhow!("Differences found"),
+            ));
+        }
+        info!("✅ No differences found between onchain and db");
+
+        let commit = light_orderbook.commit();
+        if commit != existing.state_commitment {
+            error!("No differences found, but commitment mismatch! Diff algo is broken!");
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow::anyhow!("Commitment mismatch"),
+            ));
+        }
+        info!("✅ Commitment matches");
+    } else {
+        info!("🔍 No onchain contract found, can't check for differences");
+    }
 
     Ok((light_orderbook, full_orderbook))
 }

@@ -190,6 +190,7 @@ async fn main() -> Result<()> {
         asset_service.clone(),
         user_service.clone(),
         book_service.clone(),
+        &node_client,
     )
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;

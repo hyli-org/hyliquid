@@ -718,31 +718,44 @@ impl Orderbook {
         users_info: HashMap<String, UserInfo>,
         balances: HashMap<TokenName, HashMap<H256, Balance>>,
     ) -> Result<Self, String> {
-        let execution_state = ExecutionState::from_data(mode, users_info, balances)?;
+        let full_state =
+            ExecutionState::from_data(ExecutionMode::Full, users_info.clone(), balances.clone())?;
 
-        let users_info_merkle_root = match &execution_state {
-            ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
-            _ => sparse_merkle_tree::H256::zero().into(),
+        let execution_state = if mode == ExecutionMode::Full {
+            full_state.clone()
+        } else {
+            ExecutionState::from_data(mode, users_info, balances)?
         };
-        let balances_merkle_roots = match &execution_state {
+
+        let users_info_merkle_root = match &full_state {
+            ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
+            _ => panic!("Business logic error. full_state should be Full"),
+        };
+        let balances_merkle_roots = match &full_state {
             ExecutionState::Full(state) => state
                 .balances_mt
                 .iter()
                 .map(|(token, balances)| (token.clone(), (*balances.root()).into()))
                 .collect(),
-            _ => BTreeMap::new(),
+            _ => panic!("Business logic error. full_state should be Full"),
         };
         let hashed_secret = Sha256::digest(&secret).into();
 
-        Ok(Orderbook {
+        let mut orderbook = Orderbook {
             hashed_secret,
-            pairs_info,
+            pairs_info: BTreeMap::new(),
             lane_id,
             balances_merkle_roots,
             users_info_merkle_root,
             order_manager,
             execution_state,
-        })
+        };
+
+        for (pair, info) in pairs_info {
+            orderbook.create_pair(&pair, &info)?;
+        }
+
+        Ok(orderbook)
     }
 
     pub fn get_balances(&self) -> HashMap<TokenName, HashMap<H256, Balance>> {
@@ -849,6 +862,95 @@ impl Orderbook {
                 Err("User info lookup is not available in ZkVm execution mode".to_string())
             }
         }
+    }
+}
+
+impl Orderbook {
+    // Detects differences between two orderbooks
+    // It is used to detect differences between on-chain and db orderbooks
+    pub fn diff(&self, other: &Orderbook) -> BTreeMap<String, String> {
+        let mut diff = BTreeMap::new();
+        if self.hashed_secret != other.hashed_secret {
+            diff.insert(
+                "hashed_secret".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(self.hashed_secret.as_slice()),
+                    hex::encode(other.hashed_secret.as_slice())
+                ),
+            );
+        }
+
+        if self.pairs_info != other.pairs_info {
+            let mismatching_pairs = self
+                .pairs_info
+                .iter()
+                .filter(|(pair, info)| {
+                    other
+                        .pairs_info
+                        .get(pair)
+                        .map_or(true, |o_info| *info != o_info)
+                })
+                .collect::<BTreeMap<&TokenPair, &PairInfo>>();
+
+            diff.insert(
+                "pairs_info".to_string(),
+                mismatching_pairs
+                    .iter()
+                    .map(|(pair, info)| format!("{pair:?}: {info:?}"))
+                    .collect::<String>(),
+            );
+        }
+
+        if self.lane_id != other.lane_id {
+            diff.insert(
+                "lane_id".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(&self.lane_id.0 .0),
+                    hex::encode(&other.lane_id.0 .0)
+                ),
+            );
+        }
+
+        if self.balances_merkle_roots != other.balances_merkle_roots {
+            diff.insert(
+                "balances_merkle_roots".to_string(),
+                format!(
+                    "{:?} != {:?}",
+                    self.balances_merkle_roots, other.balances_merkle_roots
+                ),
+            );
+        }
+
+        if self.users_info_merkle_root != other.users_info_merkle_root {
+            diff.insert(
+                "users_info_merkle_root".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(self.users_info_merkle_root.as_slice()),
+                    hex::encode(other.users_info_merkle_root.as_slice())
+                ),
+            );
+        }
+
+        if self.order_manager != other.order_manager {
+            diff.insert(
+                "order_manager".to_string(),
+                format!("{:?} != {:?}", self.order_manager, other.order_manager),
+            );
+        }
+        if self.execution_state.mode() != other.execution_state.mode() {
+            diff.insert(
+                "execution_state".to_string(),
+                format!(
+                    "{:?} != {:?}",
+                    self.execution_state.mode(),
+                    other.execution_state.mode()
+                ),
+            );
+        }
+        diff
     }
 }
 
