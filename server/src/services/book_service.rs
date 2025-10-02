@@ -387,6 +387,9 @@ impl BookWriterService {
                         "Failed to create user"
                     )?;
                 }
+                OrderbookEvent::NonceIncremented { user, nonce } => {
+                    info!("Updating nonce for user {} to {}", user, nonce);
+                }
             }
         }
 

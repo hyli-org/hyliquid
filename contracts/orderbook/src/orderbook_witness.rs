@@ -336,7 +336,7 @@ impl Orderbook {
                     };
                     users_info_needed.insert(ui);
                 }
-                OrderbookEvent::PairCreated { .. } => {}
+                _ => {}
             }
         }
 
