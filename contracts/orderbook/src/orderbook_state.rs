@@ -4,6 +4,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use monotree::{hasher::Sha2, Monotree};
 use monotree::{DefaultDatabase, Hash as MonotreeHash};
 
+use crate::monotree_multi_proof::ProofStatus;
 use crate::monotree_proof::compute_root_from_proof;
 use crate::orderbook::{OrderbookEvent, TokenName};
 use crate::orderbook_witness::ZkVmWitness;
@@ -114,15 +115,24 @@ impl Orderbook {
             }
             ExecutionState::ZkVm(state) => {
                 let key = user_info.get_key();
-                let proof = state.users_info.proofs.get(&key).ok_or_else(|| {
-                    format!(
-                        "No users_info proof found for user {} with key {}",
-                        user_info.user,
-                        hex::encode(key.as_slice())
-                    )
-                })?;
+                let multi_proof = state
+                    .users_info
+                    .proof
+                    .as_ref()
+                    .ok_or_else(|| "Missing users_info multiproof".to_string())?;
+                let key_bytes: [u8; 32] = (*key).into();
+                let path = match multi_proof.proof_status(&key_bytes) {
+                    Some(ProofStatus::Present(path)) => path,
+                    Some(ProofStatus::Absent) | None => {
+                        return Err(format!(
+                            "No users_info proof found for user {} with key {}",
+                            user_info.user,
+                            hex::encode(key.as_slice())
+                        ))
+                    }
+                };
                 let leaf_hash = user_info.to_hash_bytes();
-                let new_root = compute_root_from_proof(&leaf_hash, &proof.0);
+                let new_root = compute_root_from_proof(&leaf_hash, &path);
                 self.users_info_merkle_root = H256::from(new_root);
             }
         }
@@ -173,15 +183,23 @@ impl Orderbook {
                     .map(|h| h.as_slice().try_into().unwrap())
                     .unwrap_or([0u8; 32]);
 
+                let multi_proof = witness.proof.as_ref().ok_or_else(|| {
+                    format!("Missing balance proof for token {token} while running in ZkVm mode")
+                })?;
+
                 for (user_info_key, balance) in balances_to_update.iter() {
-                    let proof = witness.proofs.get(user_info_key).ok_or_else(|| {
-                        format!(
-                            "Missing balance proof for token {token} and user key {}",
-                            hex::encode(user_info_key.as_slice())
-                        )
-                    })?;
+                    let key_bytes: [u8; 32] = (*user_info_key).into();
+                    let path = match multi_proof.proof_status(&key_bytes) {
+                        Some(ProofStatus::Present(path)) => path,
+                        Some(ProofStatus::Absent) | None => {
+                            return Err(format!(
+                                "Missing balance proof for token {token} and user key {}",
+                                hex::encode(user_info_key.as_slice())
+                            ));
+                        }
+                    };
                     let leaf_hash = balance.to_hash_bytes();
-                    current_root = compute_root_from_proof(&leaf_hash, &proof.0);
+                    current_root = compute_root_from_proof(&leaf_hash, &path);
                 }
 
                 self.balances_merkle_roots

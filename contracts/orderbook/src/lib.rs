@@ -13,6 +13,7 @@ use crate::{
     smt_values::UserInfo,
 };
 
+pub mod monotree_multi_proof;
 pub mod monotree_proof;
 pub mod order_manager;
 pub mod orderbook;

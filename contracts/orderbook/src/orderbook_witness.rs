@@ -2,7 +2,8 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    monotree_proof::{compute_root_from_proof, BorshableMonotreeProof},
+    monotree_multi_proof::{MonotreeMultiProof, ProofStatus},
+    monotree_proof::compute_root_from_proof,
     order_manager::OrderManager,
     orderbook::{ExecutionMode, ExecutionState, Orderbook, OrderbookEvent, TokenName},
     orderbook_state::ZkVmState,
@@ -13,13 +14,13 @@ use monotree::{hasher::Sha2, verify_proof, Hasher};
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmWitness<T: BorshDeserialize + BorshSerialize + Default> {
     pub value: T,
-    pub proofs: HashMap<H256, BorshableMonotreeProof>,
+    pub proof: Option<MonotreeMultiProof>,
 }
 impl<T: BorshDeserialize + BorshSerialize + Default> Default for ZkVmWitness<T> {
     fn default() -> Self {
         ZkVmWitness {
             value: T::default(),
-            proofs: HashMap::new(),
+            proof: None,
         }
     }
 }
@@ -31,11 +32,11 @@ impl Orderbook {
         users: &HashSet<UserInfo>,
     ) -> Result<ZkVmWitness<HashSet<UserInfo>>, String> {
         let mut set = HashSet::new();
-        let proofs = self.get_users_info_proofs(users)?;
+        let proof = self.get_users_info_proof(users)?;
         for user in users {
             set.insert(user.clone());
         }
-        Ok(ZkVmWitness { value: set, proofs })
+        Ok(ZkVmWitness { value: set, proof })
     }
 
     fn create_balances_witness(
@@ -43,47 +44,38 @@ impl Orderbook {
         token: &TokenName,
         users: &[UserInfo],
     ) -> Result<ZkVmWitness<HashMap<H256, Balance>>, String> {
-        let (balances, proofs) = self.get_balances_with_proof(users, token)?;
+        let (balances, proof) = self.get_balances_with_proof(users, token)?;
         let mut map = HashMap::new();
         for (user_info, balance) in balances {
             map.insert(user_info.get_key(), balance);
         }
-        Ok(ZkVmWitness { value: map, proofs })
+        Ok(ZkVmWitness { value: map, proof })
     }
-    fn get_users_info_proofs(
+    fn get_users_info_proof(
         &self,
         users_info: &HashSet<UserInfo>,
-    ) -> Result<HashMap<H256, BorshableMonotreeProof>, String> {
-        let mut proofs = HashMap::new();
+    ) -> Result<Option<MonotreeMultiProof>, String> {
         if users_info.is_empty() {
-            return Ok(proofs);
+            return Ok(None);
         }
         match &self.execution_state {
             ExecutionState::Full(state) => {
                 let mut tree = state.users_info_mt.clone();
-                for user in users_info {
-                    tree.upsert(&user.get_key(), user.clone())
-                        .map_err(|e| format!("Failed to update users info clone: {e}"))?;
-                }
-                for user in users_info {
-                    let key = user.get_key();
-                    let key_bytes: [u8; 32] = (*key).into();
-                    let proof = tree
-                        .tree
-                        .get_merkle_proof(tree.root.as_ref(), &key_bytes)
-                        .map_err(|e| {
-                            format!("Failed to create merkle proof for user {}: {e}", user.user)
-                        })?
-                        .ok_or_else(|| {
-                            format!(
-                                "No merkle proof found for user {} with key {}",
-                                user.user,
-                                hex::encode(key.as_slice())
-                            )
-                        })?;
-                    proofs.insert(key, BorshableMonotreeProof(proof));
-                }
-                Ok(proofs)
+
+                let entries: Vec<(H256, UserInfo)> = users_info
+                    .iter()
+                    .map(|user| (user.get_key(), user.clone()))
+                    .collect();
+                tree.upsert_batch(&entries)
+                    .map_err(|e| format!("Failed to update users info clone: {e}"))?;
+
+                let keys: Vec<[u8; 32]> = entries.iter().map(|(key, _)| (*key).into()).collect();
+                // Aggregate the freshly inserted leaves into a single multiproof so callers can share siblings.
+                let multi_proof =
+                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &keys)
+                        .map_err(|e| format!("Failed to create users info multi-proof: {e}"))?;
+
+                Ok(Some(multi_proof))
             }
             ExecutionState::Light(_) => {
                 Err("Light execution mode does not maintain merkle proofs".to_string())
@@ -98,15 +90,9 @@ impl Orderbook {
         &self,
         users_info: &[UserInfo],
         token: &TokenName,
-    ) -> Result<
-        (
-            HashMap<UserInfo, Balance>,
-            HashMap<H256, BorshableMonotreeProof>,
-        ),
-        String,
-    > {
+    ) -> Result<(HashMap<UserInfo, Balance>, Option<MonotreeMultiProof>), String> {
         if users_info.is_empty() {
-            return Ok((HashMap::new(), HashMap::new()));
+            return Ok((HashMap::new(), None));
         }
         match &self.execution_state {
             ExecutionState::Full(state) => {
@@ -116,41 +102,28 @@ impl Orderbook {
                     balances_map.insert(user_info.clone(), balance);
                 }
 
-                let mut proofs = HashMap::new();
                 let mut tree = state
                     .balances_mt
                     .get(token)
                     .ok_or_else(|| format!("No balances tree found for token {token}"))?
                     .clone();
 
-                for (user, balance) in &balances_map {
-                    tree.upsert(&user.get_key(), balance.clone()).map_err(|e| {
-                        format!("Failed to update balances clone for token {token}: {e}")
-                    })?;
-                }
+                let entries: Vec<(H256, Balance)> = balances_map
+                    .iter()
+                    .map(|(user, balance)| (user.get_key(), balance.clone()))
+                    .collect();
+                tree.upsert_batch(&entries).map_err(|e| {
+                    format!("Failed to update balances clone for token {token}: {e}")
+                })?;
 
-                for user in users_info {
-                    let key = user.get_key();
-                    let key_bytes: [u8; 32] = (*key).into();
-                    let proof = tree
-                        .tree
-                        .get_merkle_proof(tree.root.as_ref(), &key_bytes)
-                        .map_err(|e| {
-                            format!(
-                                "Failed to create merkle proof for token {token} and user {}: {e}",
-                                user.user
-                            )
-                        })?
-                        .ok_or_else(|| {
-                            format!(
-                                "No merkle proof found for token {token} and user {}",
-                                user.user
-                            )
-                        })?;
-                    proofs.insert(key, BorshableMonotreeProof(proof));
-                }
+                let keys: Vec<[u8; 32]> = entries.iter().map(|(key, _)| (*key).into()).collect();
+                // Merge all balance proofs for this token into one multiproof payload.
+                let multi_proof =
+                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &keys).map_err(
+                        |e| format!("Failed to create balances multi-proof for token {token}: {e}"),
+                    )?;
 
-                Ok((balances_map, proofs))
+                Ok((balances_map, Some(multi_proof)))
             }
             ExecutionState::Light(_) => {
                 Err("Light execution mode does not maintain merkle proofs".to_string())
@@ -205,43 +178,62 @@ impl Orderbook {
                 }
 
                 if state.users_info.value.is_empty() {
-                    if state.users_info.proofs.is_empty() {
+                    if state.users_info.proof.is_none() {
                         return Ok(());
                     }
                     return Err("No users provided but proofs were supplied".to_string());
                 }
 
+                let multi_proof = state
+                    .users_info
+                    .proof
+                    .as_ref()
+                    .ok_or_else(|| "Missing users_info multiproof".to_string())?;
+
                 let root_bytes: [u8; 32] =
                     self.users_info_merkle_root.as_slice().try_into().unwrap();
                 let hasher = Sha2::new();
-                let mut verified_keys = HashSet::new();
+                let mut verified_keys: HashSet<[u8; 32]> = HashSet::new();
 
                 for user_info in state.users_info.value.iter() {
                     let key = user_info.get_key();
                     let leaf_hash = user_info.to_hash_bytes();
-                    let proof = state.users_info.proofs.get(&key).ok_or_else(|| {
-                        format!(
-                            "Missing users_info proof for user {} with key {}",
-                            user_info.user,
-                            hex::encode(key.as_slice())
-                        )
-                    })?;
+                    let key_bytes: [u8; 32] = (*key).into();
+                    match multi_proof.proof_status(&key_bytes) {
+                        Some(ProofStatus::Present(path)) => {
+                            let is_valid =
+                                verify_proof(&hasher, Some(&root_bytes), &leaf_hash, Some(&path));
 
-                    let is_valid =
-                        verify_proof(&hasher, Some(&root_bytes), &leaf_hash, Some(&proof.0));
+                            if !is_valid {
+                                return Err(format!(
+                                    "Invalid users_info proof for user {} with key {}",
+                                    user_info.user,
+                                    hex::encode(key.as_slice())
+                                ));
+                            }
 
-                    if !is_valid {
-                        return Err(format!(
-                            "Invalid users_info proof for user {} with key {}",
-                            user_info.user,
-                            hex::encode(key.as_slice())
-                        ));
+                            verified_keys.insert(key_bytes);
+                        }
+                        Some(ProofStatus::Absent) | None => {
+                            return Err(format!(
+                                "Missing users_info proof for user {} with key {}",
+                                user_info.user,
+                                hex::encode(key.as_slice())
+                            ));
+                        }
                     }
-
-                    verified_keys.insert(key);
                 }
 
-                if verified_keys.len() != state.users_info.proofs.len() {
+                let unused = multi_proof
+                    .entries()
+                    .filter(|(key, status)| {
+                        let key_bytes = **key;
+                        matches!(status, ProofStatus::Present(_))
+                            && !verified_keys.contains(&key_bytes)
+                    })
+                    .count();
+
+                if unused > 0 {
                     return Err("Unused users_info proofs detected".to_string());
                 }
                 Ok(())
@@ -275,7 +267,7 @@ impl Orderbook {
                     }
 
                     if witness.value.is_empty() {
-                        if witness.proofs.is_empty() {
+                        if witness.proof.is_none() {
                             continue;
                         }
                         return Err(format!(
@@ -283,33 +275,55 @@ impl Orderbook {
                         ));
                     }
 
+                    let multi_proof = witness
+                        .proof
+                        .as_ref()
+                        .ok_or_else(|| format!("Missing balances multiproof for token {token}"))?;
+
                     let root_bytes: [u8; 32] = token_root.as_slice().try_into().unwrap();
                     let hasher = Sha2::new();
-                    let mut verified_keys = HashSet::new();
+                    let mut verified_keys: HashSet<[u8; 32]> = HashSet::new();
 
                     for (user_info_key, balance) in witness.value.iter() {
                         let leaf_hash = balance.to_hash_bytes();
-                        let proof = witness.proofs.get(user_info_key).ok_or_else(|| {
-                            format!(
-                                "Missing balance proof for token {token} and user key {}",
-                                hex::encode(user_info_key.as_slice())
-                            )
-                        })?;
+                        let key_bytes: [u8; 32] = (*user_info_key).into();
+                        match multi_proof.proof_status(&key_bytes) {
+                            Some(ProofStatus::Present(path)) => {
+                                let is_valid = verify_proof(
+                                    &hasher,
+                                    Some(&root_bytes),
+                                    &leaf_hash,
+                                    Some(&path),
+                                );
 
-                        let is_valid =
-                            verify_proof(&hasher, Some(&root_bytes), &leaf_hash, Some(&proof.0));
+                                if !is_valid {
+                                    return Err(format!(
+                                        "Invalid balances proof for token {token} and user key {}",
+                                        hex::encode(user_info_key.as_slice())
+                                    ));
+                                }
 
-                        if !is_valid {
-                            return Err(format!(
-                                "Invalid balances proof for token {token} and user key {}",
-                                hex::encode(user_info_key.as_slice())
-                            ));
+                                verified_keys.insert(key_bytes);
+                            }
+                            Some(ProofStatus::Absent) | None => {
+                                return Err(format!(
+                                    "Missing balance proof for token {token} and user key {}",
+                                    hex::encode(user_info_key.as_slice())
+                                ));
+                            }
                         }
-
-                        verified_keys.insert(*user_info_key);
                     }
 
-                    if verified_keys.len() != witness.proofs.len() {
+                    let unused = multi_proof
+                        .entries()
+                        .filter(|(key, status)| {
+                            let key_bytes = **key;
+                            matches!(status, ProofStatus::Present(_))
+                                && !verified_keys.contains(&key_bytes)
+                        })
+                        .count();
+
+                    if unused > 0 {
                         return Err(format!("Unused balance proofs detected for token {token}"));
                     }
                 }
@@ -465,21 +479,28 @@ impl Orderbook {
 
         if let ExecutionState::ZkVm(state) = &zk_orderbook.execution_state {
             if !state.users_info.value.is_empty() {
-                let mut computed_root = None;
-                for user in state.users_info.value.iter() {
-                    if let Some(proof) = state.users_info.proofs.get(&user.get_key()) {
-                        let leaf_hash = user.to_hash_bytes();
-                        let candidate = compute_root_from_proof(&leaf_hash, &proof.0);
-                        match computed_root {
-                            Some(existing) if existing != candidate => {
-                                return Err("Inconsistent users_info proofs provided".to_string())
+                if let Some(multi_proof) = state.users_info.proof.as_ref() {
+                    let mut computed_root = None;
+                    for user in state.users_info.value.iter() {
+                        let key_bytes: [u8; 32] = (*user.get_key()).into();
+                        if let Some(ProofStatus::Present(path)) =
+                            multi_proof.proof_status(&key_bytes)
+                        {
+                            let leaf_hash = user.to_hash_bytes();
+                            let candidate = compute_root_from_proof(&leaf_hash, &path);
+                            match computed_root {
+                                Some(existing) if existing != candidate => {
+                                    return Err(
+                                        "Inconsistent users_info proofs provided".to_string()
+                                    )
+                                }
+                                _ => computed_root = Some(candidate),
                             }
-                            _ => computed_root = Some(candidate),
                         }
                     }
-                }
-                if let Some(root) = computed_root {
-                    zk_orderbook.users_info_merkle_root = root.into();
+                    if let Some(root) = computed_root {
+                        zk_orderbook.users_info_merkle_root = root.into();
+                    }
                 }
             }
 
@@ -490,18 +511,23 @@ impl Orderbook {
                 }
 
                 let mut computed_root = None;
-                for (user_key, balance) in witness.value.iter() {
-                    if let Some(proof) = witness.proofs.get(user_key) {
-                        let leaf_hash = balance.to_hash_bytes();
-                        let candidate = compute_root_from_proof(&leaf_hash, &proof.0);
-                        match computed_root {
-                            Some(existing) if existing != candidate => {
-                                return Err(format!(
-                                    "Inconsistent balance proofs provided for token {}",
-                                    token
-                                ));
+                if let Some(multi_proof) = witness.proof.as_ref() {
+                    for (user_key, balance) in witness.value.iter() {
+                        let key_bytes: [u8; 32] = (*user_key).into();
+                        if let Some(ProofStatus::Present(path)) =
+                            multi_proof.proof_status(&key_bytes)
+                        {
+                            let leaf_hash = balance.to_hash_bytes();
+                            let candidate = compute_root_from_proof(&leaf_hash, &path);
+                            match computed_root {
+                                Some(existing) if existing != candidate => {
+                                    return Err(format!(
+                                        "Inconsistent balance proofs provided for token {}",
+                                        token
+                                    ));
+                                }
+                                _ => computed_root = Some(candidate),
                             }
-                            _ => computed_root = Some(candidate),
                         }
                     }
                 }
