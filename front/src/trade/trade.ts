@@ -404,6 +404,10 @@ export function placeOrder(input: {
         if (input.type === "limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");
 
+        if (input.type === "market") {
+            input.price = null;
+        }
+
         const address = wallet.value?.address;
         if (!address) throw new Error("No wallet address");
 

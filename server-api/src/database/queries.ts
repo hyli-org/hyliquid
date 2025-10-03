@@ -15,14 +15,27 @@ export class DatabaseQueries {
     const result = await this.pool.query(
       "SELECT * FROM assets ORDER BY symbol"
     );
-    return result.rows;
+    return result.rows.map((row) => ({
+      ...row,
+      asset_id: parseInt(row.asset_id, 10),
+      scale: parseInt(row.scale, 10),
+      step: parseInt(row.step, 10),
+    }));
   }
 
   async getAllInstruments(): Promise<Instrument[]> {
     const result = await this.pool.query(
       "SELECT * FROM instruments ORDER BY symbol"
     );
-    return result.rows;
+    return result.rows.map((row) => ({
+      ...row,
+      instrument_id: parseInt(row.instrument_id, 10),
+      base_asset_id: parseInt(row.base_asset_id, 10),
+      quote_asset_id: parseInt(row.quote_asset_id, 10),
+      tick_size: parseInt(row.tick_size, 10),
+      qty_step: parseInt(row.qty_step, 10),
+      commit_id: parseInt(row.commit_id, 10),
+    }));
   }
 
   async getAllUsers(): Promise<Array<{ identity: string; user_id: number }>> {
@@ -263,8 +276,8 @@ export class DatabaseQueries {
       [userId]
     );
     return result.rows.map((row) => ({
-      trade_id: row.trade_id,
-      instrument_id: row.instrument_id,
+      trade_id: parseInt(row.trade_id, 10),
+      instrument_id: parseInt(row.instrument_id, 10),
       price: parseInt(row.price, 10),
       qty: parseInt(row.qty, 10),
       trade_time: row.trade_time,
@@ -286,8 +299,8 @@ export class DatabaseQueries {
       [userId, instrumentId]
     );
     return result.rows.map((row) => ({
-      trade_id: row.trade_id,
-      instrument_id: row.instrument_id,
+      trade_id: parseInt(row.trade_id, 10),
+      instrument_id: parseInt(row.instrument_id, 10),
       price: parseInt(row.price, 10),
       qty: parseInt(row.qty, 10),
       trade_time: row.trade_time,
