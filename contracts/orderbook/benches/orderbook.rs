@@ -1,11 +1,8 @@
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
-use orderbook::monotree_multi_proof::MonotreeMultiProof;
 use orderbook::orderbook::{
-    ExecutionMode, ExecutionState, Order, OrderSide, OrderType, Orderbook, OrderbookEvent,
-    PairInfo, TokenName,
+    ExecutionMode, Order, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenName,
 };
-use orderbook::orderbook_state::MonotreeMap;
-use orderbook::smt_values::{Balance, BorshableH256 as H256, UserInfo};
+use orderbook::smt_values::UserInfo;
 use sdk::LaneId;
 
 fn sample_user(name: &str) -> UserInfo {
@@ -356,7 +353,7 @@ fn bench_zkvm_commitment(c: &mut Criterion) {
     group.bench_function("derive_metadata", |b| {
         b.iter_batched(
             setup_for_zkvm,
-            |(mut orderbook, taker, events)| {
+            |(orderbook, taker, events)| {
                 orderbook
                     .derive_zkvm_commitment_metadata_from_events(&taker, &events)
                     .expect("commitment generation");
@@ -364,55 +361,6 @@ fn bench_zkvm_commitment(c: &mut Criterion) {
             BatchSize::SmallInput,
         )
     });
-    group.finish();
-}
-
-fn bench_monotree_ops(c: &mut Criterion) {
-    let mut group = c.benchmark_group("monotree_ops");
-
-    group.bench_function("upsert_batch", |b| {
-        b.iter_batched(
-            || {
-                (0..128)
-                    .map(|i| {
-                        let user = sample_user(&format!("mono-{i}"));
-                        (user.get_key(), Balance(i as u64))
-                    })
-                    .collect::<Vec<_>>()
-            },
-            |entries| {
-                let mut map = MonotreeMap::<Balance>::default();
-                map.upsert_batch(&entries).expect("upsert batch");
-            },
-            BatchSize::SmallInput,
-        )
-    });
-
-    for &count in &[16usize, 64, 256] {
-        group.bench_with_input(BenchmarkId::new("multiproof", count), &count, |b, &n| {
-            b.iter_batched(
-                || {
-                    let mut map = MonotreeMap::<Balance>::default();
-                    let entries: Vec<(H256, Balance)> = (0..n)
-                        .map(|i| {
-                            let user = sample_user(&format!("proof-{i}"));
-                            (user.get_key(), Balance((i + 1) as u64))
-                        })
-                        .collect();
-                    map.upsert_batch(&entries).expect("populate monotree");
-                    let keys: Vec<[u8; 32]> =
-                        entries.iter().map(|(key, _)| (*key).into()).collect();
-                    (map, keys)
-                },
-                |(mut map, keys)| {
-                    MonotreeMultiProof::build(&mut map.tree, map.root.as_ref(), &keys)
-                        .expect("build multiproof bench");
-                },
-                BatchSize::SmallInput,
-            );
-        });
-    }
-
     group.finish();
 }
 
@@ -426,6 +374,5 @@ criterion_group!(
     bench_for_zkvm,
     bench_zkvm_scaling,
     bench_zkvm_commitment,
-    bench_monotree_ops,
 );
 criterion_main!(orderbook_benches);
