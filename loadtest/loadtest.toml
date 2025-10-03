@@ -9,8 +9,8 @@ base_asset = "BTC"
 quote_asset = "USDT"
 
 # Price and quantity scaling (integer-based to avoid floats)
-price_tick = 1       # Minimum price increment
-qty_step = 1         # Minimum quantity increment
+price_tick = 1000000       # Minimum price increment
+qty_step = 1000         # Minimum quantity increment
 price_scale = 2      # Number of decimal places for price (e.g., 2 = 0.01)
 qty_scale = 8        # Number of decimal places for quantity
 
@@ -19,13 +19,13 @@ qty_scale = 8        # Number of decimal places for quantity
 model = "closed"
 
 # For closed model: number of virtual users
-users = 1
+users = 10
 
 # For open model: requests per second target
 rps = 50
 
 # Test duration in seconds
-duration = 5
+duration = 20
 
 # Ramp-up configuration
 ramp_users_per_second = 1  # Add N users per second during ramp-up
@@ -47,7 +47,7 @@ max_quantity_steps = 100 # Maximum order size in steps
 
 # Random walk for mid price
 mid_drift_ticks = 2      # Maximum drift per cycle in ticks
-mid_initial = 50000      # Initial mid price in ticks
+mid_initial = 1000000000      # Initial mid price in ticks
 
 # Timing
 cycle_interval_ms = 2000 # Time between maker cycles in milliseconds

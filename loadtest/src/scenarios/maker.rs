@@ -1,6 +1,6 @@
 use goose::prelude::*;
 use orderbook::orderbook::{OrderSide, OrderType};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 use crate::http_client::{build_order, OrderbookClient};
 use crate::scenarios::setup_scenario;
@@ -24,11 +24,11 @@ async fn update_mid_price_transaction(_user: &mut GooseUser) -> TransactionResul
     let drift = shared_state.random_drift(config.maker.mid_drift_ticks);
     {
         let mut mid_price = shared_state.mid_price.lock().unwrap();
-        mid_price.apply_drift(drift);
+        mid_price.apply_drift(drift * config.instrument.price_tick as i64);
     }
 
     let mid = shared_state.mid_price.lock().unwrap().get();
-    debug!("Maker: mid price = {} (drift: {})", mid, drift);
+    info!("Maker: mid price = {} (drift: {})", mid, drift);
 
     Ok(())
 }
@@ -57,6 +57,10 @@ async fn place_bid_orders_transaction(user: &mut GooseUser) -> TransactionResult
         let price = mid.saturating_sub(price_offset * config.instrument.price_tick);
 
         if price == 0 {
+            warn!(
+                "Maker bid: skipping invalid price: {}, mid: {}, price_offset: {}, level: {}, price_tick: {}",
+                price, mid, price_offset, level, config.instrument.price_tick
+            );
             continue; // Skip invalid prices
         }
 
@@ -132,6 +136,14 @@ async fn place_ask_orders_transaction(user: &mut GooseUser) -> TransactionResult
         let price_offset =
             config.maker.min_spread_ticks + (level as u64 * config.maker.level_spacing_ticks);
         let price = mid.saturating_add(price_offset * config.instrument.price_tick);
+
+        if price == 0 {
+            warn!(
+                "Maker ask: skipping invalid price: {}, mid: {}, price_offset: {}, level: {}, price_tick: {}",
+                price, mid, price_offset, level, config.instrument.price_tick
+            );
+            continue; // Skip invalid prices
+        }
 
         let quantity = shared_state.random_range(
             config.maker.min_quantity_steps,

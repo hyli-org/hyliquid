@@ -84,7 +84,7 @@ async fn main() -> Result<()> {
     let start_time = Utc::now();
 
     // Create shared state
-    let shared_state = SharedState::new(config.rng.seed);
+    let shared_state = SharedState::new(config.rng.seed, config.maker.mid_initial);
 
     // Update order tracker max size from config
     {
@@ -146,7 +146,14 @@ async fn run_goose_test(config: Config, _shared_state: SharedState) -> Result<Go
         .set_default(GooseDefault::LogLevel, 1)
         .context("Failed to set log level")? // Info level
         .set_default(GooseDefault::NoMetrics, false)
-        .context("Failed to set no metrics")?;
+        .context("Failed to set no metrics")?
+        .set_default(GooseDefault::NoResetMetrics, true)
+        .context("Failed to set no reset metrics")?
+        .set_default(
+            GooseDefault::ReportFile,
+            format!("{}/report.html", config.metrics.output_dir).as_str(),
+        )
+        .context("Failed to set report dir")?;
 
     // Configure ramp-up if specified
     if config.load.ramp_duration > 0 && config.load.ramp_users_per_second > 0 {

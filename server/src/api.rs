@@ -62,6 +62,7 @@ impl Module for ApiModule {
                 get(get_book),
             )
             .route("/api/balances", get(get_balance))
+            .route("/api/nonce", get(get_nonce))
             .with_state(state)
             .layer(cors); // Appliquer le middleware CORS
 
@@ -179,4 +180,16 @@ async fn get_balance(
     let balance = user_service.get_balances(&auth_headers.user).await?;
 
     Ok(Json(balance))
+}
+
+async fn get_nonce(
+    State(ctx): State<RouterCtx>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    let auth_headers = AuthHeaders::from_headers(&headers)?;
+    let user_service = ctx.user_service.read().await;
+
+    let nonce = user_service.get_nonce(&auth_headers.user).await?;
+
+    Ok(Json(nonce))
 }

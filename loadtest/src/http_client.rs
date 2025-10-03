@@ -28,11 +28,11 @@ pub struct OrderbookEntry {
 
 impl OrderbookResponse {
     pub fn best_bid(&self) -> Option<&OrderbookEntry> {
-        self.bids.last()
+        self.bids.first()
     }
 
     pub fn best_ask(&self) -> Option<&OrderbookEntry> {
-        self.asks.first()
+        self.asks.last()
     }
 }
 
@@ -91,7 +91,7 @@ impl OrderbookClient {
 
     /// Get nonce for a user
     pub async fn get_nonce(&self, auth: &UserAuth) -> Result<u32> {
-        let url = format!("{}/nonce", self.base_url);
+        let url = format!("{}/api/nonce", self.base_url);
 
         let response = self
             .client
@@ -107,8 +107,7 @@ impl OrderbookClient {
             anyhow::bail!("get_nonce failed with status {}: {}", status, error_text);
         }
 
-        let nonce_str = response.text().await?;
-        let nonce = nonce_str.trim().parse::<u32>().unwrap_or_default();
+        let nonce = response.json::<u32>().await?;
 
         Ok(nonce)
     }

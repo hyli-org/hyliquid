@@ -1,3 +1,8 @@
 endpoint,method,count,success,fail,min_ms,mean_ms,p50_ms,p95_ms,p99_ms,max_ms
-POST place_ask_orders,Post,5,5,0,13,19.80,14,26,26,31
-POST place_bid_orders,Post,10,10,0,10,17.10,15,23,23,26
+GET get_balances,Get,10,10,0,6,146.90,190,230,230,241
+POST add_session_key,Post,10,10,0,24,4142.00,4000,8000,8000,8895
+POST place_bid_orders,Post,65,65,0,12,3077.66,83,20000,20000,19659
+POST deposit_quote_asset,Post,10,10,0,9,330.00,40,1000,1000,1422
+POST place_ask_orders,Post,25,25,0,11,1728.60,52,1000,20000,19673
+POST create_pair,Post,1,1,0,11,11.00,11,11,11,11
+POST deposit_base_asset,Post,10,10,0,10,60.60,29,150,150,152

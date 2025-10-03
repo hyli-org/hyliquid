@@ -93,6 +93,16 @@ impl UserService {
         Ok(UserBalances { balances })
     }
 
+    pub async fn get_nonce(&self, user: &str) -> Result<u32, AppError> {
+        let user_id = self.get_user_id(user).await?;
+        let row = sqlx::query("SELECT nonce FROM users WHERE user_id = $1")
+            .bind(user_id)
+            .fetch_one(&self.pool)
+            .await?;
+
+        Ok(row.get::<i64, _>("nonce") as u32)
+    }
+
     pub async fn get_all_users(&self) -> HashMap<String, UserInfo> {
         // Fetch all users from the database and store them in the user_id_map
         info!("Fetching all users from the database");

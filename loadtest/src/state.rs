@@ -14,7 +14,7 @@ pub struct SharedState {
 }
 
 impl SharedState {
-    pub fn new(seed: u64) -> Self {
+    pub fn new(seed: u64, initial_mid: u64) -> Self {
         let rng = if seed == 0 {
             ChaCha8Rng::from_entropy()
         } else {
@@ -24,7 +24,7 @@ impl SharedState {
         SharedState {
             rng: Arc::new(Mutex::new(rng)),
             order_tracker: Arc::new(Mutex::new(OrderTracker::new())),
-            mid_price: Arc::new(Mutex::new(MidPrice::new(50000))),
+            mid_price: Arc::new(Mutex::new(MidPrice::new(initial_mid))),
         }
     }
 
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_shared_state_creation() {
-        let state = SharedState::new(42);
+        let state = SharedState::new(42, 1000);
         let val1 = state.random_range(1, 100);
         let val2 = state.random_range(1, 100);
         assert!((1..=100).contains(&val1));
