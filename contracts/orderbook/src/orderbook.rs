@@ -833,7 +833,7 @@ impl Orderbook {
                 let user_info = state
                     .users_info
                     .get(user)
-                    .ok_or_else(|| format!("No salt found for user '{user}'"))?;
+                    .ok_or_else(|| format!("User info for '{user}' not found"))?;
                 let key = user_info.get_key();
                 state.users_info_mt.get(&key).map_err(|e| {
                     format!(
