@@ -12,7 +12,7 @@ path = "src/main.rs"
 orderbook.workspace = true
 sdk.workspace = true
 client-sdk.workspace = true
-server.workspace = true
+server = { workspace = true, features = ["nonreproducible" ]}
 
 # Goose for load testing
 goose = "0.18"
