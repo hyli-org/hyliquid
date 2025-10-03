@@ -1,3 +1,2 @@
 endpoint,method,count,success,fail,min_ms,mean_ms,p50_ms,p95_ms,p99_ms,max_ms
-POST setup,Post,68,34,34,1,8.93,2,23,26,52
-GET setup,Get,35,35,0,2,13.17,3,5,5,361
+GET setup,Get,310,310,0,1,2.88,3,4,5,6

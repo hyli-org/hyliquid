@@ -73,7 +73,8 @@ async fn user_deposit(
     let base_asset_balance = balance
         .balances
         .iter()
-        .find(|b| b.token == config.instrument.base_asset).cloned()
+        .find(|b| b.token == config.instrument.base_asset)
+        .cloned()
         .unwrap_or(Balance {
             token: config.instrument.base_asset.clone(),
             available: 0,
@@ -83,7 +84,8 @@ async fn user_deposit(
     let quote_asset_balance = balance
         .balances
         .iter()
-        .find(|b| b.token == config.instrument.quote_asset).cloned()
+        .find(|b| b.token == config.instrument.quote_asset)
+        .cloned()
         .unwrap_or(Balance {
             token: config.instrument.quote_asset.clone(),
             available: 0,
@@ -91,11 +93,11 @@ async fn user_deposit(
             reserved: 0,
         });
 
-    info!(
+    debug!(
         "User {} base asset balance: {:?}",
         user_auth.identity, base_asset_balance
     );
-    info!(
+    debug!(
         "User {} quote asset balance: {:?}",
         user_auth.identity, quote_asset_balance
     );
