@@ -38,8 +38,13 @@ orderbook = { path = "." }
 clap = { version = "4.5.23", features = ["derive"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tokio = { version = "1.44.2", features = ["full", "tracing"] }
+criterion = "0.5"
 
 [features]
 default = []
 sp1 = ["dep:sp1-zkvm", "sdk/sp1"]
 sqlx = ["dep:sqlx"]
+
+[[bench]]
+name = "orderbook"
+harness = false
