@@ -3,13 +3,13 @@ use orderbook::orderbook::{OrderSide, OrderType};
 use tracing::{debug, warn};
 
 use crate::http_client::{build_order, OrderbookClient};
+use crate::scenarios::setup_scenario;
 use crate::state::UserState;
 use crate::GLOBAL_CONFIG;
 use crate::GLOBAL_SHARED_STATE;
 
-/// Maker scenario: place bid and ask orders around dynamic mid price
-pub async fn maker_scenario(user: &mut GooseUser) -> TransactionResult {
-    // Get session data (clone to avoid borrow conflicts)
+/// Transaction: Update mid price with random walk
+async fn update_mid_price_transaction(_user: &mut GooseUser) -> TransactionResult {
     let config = {
         let global_config = GLOBAL_CONFIG.lock().unwrap();
         global_config.clone().unwrap()
@@ -20,16 +20,6 @@ pub async fn maker_scenario(user: &mut GooseUser) -> TransactionResult {
         global_shared_state.clone().unwrap()
     };
 
-    let user_state = user.get_session_data_mut::<UserState>().unwrap();
-
-    // Create HTTP client
-    let client = OrderbookClient::new(&config).unwrap();
-
-    // Get current nonce from server
-    let current_nonce = client.get_nonce(&user_state.auth).await.unwrap();
-
-    user_state.nonce = current_nonce;
-
     // Update mid price with random walk
     let drift = shared_state.random_drift(config.maker.mid_drift_ticks);
     {
@@ -39,6 +29,24 @@ pub async fn maker_scenario(user: &mut GooseUser) -> TransactionResult {
 
     let mid = shared_state.mid_price.lock().unwrap().get();
     debug!("Maker: mid price = {} (drift: {})", mid, drift);
+
+    Ok(())
+}
+
+/// Transaction: Place bid orders (buy side)
+async fn place_bid_orders_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let shared_state = {
+        let global_shared_state = GLOBAL_SHARED_STATE.lock().unwrap();
+        global_shared_state.clone().unwrap()
+    };
+
+    let mid = shared_state.mid_price.lock().unwrap().get();
+    let client = OrderbookClient::new(&config).unwrap();
 
     // Place bid orders (buy side)
     for level in 0..config.maker.ladder_levels {
@@ -99,6 +107,24 @@ pub async fn maker_scenario(user: &mut GooseUser) -> TransactionResult {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
 
+    Ok(())
+}
+
+/// Transaction: Place ask orders (sell side)
+async fn place_ask_orders_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let shared_state = {
+        let global_shared_state = GLOBAL_SHARED_STATE.lock().unwrap();
+        global_shared_state.clone().unwrap()
+    };
+
+    let mid = shared_state.mid_price.lock().unwrap().get();
+    let client = OrderbookClient::new(&config).unwrap();
+
     // Place ask orders (sell side)
     for level in 0..config.maker.ladder_levels {
         let user_state = user.get_session_data_mut::<UserState>().unwrap();
@@ -154,6 +180,16 @@ pub async fn maker_scenario(user: &mut GooseUser) -> TransactionResult {
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     }
 
+    Ok(())
+}
+
+/// Transaction: Wait before next maker cycle
+async fn maker_wait_transaction(_user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
     // Wait before next maker cycle
     tokio::time::sleep(tokio::time::Duration::from_millis(
         config.maker.cycle_interval_ms,
@@ -161,4 +197,29 @@ pub async fn maker_scenario(user: &mut GooseUser) -> TransactionResult {
     .await;
 
     Ok(())
+}
+
+/// Creates the maker scenario with all its transactions
+pub fn maker_scenario() -> Scenario {
+    setup_scenario("Maker")
+        .register_transaction(
+            transaction!(update_mid_price_transaction)
+                .set_name("update_mid_price")
+                .set_sequence(10),
+        )
+        .register_transaction(
+            transaction!(place_bid_orders_transaction)
+                .set_name("place_bid_orders")
+                .set_sequence(20),
+        )
+        .register_transaction(
+            transaction!(place_ask_orders_transaction)
+                .set_name("place_ask_orders")
+                .set_sequence(20),
+        )
+        .register_transaction(
+            transaction!(maker_wait_transaction)
+                .set_name("wait_cycle")
+                .set_sequence(40),
+        )
 }

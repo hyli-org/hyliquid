@@ -13,7 +13,7 @@ use goose::prelude::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::{CliArgs, Config, LoadModel};
-use scenarios::{cancellation_scenario, maker_scenario, taker_scenario, user_setup};
+use scenarios::{cancellation_scenario, maker_scenario, setup_scenario, taker_scenario};
 use state::SharedState;
 use std::sync::Mutex;
 
@@ -122,11 +122,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_goose_test(config: Config, shared_state: SharedState) -> Result<GooseMetrics> {
-    // Clone config and shared_state for use in closures
-    let config_clone = config.clone();
-    let shared_state_clone = shared_state.clone();
-
+async fn run_goose_test(config: Config, _shared_state: SharedState) -> Result<GooseMetrics> {
     // Determine user count based on load model
     let users = match config.load.model {
         LoadModel::Closed => config.load.users as usize,
@@ -160,47 +156,35 @@ async fn run_goose_test(config: Config, shared_state: SharedState) -> Result<Goo
             .map_err(|e| anyhow::anyhow!("Failed to set hatch rate: {:?}", e))?;
     }
 
-    // Note: Session data will be set up in the user_setup transaction
+    // Register setup scenario (always enabled)
+    tracing::info!("Registering setup scenario...");
+    let mut attack = *goose_builder;
 
-    // Create scenario with setup and tasksa
-    tracing::info!("Adding setup scenario...");
-    let mut scenario = scenario!("OrderbookLoadTest")
-        .register_transaction(transaction!(user_setup).set_name("setup"));
-
-    // Add maker scenario if enabled
+    // Register maker scenario if enabled
     if config.maker.enabled {
-        tracing::info!("Adding maker scenario...");
-        scenario = scenario.register_transaction(
-            transaction!(maker_scenario)
-                .set_name("maker")
-                .set_weight(config.maker.weight as usize)?,
-        );
+        tracing::info!("Registering maker scenario...");
+        let maker = maker_scenario().set_weight(config.maker.weight as usize)?;
+        attack = attack.register_scenario(maker);
     }
 
-    // Add taker scenario if enabled
+    // Register taker scenario if enabled
     if config.taker.enabled {
-        tracing::info!("Adding taker scenario...");
-        scenario = scenario.register_transaction(
-            transaction!(taker_scenario)
-                .set_name("taker")
-                .set_weight(config.taker.weight as usize)?,
-        );
+        tracing::info!("Registering taker scenario...");
+        let taker = taker_scenario().set_weight(config.taker.weight as usize)?;
+        attack = attack.register_scenario(taker);
     }
 
-    // Add cancellation scenario if enabled
+    // Register cancellation scenario if enabled
     if config.cancellation.enabled {
-        tracing::info!("Adding cancellation scenario...");
-        scenario = scenario.register_transaction(
-            transaction!(cancellation_scenario)
-                .set_name("cancellation")
-                .set_weight(config.cancellation.weight as usize)?,
-        );
+        tracing::info!("Registering cancellation scenario...");
+        let cancellation =
+            cancellation_scenario().set_weight(config.cancellation.weight as usize)?;
+        attack = attack.register_scenario(cancellation);
     }
 
-    // Register scenario and execute
+    // Execute the load test
     tracing::info!("Starting Goose load test...");
-    let metrics = goose_builder
-        .register_scenario(scenario)
+    let metrics = attack
         .execute()
         .await
         .context("Goose attack execution failed")?;

@@ -172,6 +172,9 @@ impl MidPrice {
 pub struct UserState {
     pub auth: UserAuth,
     pub nonce: u32,
+    pub session_key_added: bool,
+    pub base_balance: u64,
+    pub quote_balance: u64,
 }
 
 impl UserState {
@@ -179,7 +182,13 @@ impl UserState {
         let identity = format!("loadtest_user_{}", user_id);
         let auth = UserAuth::new(&identity)?;
 
-        Ok(UserState { auth, nonce: 0 })
+        Ok(UserState {
+            auth,
+            nonce: 0,
+            session_key_added: false,
+            base_balance: 0,
+            quote_balance: 0,
+        })
     }
 
     /// Increment and return the current nonce

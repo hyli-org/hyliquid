@@ -1,10 +1,9 @@
-pub mod maker;
-pub mod taker;
 pub mod cancellation;
+pub mod maker;
 pub mod setup;
+pub mod taker;
 
-pub use maker::maker_scenario;
-pub use taker::taker_scenario;
 pub use cancellation::cancellation_scenario;
-pub use setup::user_setup;
-
+pub use maker::maker_scenario;
+pub use setup::setup_scenario;
+pub use taker::taker_scenario;

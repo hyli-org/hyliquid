@@ -357,9 +357,9 @@ impl Config {
         }
 
         // Check that at least one scenario is enabled
-        // if !self.maker.enabled && !self.taker.enabled && !self.cancellation.enabled {
-        //     anyhow::bail!("At least one scenario (maker, taker, or cancellation) must be enabled");
-        // }
+        if !self.maker.enabled && !self.taker.enabled && !self.cancellation.enabled {
+            anyhow::bail!("At least one scenario (maker, taker, or cancellation) must be enabled");
+        }
 
         Ok(())
     }

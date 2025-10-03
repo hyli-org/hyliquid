@@ -1,34 +1,49 @@
 {
-  "test_start": "2025-10-03T08:24:48.095580751+00:00",
+  "test_start": "2025-10-03T08:59:59.685633806+00:00",
   "test_duration_secs": 5.0,
-  "total_requests": 310,
-  "successful_requests": 310,
+  "total_requests": 15,
+  "successful_requests": 15,
   "failed_requests": 0,
-  "requests_per_second": 62.0,
+  "requests_per_second": 3.0,
   "error_rate_percent": 0.0,
   "latencies": {
-    "min_ms": 1,
-    "max_ms": 6,
-    "mean_ms": 2.8806451612903228,
-    "p50_ms": 3,
-    "p90_ms": 4,
-    "p95_ms": 4,
-    "p99_ms": 5
+    "min_ms": 10,
+    "max_ms": 31,
+    "mean_ms": 18.0,
+    "p50_ms": 15,
+    "p90_ms": 26,
+    "p95_ms": 26,
+    "p99_ms": 26
   },
   "endpoints": [
     {
-      "name": "Get GET setup",
-      "count": 310,
-      "success_count": 310,
+      "name": "Post POST place_ask_orders",
+      "count": 5,
+      "success_count": 5,
       "error_count": 0,
       "latency": {
-        "min_ms": 1,
-        "max_ms": 6,
-        "mean_ms": 2.8806451612903228,
-        "p50_ms": 3,
-        "p90_ms": 4,
-        "p95_ms": 4,
-        "p99_ms": 5
+        "min_ms": 13,
+        "max_ms": 31,
+        "mean_ms": 19.8,
+        "p50_ms": 14,
+        "p90_ms": 26,
+        "p95_ms": 26,
+        "p99_ms": 26
+      }
+    },
+    {
+      "name": "Post POST place_bid_orders",
+      "count": 10,
+      "success_count": 10,
+      "error_count": 0,
+      "latency": {
+        "min_ms": 10,
+        "max_ms": 26,
+        "mean_ms": 17.1,
+        "p50_ms": 15,
+        "p90_ms": 23,
+        "p95_ms": 23,
+        "p99_ms": 23
       }
     }
   ]

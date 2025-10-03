@@ -33,7 +33,7 @@ ramp_duration = 5          # Ramp-up duration in seconds
 
 [maker]
 # Maker (liquidity provider) configuration
-enabled = false
+enabled = true
 weight = 60              # Relative weight in task distribution (%)
 
 # Order ladder configuration

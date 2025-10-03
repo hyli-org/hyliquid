@@ -3,13 +3,42 @@ use orderbook::orderbook::{OrderSide, OrderType};
 use tracing::{debug, info, warn};
 
 use crate::http_client::{build_order, OrderbookClient};
+use crate::scenarios::setup_scenario;
 use crate::state::UserState;
 use crate::GLOBAL_CONFIG;
 use crate::GLOBAL_SHARED_STATE;
 
-/// Taker scenario: cross the spread to guarantee executions
-pub async fn taker_scenario(user: &mut GooseUser) -> TransactionResult {
-    // Get session data (clone to avoid borrow conflicts)
+/// Transaction: Fetch current orderbook to get best bid/ask
+async fn get_orderbook_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let client = OrderbookClient::new(&config).unwrap();
+
+    // Fetch current orderbook to get best bid/ask
+    let _orderbook = match client
+        .get_orderbook(
+            user,
+            &config.instrument.base_asset,
+            &config.instrument.quote_asset,
+            1, // Only need top level
+        )
+        .await
+    {
+        Ok(book) => book,
+        Err(e) => {
+            warn!("Taker: failed to fetch orderbook: {:?}", e);
+            return Ok(());
+        }
+    };
+
+    Ok(())
+}
+
+/// Transaction: Place taker order (buy or sell)
+async fn place_taker_order_transaction(user: &mut GooseUser) -> TransactionResult {
     let config = {
         let global_config = GLOBAL_CONFIG.lock().unwrap();
         global_config.clone().unwrap()
@@ -20,15 +49,7 @@ pub async fn taker_scenario(user: &mut GooseUser) -> TransactionResult {
         global_shared_state.clone().unwrap()
     };
 
-    let user_state = user.get_session_data_mut::<UserState>().unwrap();
-
-    // Create HTTP client
     let client = OrderbookClient::new(&config).unwrap();
-
-    // Get current nonce from server
-    let current_nonce = client.get_nonce(&user_state.auth).await.unwrap();
-
-    user_state.nonce = current_nonce;
 
     // Fetch current orderbook to get best bid/ask
     let orderbook = match client
@@ -43,8 +64,6 @@ pub async fn taker_scenario(user: &mut GooseUser) -> TransactionResult {
         Ok(book) => book,
         Err(e) => {
             warn!("Taker: failed to fetch orderbook: {:?}", e);
-            // Wait and retry on next cycle
-            tokio::time::sleep(tokio::time::Duration::from_millis(config.taker.interval_ms)).await;
             return Ok(());
         }
     };
@@ -54,7 +73,6 @@ pub async fn taker_scenario(user: &mut GooseUser) -> TransactionResult {
 
     if best_bid.is_none() && best_ask.is_none() {
         debug!("Taker: orderbook is empty, skipping");
-        tokio::time::sleep(tokio::time::Duration::from_millis(config.taker.interval_ms)).await;
         return Ok(());
     }
 
@@ -154,8 +172,38 @@ pub async fn taker_scenario(user: &mut GooseUser) -> TransactionResult {
         }
     }
 
+    Ok(())
+}
+
+/// Transaction: Wait before next taker order
+async fn taker_wait_transaction(_user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
     // Wait before next taker order
     tokio::time::sleep(tokio::time::Duration::from_millis(config.taker.interval_ms)).await;
 
     Ok(())
+}
+
+/// Creates the taker scenario with all its transactions
+pub fn taker_scenario() -> Scenario {
+    setup_scenario("Taker")
+        .register_transaction(
+            transaction!(get_orderbook_transaction)
+                .set_name("get_orderbook")
+                .set_sequence(10),
+        )
+        .register_transaction(
+            transaction!(place_taker_order_transaction)
+                .set_name("place_order")
+                .set_sequence(20),
+        )
+        .register_transaction(
+            transaction!(taker_wait_transaction)
+                .set_name("wait_interval")
+                .set_sequence(30),
+        )
 }

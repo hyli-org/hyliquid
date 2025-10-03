@@ -2,73 +2,88 @@ use goose::prelude::*;
 use server::services::user_service::Balance;
 use tracing::{debug, info};
 
-use crate::auth::UserAuth;
-use crate::config::Config;
 use crate::http_client::OrderbookClient;
 use crate::state::UserState;
 use crate::GLOBAL_CONFIG;
 
-/// Setup task: initialize user with session key, create pair if needed, deposit funds
-pub async fn user_setup(user: &mut GooseUser) -> TransactionResult {
-    // Get configuration from user data
+/// Transaction: Initialize user state and add session key
+async fn init_user_state(user: &mut GooseUser) -> TransactionResult {
+    // Check if user is already setup
+    if user.get_session_data::<UserState>().is_some() {
+        return Ok(()); // Already initialized
+    }
+
+    // Create user state
+    let user_state = UserState::new(user.weighted_users_index).unwrap();
+    info!(
+        "Initializing user {} (index {})",
+        user_state.auth.identity, user.weighted_users_index
+    );
+
+    // Store user state in session data
+    user.set_session_data(user_state);
+
+    Ok(())
+}
+
+/// Transaction: Add session key
+async fn add_session_key_transaction(user: &mut GooseUser) -> TransactionResult {
     let config = {
         let global_config = GLOBAL_CONFIG.lock().unwrap();
         global_config.clone().unwrap()
     };
-    // Create HTTP client
+
+    let user_state = user.get_session_data::<UserState>().unwrap();
+
+    if user_state.session_key_added {
+        return Ok(()); // Already added
+    }
+
+    let user_auth = user_state.auth.clone();
+
+    debug!("Adding session key for {}", user_auth.identity);
+
     let client = OrderbookClient::new(&config).unwrap();
+    client.add_session_key(user, &user_auth).await?;
 
-    // check if user is already setup
-    let user_state = user.get_session_data::<UserState>();
+    let user_state = user.get_session_data_mut::<UserState>().unwrap();
+    user_state.session_key_added = true;
 
-    if user_state.is_some() {
-        info!("User {} already setup", user_state.unwrap().auth.identity);
-        let user_state = user_state.unwrap();
+    Ok(())
+}
+
+/// Transaction: Create trading pair (first user only)
+async fn create_pair_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    if user.weighted_users_index == 0 {
+        let user_state = user.get_session_data::<UserState>().unwrap();
         let user_auth = user_state.auth.clone();
-        user_deposit(user, &client, &user_auth, &config).await?;
-        return Ok(());
-    } else {
-        // Create user state
-        let user_state = UserState::new(user.weighted_users_index).unwrap();
-        let user_auth = user_state.auth.clone();
 
-        info!(
-            "Setting up user {} (index {})",
-            user_state.auth.identity, user.weighted_users_index
-        );
+        info!("Creating trading pair: {}", config.instrument_symbol());
 
-        // Step 1: Add session key
-        debug!("Adding session key for {}", user_state.auth.identity);
-        client.add_session_key(user, &user_auth).await?;
-
-        // Step 2: Create pair (first user only, others will fail gracefully)
-        if user.weighted_users_index == 0 {
-            info!("Creating trading pair: {}", config.instrument_symbol());
-            let _ = client.create_pair(user, &user_auth, config.pair()).await; // Ignore errors (pair might exist)
-        }
-
-        // Small delay to let pair creation propagate
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-
-        info!("User {} setup complete", user_auth.identity);
-
-        user_deposit(user, &client, &user_auth, &config).await?;
-
-        // Store user state in session data
-        user.set_session_data(user_state);
+        let client = OrderbookClient::new(&config).unwrap();
+        let _ = client.create_pair(user, &user_auth, config.pair()).await; // Ignore errors (pair might exist)
     }
 
     Ok(())
 }
 
-async fn user_deposit(
-    user: &mut GooseUser,
-    client: &OrderbookClient,
-    user_auth: &UserAuth,
-    config: &Config,
-) -> TransactionResult {
-    // Check user balance
-    let balance = client.get_balances(user, user_auth).await?;
+/// Transaction: Get user balances
+async fn get_balances_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let user_state = user.get_session_data::<UserState>().unwrap();
+    let user_auth = user_state.auth.clone();
+
+    let client = OrderbookClient::new(&config).unwrap();
+    let balance = client.get_balances(user, &user_auth).await?;
 
     let base_asset_balance = balance
         .balances
@@ -94,16 +109,40 @@ async fn user_deposit(
         });
 
     debug!(
-        "User {} base asset balance: {:?}",
-        user_auth.identity, base_asset_balance
+        "User {} base asset balance: available={}, total={}, reserved={}",
+        user_auth.identity,
+        base_asset_balance.available,
+        base_asset_balance.total,
+        base_asset_balance.reserved
     );
     debug!(
-        "User {} quote asset balance: {:?}",
-        user_auth.identity, quote_asset_balance
+        "User {} quote asset balance: available={}, total={}, reserved={}",
+        user_auth.identity,
+        quote_asset_balance.available,
+        quote_asset_balance.total,
+        quote_asset_balance.reserved
     );
+    let user_state = user.get_session_data_mut::<UserState>().unwrap();
 
-    // Step 3: Deposit base asset
-    if (base_asset_balance.available as u64) < config.user_setup.minimal_balance_base {
+    user_state.base_balance = base_asset_balance.available as u64;
+    user_state.quote_balance = quote_asset_balance.available as u64;
+
+    Ok(())
+}
+
+/// Transaction: Deposit base asset
+async fn deposit_base_asset_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let user_state = user.get_session_data::<UserState>().unwrap();
+    let user_auth = user_state.auth.clone();
+
+    let client = OrderbookClient::new(&config).unwrap();
+
+    if (user_state.base_balance as u64) < config.user_setup.minimal_balance_base {
         debug!(
             "Depositing {} {} for {}",
             config.user_setup.initial_deposit_base,
@@ -113,15 +152,31 @@ async fn user_deposit(
         client
             .deposit(
                 user,
-                user_auth,
+                &user_auth,
                 &config.instrument.base_asset,
                 config.user_setup.initial_deposit_base,
             )
             .await?;
     }
 
-    // Step 4: Deposit quote asset
-    if (quote_asset_balance.available as u64) < config.user_setup.minimal_balance_quote {
+    Ok(())
+}
+
+/// Transaction: Deposit quote asset
+async fn deposit_quote_asset_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let user_state = user.get_session_data::<UserState>().unwrap();
+    let user_auth = user_state.auth.clone();
+
+    let client = OrderbookClient::new(&config).unwrap();
+
+    let user_state = user.get_session_data::<UserState>().unwrap();
+
+    if (user_state.quote_balance as u64) < config.user_setup.minimal_balance_quote {
         debug!(
             "Depositing {} {} for {}",
             config.user_setup.initial_deposit_quote,
@@ -131,7 +186,7 @@ async fn user_deposit(
         client
             .deposit(
                 user,
-                user_auth,
+                &user_auth,
                 &config.instrument.quote_asset,
                 config.user_setup.initial_deposit_quote,
             )
@@ -139,4 +194,68 @@ async fn user_deposit(
     }
 
     Ok(())
+}
+
+/// Transaction: Set nonce
+async fn get_nonce_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let user_state = user.get_session_data_mut::<UserState>().unwrap();
+
+    let client = OrderbookClient::new(&config).unwrap();
+    let current_nonce = client.get_nonce(&user_state.auth).await.unwrap();
+
+    user_state.nonce = current_nonce;
+
+    Ok(())
+}
+
+/// Creates the setup scenario with all its transactions
+pub fn setup_scenario(name: &str) -> Scenario {
+    scenario!(name)
+        .register_transaction(
+            transaction!(init_user_state)
+                .set_name("init_user_state")
+                .set_sequence(1)
+                .set_on_start(),
+        )
+        .register_transaction(
+            transaction!(add_session_key_transaction)
+                .set_name("add_session_key")
+                .set_sequence(2)
+                .set_on_start(),
+        )
+        .register_transaction(
+            transaction!(create_pair_transaction)
+                .set_name("create_pair")
+                .set_sequence(3)
+                .set_on_start(),
+        )
+        .register_transaction(
+            transaction!(get_balances_transaction)
+                .set_name("get_balances")
+                .set_sequence(4)
+                .set_on_start(),
+        )
+        .register_transaction(
+            transaction!(deposit_base_asset_transaction)
+                .set_name("deposit_base_asset")
+                .set_sequence(5)
+                .set_on_start(),
+        )
+        .register_transaction(
+            transaction!(deposit_quote_asset_transaction)
+                .set_name("deposit_quote_asset")
+                .set_sequence(6)
+                .set_on_start(),
+        )
+        .register_transaction(
+            transaction!(get_nonce_transaction)
+                .set_name("get_nonce")
+                .set_sequence(7)
+                .set_on_start(),
+        )
 }
