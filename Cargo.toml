@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["contracts", "contracts/orderbook", "server"]
+members = ["contracts", "contracts/orderbook", "server", "loadtest"]
 
 [workspace.dependencies]
 sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", tag = "v0.14.0-rc3" }
@@ -15,6 +15,7 @@ sp1-zkvm = { version = "5.0.3", default-features = false }
 
 contracts = { path = "contracts", default-features = false, package = "contracts" }
 orderbook = { path = "contracts/orderbook", package = "orderbook" }
+server = { path = "server", default-features = false, package = "server" }
 
 sqlx = { version = "0.8.6", default-features = false }
 

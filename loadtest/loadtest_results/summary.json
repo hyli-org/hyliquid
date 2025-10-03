@@ -1,0 +1,50 @@
+{
+  "test_start": "2025-10-03T08:18:23.894894962+00:00",
+  "test_duration_secs": 5.0,
+  "total_requests": 103,
+  "successful_requests": 69,
+  "failed_requests": 34,
+  "requests_per_second": 20.6,
+  "error_rate_percent": 33.00970873786408,
+  "latencies": {
+    "min_ms": 1,
+    "max_ms": 361,
+    "mean_ms": 10.368932038834952,
+    "p50_ms": 3,
+    "p90_ms": 20,
+    "p95_ms": 22,
+    "p99_ms": 26
+  },
+  "endpoints": [
+    {
+      "name": "Post POST setup",
+      "count": 68,
+      "success_count": 34,
+      "error_count": 34,
+      "latency": {
+        "min_ms": 1,
+        "max_ms": 52,
+        "mean_ms": 8.926470588235293,
+        "p50_ms": 2,
+        "p90_ms": 22,
+        "p95_ms": 23,
+        "p99_ms": 26
+      }
+    },
+    {
+      "name": "Get GET setup",
+      "count": 35,
+      "success_count": 35,
+      "error_count": 0,
+      "latency": {
+        "min_ms": 2,
+        "max_ms": 361,
+        "mean_ms": 13.17142857142857,
+        "p50_ms": 3,
+        "p90_ms": 4,
+        "p95_ms": 5,
+        "p99_ms": 5
+      }
+    }
+  ]
+}

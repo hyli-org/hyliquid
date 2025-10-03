@@ -1,0 +1,128 @@
+# Configuration for Goose load testing
+
+[server]
+base_url = "http://localhost:9002"
+
+[instrument]
+# Trading pair configuration
+base_asset = "BTC"
+quote_asset = "USDT"
+
+# Price and quantity scaling (integer-based to avoid floats)
+price_tick = 1       # Minimum price increment
+qty_step = 1         # Minimum quantity increment
+price_scale = 2      # Number of decimal places for price (e.g., 2 = 0.01)
+qty_scale = 8        # Number of decimal places for quantity
+
+[load]
+# Load model: "closed" (fixed number of users) or "open" (constant RPS)
+model = "closed"
+
+# For closed model: number of virtual users
+users = 1
+
+# For open model: requests per second target
+rps = 50
+
+# Test duration in seconds
+duration = 5
+
+# Ramp-up configuration
+ramp_users_per_second = 1  # Add N users per second during ramp-up
+ramp_duration = 5          # Ramp-up duration in seconds
+
+[maker]
+# Maker (liquidity provider) configuration
+enabled = false
+weight = 60              # Relative weight in task distribution (%)
+
+# Order ladder configuration
+ladder_levels = 5        # Number of price levels on each side
+min_spread_ticks = 10    # Minimum spread from mid in ticks
+level_spacing_ticks = 5  # Spacing between levels in ticks
+
+# Quantity configuration
+min_quantity_steps = 10  # Minimum order size in steps
+max_quantity_steps = 100 # Maximum order size in steps
+
+# Random walk for mid price
+mid_drift_ticks = 2      # Maximum drift per cycle in ticks
+mid_initial = 50000      # Initial mid price in ticks
+
+# Timing
+cycle_interval_ms = 2000 # Time between maker cycles in milliseconds
+
+[taker]
+# Taker (aggressive orders) configuration
+enabled = false
+weight = 30              # Relative weight in task distribution (%)
+
+# Cross parameters
+cross_ticks = 1          # How many ticks to cross best price to guarantee execution
+
+# Quantity configuration
+min_quantity_steps = 5   # Minimum taker order size
+max_quantity_steps = 50  # Maximum taker order size
+
+# Timing
+interval_ms = 5000       # Time between taker orders in milliseconds
+
+[cancellation]
+# Order cancellation configuration
+enabled = false
+weight = 10              # Relative weight in task distribution (%)
+
+# Cancellation policy
+cancel_percentage = 20   # Percentage of old orders to cancel
+max_tracked_orders = 100 # Maximum orders to track per user
+
+# Timing
+interval_ms = 10000      # Time between cancellation cycles in milliseconds
+
+[http]
+# HTTP client configuration
+timeout_ms = 5000
+connect_timeout_ms = 2000
+
+# Retry configuration
+max_retries = 3
+retry_backoff_ms = 100
+
+# Rate limiting (local client-side)
+max_requests_per_second = 0  # 0 = unlimited
+
+[user_setup]
+# Initial deposit amounts for test users
+initial_deposit_base = 1000000000    # Large initial deposit for base asset
+initial_deposit_quote = 10000000000  # Large initial deposit for quote asset
+minimal_balance_base = 100000000
+minimal_balance_quote = 100000000
+
+[rng]
+# Random number generator
+seed = 42  # Seed for deterministic/reproducible tests (0 = random seed)
+
+[sla]
+# Service Level Agreement checks (test fails if not met)
+enabled = true
+
+# Latency SLA (in milliseconds)
+p50_max_ms = 50
+p95_max_ms = 100
+p99_max_ms = 200
+
+# Error rate SLA (percentage)
+max_error_rate_percent = 1.0
+
+# Minimum executions (fills)
+min_fills = 1  # At least one successful execution
+
+[metrics]
+# Metrics and reporting configuration
+export_json = true
+export_csv = true
+output_dir = "./loadtest_results"
+
+# Console report verbosity
+verbose = true
+

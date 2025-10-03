@@ -1,7 +1,7 @@
 use client_sdk::contract_indexer::AppError;
 use orderbook::smt_values::UserInfo;
 use reqwest::StatusCode;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
 use std::sync::RwLock;
@@ -12,7 +12,7 @@ pub struct UserService {
     user_id_map: RwLock<HashMap<String, i64>>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Balance {
     pub token: String,
     pub total: i64,
@@ -20,7 +20,7 @@ pub struct Balance {
     pub available: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserBalances {
     pub balances: Vec<Balance>,
 }
