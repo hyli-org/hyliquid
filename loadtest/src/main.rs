@@ -13,7 +13,7 @@ use goose::prelude::*;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::{CliArgs, Config, LoadModel};
-use scenarios::{cancellation_scenario, maker_scenario, setup_scenario, taker_scenario};
+use scenarios::{cancellation_scenario, maker_scenario, taker_scenario};
 use state::SharedState;
 use std::sync::Mutex;
 

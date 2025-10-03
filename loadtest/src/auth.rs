@@ -62,6 +62,7 @@ impl UserAuth {
         self.sign(&data)
     }
 
+    #[allow(dead_code)]
     /// Create signature for withdraw action
     /// Format: {identity}:{nonce}:withdraw:{token}:{amount}
     pub fn sign_withdraw(&self, nonce: u32, token: &str, amount: u64) -> Result<String> {

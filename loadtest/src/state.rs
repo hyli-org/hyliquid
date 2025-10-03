@@ -62,9 +62,6 @@ pub struct OrderTracker {
 #[derive(Clone, Debug)]
 pub struct OrderInfo {
     pub order_id: String,
-    pub pair: (String, String),
-    pub timestamp: std::time::Instant,
-    pub nonce: u32,
 }
 
 impl OrderTracker {
@@ -83,13 +80,8 @@ impl OrderTracker {
     }
 
     /// Add a new order to tracking
-    pub fn add_order(&mut self, order_id: String, pair: (String, String), nonce: u32) {
-        let info = OrderInfo {
-            order_id,
-            pair,
-            timestamp: std::time::Instant::now(),
-            nonce,
-        };
+    pub fn add_order(&mut self, order_id: String) {
+        let info = OrderInfo { order_id };
 
         self.orders.push_back(info);
 
@@ -120,11 +112,6 @@ impl OrderTracker {
     /// Get count of tracked orders
     pub fn count(&self) -> usize {
         self.orders.len()
-    }
-
-    /// Clear all tracked orders
-    pub fn clear(&mut self) {
-        self.orders.clear();
     }
 }
 
@@ -160,11 +147,6 @@ impl MidPrice {
         let min_price = self.initial / 10;
         let max_price = self.initial * 10;
         self.current = self.current.clamp(min_price, max_price);
-    }
-
-    /// Reset to initial price
-    pub fn reset(&mut self) {
-        self.current = self.initial;
     }
 }
 
@@ -230,30 +212,14 @@ mod tests {
     fn test_order_tracker() {
         let mut tracker = OrderTracker::with_max_size(3);
 
-        tracker.add_order(
-            "order1".to_string(),
-            ("BTC".to_string(), "USDT".to_string()),
-            0,
-        );
-        tracker.add_order(
-            "order2".to_string(),
-            ("BTC".to_string(), "USDT".to_string()),
-            1,
-        );
-        tracker.add_order(
-            "order3".to_string(),
-            ("BTC".to_string(), "USDT".to_string()),
-            2,
-        );
+        tracker.add_order("order1".to_string());
+        tracker.add_order("order2".to_string());
+        tracker.add_order("order3".to_string());
 
         assert_eq!(tracker.count(), 3);
 
         // Adding a 4th should evict the first
-        tracker.add_order(
-            "order4".to_string(),
-            ("BTC".to_string(), "USDT".to_string()),
-            3,
-        );
+        tracker.add_order("order4".to_string());
         assert_eq!(tracker.count(), 3);
     }
 

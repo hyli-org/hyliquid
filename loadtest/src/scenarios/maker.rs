@@ -91,11 +91,11 @@ async fn place_bid_orders_transaction(user: &mut GooseUser) -> TransactionResult
                     order_id, price, quantity
                 );
                 // Track order for potential cancellation
-                shared_state.order_tracker.lock().unwrap().add_order(
-                    order_id,
-                    config.pair(),
-                    nonce,
-                );
+                shared_state
+                    .order_tracker
+                    .lock()
+                    .unwrap()
+                    .add_order(order_id);
             }
             Err(e) => {
                 warn!("Maker: failed to place bid: {:?}", e);
@@ -164,11 +164,11 @@ async fn place_ask_orders_transaction(user: &mut GooseUser) -> TransactionResult
                     order_id, price, quantity
                 );
                 // Track order for potential cancellation
-                shared_state.order_tracker.lock().unwrap().add_order(
-                    order_id,
-                    config.pair(),
-                    nonce,
-                );
+                shared_state
+                    .order_tracker
+                    .lock()
+                    .unwrap()
+                    .add_order(order_id);
             }
             Err(e) => {
                 warn!("Maker: failed to place ask: {:?}", e);
