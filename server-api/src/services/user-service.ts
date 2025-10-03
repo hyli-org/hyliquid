@@ -83,6 +83,15 @@ export class UserService {
   }
 
   /**
+   * Get user nonce
+   */
+  async getNonce(user: string): Promise<number> {
+    const userId = await this.getUserId(user);
+    const nonce = await this.queries.getUserNonce(userId);
+    return nonce;
+  }
+
+  /**
    * Get user orders with pagination
    */
   async getOrdersPaginated(

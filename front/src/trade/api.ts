@@ -116,11 +116,11 @@ export function transformOrder(apiOrder: ApiOrder): Order {
     return {
         id: apiOrder.order_id,
         symbol: instrument?.symbol || "UNKNOWN",
-        side: apiOrder.side === "bid" ? "Bid" : "Ask",
+        side: apiOrder.side === "bid" ? "bid" : "ask",
         qty: apiOrder.qty,
         qty_filled: apiOrder.qty_filled,
         qty_remaining: apiOrder.qty_remaining,
-        type: apiOrder.type === "limit" ? "Limit" : "Market",
+        type: apiOrder.type === "limit" ? "limit" : "market",
         price: apiOrder.price || 0,
         status: (apiOrder.status.charAt(0).toUpperCase() + apiOrder.status.slice(1).replace("_", " ")) as OrderStatus,
         created_at: new Date(apiOrder.created_at),
@@ -136,7 +136,7 @@ export function transformTrade(apiTrade: ApiTrade): Fill {
 
     return {
         symbol: instrument?.symbol || "UNKNOWN",
-        side: apiTrade.side === "bid" ? "Bid" : "Ask",
+        side: apiTrade.side === "bid" ? "bid" : "ask",
         size: apiTrade.qty,
         price: apiTrade.price,
         time: new Date(apiTrade.trade_time).toLocaleTimeString(),

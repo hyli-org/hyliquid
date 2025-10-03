@@ -37,6 +37,64 @@ impl OrderbookResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct ApiOrder {
+    pub order_id: String,
+    pub instrument_id: u32,
+    pub user_id: u32,
+    pub side: OrderSide,
+    pub r#type: OrderType,
+    pub price: Option<u64>,
+    pub qty: u64,
+    pub qty_filled: u64,
+    pub qty_remaining: u64,
+    pub status: OrderStatus,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderStatus {
+    Open,
+    PartiallyFilled,
+    Filled,
+    Cancelled,
+    Rejected,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PaginatedUserOrders {
+    pub data: Vec<ApiOrder>,
+    pub pagination: Pagination,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Pagination {
+    pub page: u32,
+    pub limit: u32,
+    pub total: u32,
+    pub total_pages: u32,
+    pub has_next: bool,
+    pub has_prev: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UserTrades {
+    pub trades: Vec<ApiTrade>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ApiTrade {
+    pub trade_id: String,
+    pub instrument_id: u32,
+    pub user_id: u32,
+    pub price: u64,
+    pub qty: u64,
+    pub trade_time: String,
+    pub side: OrderSide,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreatePairRequest {
     pub pair: (String, String),
 }
@@ -73,7 +131,7 @@ impl OrderbookClient {
         user: &mut GooseUser,
         auth: &UserAuth,
     ) -> Result<UserBalances, Box<TransactionError>> {
-        let path = "/api/balances".to_string();
+        let path = "/api/user/balances".to_string();
 
         let builder = user
             .get_request_builder(&GooseMethod::Get, path.as_str())?
@@ -89,9 +147,53 @@ impl OrderbookClient {
         Ok(balance)
     }
 
+    /// Get user orders
+    pub async fn get_user_orders(
+        &self,
+        user: &mut GooseUser,
+        auth: &UserAuth,
+    ) -> Result<PaginatedUserOrders, Box<TransactionError>> {
+        let path = "/api/user/orders".to_string();
+
+        let builder = user
+            .get_request_builder(&GooseMethod::Get, path.as_str())?
+            .header("x-identity", &auth.identity)
+            .body("");
+
+        let request = GooseRequest::builder().set_request_builder(builder).build();
+
+        let response = user.request(request).await?;
+
+        let orders = response.response?.json::<PaginatedUserOrders>().await?;
+
+        Ok(orders)
+    }
+
+    /// Get user trades
+    pub async fn get_user_trades(
+        &self,
+        user: &mut GooseUser,
+        auth: &UserAuth,
+    ) -> Result<UserTrades, Box<TransactionError>> {
+        let path = "/api/user/trades".to_string();
+
+        let builder = user
+            .get_request_builder(&GooseMethod::Get, path.as_str())?
+            .header("x-identity", &auth.identity)
+            .body("");
+
+        let request = GooseRequest::builder().set_request_builder(builder).build();
+
+        let response = user.request(request).await?;
+
+        let trades = response.response?.json::<UserTrades>().await?;
+
+        Ok(trades)
+    }
+
     /// Get nonce for a user
     pub async fn get_nonce(&self, auth: &UserAuth) -> Result<u32> {
-        let url = format!("{}/api/nonce", self.base_url);
+        let url = format!("{}/api/user/nonce", self.base_url);
 
         let response = self
             .client

@@ -77,6 +77,14 @@ export class DatabaseQueries {
     }));
   }
 
+  async getUserNonce(userId: number): Promise<number> {
+    const result = await this.pool.query(
+      "SELECT nonce FROM users WHERE user_id = $1",
+      [userId]
+    );
+    return parseInt(result.rows[0].nonce, 10);
+  }
+
   async getUserOrders(
     userId: number,
     page: number = 1,
@@ -114,8 +122,8 @@ export class DatabaseQueries {
 
     const orders = result.rows.map((row) => ({
       order_id: row.order_id,
-      instrument_id: row.instrument_id,
-      user_id: row.user_id,
+      instrument_id: parseInt(row.instrument_id, 10),
+      user_id: parseInt(row.user_id, 10),
       side: row.side,
       type: row.type,
       price: parseInt(row.price, 10),
@@ -168,8 +176,8 @@ export class DatabaseQueries {
 
     const orders = result.rows.map((row) => ({
       order_id: row.order_id,
-      instrument_id: row.instrument_id,
-      user_id: row.user_id,
+      instrument_id: parseInt(row.instrument_id, 10),
+      user_id: parseInt(row.user_id, 10),
       side: row.side,
       type: row.type,
       price: parseInt(row.price, 10),

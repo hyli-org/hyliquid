@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use anyhow::Result;
 use axum::{
     extract::{Json, Path, Query, State},
@@ -56,13 +57,13 @@ impl Module for ApiModule {
         let api = Router::new()
             .route("/_health", get(health))
             .route("/api/config", get(get_config))
-            .route("/api/info", get(get_info))
-            .route(
-                "/api/book/{base_asset_symbol}/{quote_asset_symbol}",
-                get(get_book),
-            )
-            .route("/api/balances", get(get_balance))
-            .route("/api/nonce", get(get_nonce))
+            // .route("/api/info", get(get_info))
+            // .route(
+            //     "/api/book/{base_asset_symbol}/{quote_asset_symbol}",
+            //     get(get_book),
+            // )
+            // .route("/api/balances", get(get_balance))
+            // .route("/api/nonce", get(get_nonce))
             .with_state(state)
             .layer(cors); // Appliquer le middleware CORS
 

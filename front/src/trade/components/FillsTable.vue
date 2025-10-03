@@ -25,7 +25,7 @@ defineProps<{ fills: Fill[]; loading?: boolean; error?: string | null }>();
                 </tr>
                 <tr v-for="f in fills" :key="f.symbol + f.time" class="border-t border-neutral-900">
                     <td class="px-3 py-2">{{ f.symbol }}</td>
-                    <td class="px-3 py-2" :class="f.side === 'Bid' ? 'text-emerald-400' : 'text-rose-400'">
+                    <td class="px-3 py-2" :class="f.side === 'bid' ? 'text-emerald-400' : 'text-rose-400'">
                         {{ f.side }}
                     </td>
                     <td class="px-3 py-2 tabular-nums">{{ instrumentsState.toRealQty(f.symbol, f.size) }}</td>

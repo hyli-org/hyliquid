@@ -1,7 +1,7 @@
 # Configuration for Goose load testing
 
 [server]
-base_url = "http://localhost:9002"
+base_url = "http://localhost:3000"
 
 [instrument]
 # Trading pair configuration

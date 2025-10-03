@@ -22,9 +22,9 @@ import { encodeToHex } from "../utils";
 export type { PaginationInfo, PaginationParams } from "./api";
 export type { ApiTrade, ApiOrder } from "./api";
 
-export type Side = "Bid" | "Ask";
-export type OrderType = "Market" | "Limit";
-export type OrderStatus = "Open" | "Filled" | "Cancelled" | "Rejected";
+export type Side = "bid" | "ask";
+export type OrderType = "market" | "limit" | "stop" | "stop_limit" | "stop_market";
+export type OrderStatus = "open" | "filled" | "partially_filled" | "cancelled" | "rejected";
 
 export interface Asset {
     symbol: string;
@@ -307,10 +307,10 @@ watchEffect(() => {
 
 // Order form state
 const orderFormState = {
-    orderType: ref<OrderType>("Limit"),
+    orderType: ref<OrderType>("limit"),
     price: ref<number | null>(null),
     size: ref<number | null>(null),
-    side: ref<Side>("Bid"),
+    side: ref<Side>("bid"),
     leverage: ref(10),
     orderSubmit: ref<SWRQuery<{ tx_hash: string }> | null>(null),
 };
@@ -401,7 +401,7 @@ export function placeOrder(input: {
     price: number | null; // integer price
 }): SWRQuery<{ tx_hash: string }> {
     return useSWR(async () => {
-        if (input.type === "Limit" && !input.price) throw new Error("Price required for limit order");
+        if (input.type === "limit" && !input.price) throw new Error("Price required for limit order");
         if (input.size <= 0) throw new Error("Size must be positive");
 
         const address = wallet.value?.address;

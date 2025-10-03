@@ -196,17 +196,49 @@ async fn place_ask_orders_transaction(user: &mut GooseUser) -> TransactionResult
 }
 
 /// Transaction: Wait before next maker cycle
-async fn maker_wait_transaction(_user: &mut GooseUser) -> TransactionResult {
+// async fn maker_wait_transaction(_user: &mut GooseUser) -> TransactionResult {
+//     let config = {
+//         let global_config = GLOBAL_CONFIG.lock().unwrap();
+//         global_config.clone().unwrap()
+//     };
+
+//     // Wait before next maker cycle
+//     tokio::time::sleep(tokio::time::Duration::from_millis(
+//         config.maker.cycle_interval_ms,
+//     ))
+//     .await;
+
+//     Ok(())
+// }
+
+/// Transaction: get user orders
+async fn get_user_orders_transaction(user: &mut GooseUser) -> TransactionResult {
     let config = {
         let global_config = GLOBAL_CONFIG.lock().unwrap();
         global_config.clone().unwrap()
     };
 
-    // Wait before next maker cycle
-    tokio::time::sleep(tokio::time::Duration::from_millis(
-        config.maker.cycle_interval_ms,
-    ))
-    .await;
+    let client = OrderbookClient::new(&config).unwrap();
+    let user_state = user.get_session_data_mut::<UserState>().unwrap();
+    let user_auth = user_state.auth.clone();
+
+    client.get_user_orders(user, &user_auth).await.unwrap();
+
+    Ok(())
+}
+
+/// Transaction: get user trades
+async fn get_user_trades_transaction(user: &mut GooseUser) -> TransactionResult {
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
+    let client = OrderbookClient::new(&config).unwrap();
+    let user_state = user.get_session_data_mut::<UserState>().unwrap();
+    let user_auth = user_state.auth.clone();
+
+    client.get_user_trades(user, &user_auth).await.unwrap();
 
     Ok(())
 }
@@ -222,16 +254,25 @@ pub fn maker_scenario() -> Scenario {
         .register_transaction(
             transaction!(place_bid_orders_transaction)
                 .set_name("place_bid_orders")
-                .set_sequence(20),
+                .set_weight(10)
+                .unwrap(),
         )
         .register_transaction(
             transaction!(place_ask_orders_transaction)
                 .set_name("place_ask_orders")
-                .set_sequence(20),
+                .set_weight(10)
+                .unwrap(),
         )
         .register_transaction(
-            transaction!(maker_wait_transaction)
-                .set_name("wait_cycle")
-                .set_sequence(40),
+            transaction!(get_user_orders_transaction)
+                .set_name("get_user_orders")
+                .set_weight(50)
+                .unwrap(),
+        )
+        .register_transaction(
+            transaction!(get_user_trades_transaction)
+                .set_name("get_user_trades")
+                .set_weight(50)
+                .unwrap(),
         )
 }

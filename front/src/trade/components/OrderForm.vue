@@ -8,10 +8,10 @@ const debug = ref(false);
 const baseSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.base_asset : "")!);
 const quoteSymbol = computed(() => (instrumentsState.selected ? instrumentsState.selected.quote_asset : "")!);
 
-const consumedSymbol = computed(() => (side.value === "Ask" ? baseSymbol.value : quoteSymbol.value));
+const consumedSymbol = computed(() => (side.value === "ask" ? baseSymbol.value : quoteSymbol.value));
 
 const neededBalance = computed(() => {
-    if (side.value === "Bid") {
+    if (side.value === "bid") {
         return (size.value ?? 0) * (price.value ?? 0);
     } else {
         return size.value ?? 0;
@@ -19,7 +19,7 @@ const neededBalance = computed(() => {
 });
 
 const availableBalance = computed(() => {
-    if (side.value === "Ask") {
+    if (side.value === "ask") {
         return activityState.balances.find((b) => b.asset === baseSymbol.value)?.available ?? 0;
     } else {
         return activityState.balances.find((b) => b.asset === quoteSymbol.value)?.available ?? 0;
@@ -30,16 +30,16 @@ const availableBalance = computed(() => {
 <template>
     <section class="col-span-2 p-3">
         <div class="mb-3 flex gap-2">
-            <button class="w-full rounded-md px-3 py-2 text-sm" :class="side === 'Bid'
+            <button class="w-full rounded-md px-3 py-2 text-sm" :class="side === 'bid'
                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-700'
                 : 'bg-neutral-900 text-neutral-300'
-                " @click="() => (side = 'Bid')">
+                " @click="() => (side = 'bid')">
                 Buy
             </button>
-            <button class="w-full rounded-md px-3 py-2 text-sm" :class="side === 'Ask'
+            <button class="w-full rounded-md px-3 py-2 text-sm" :class="side === 'ask'
                 ? 'bg-rose-500/20 text-rose-300 border border-rose-700'
                 : 'bg-neutral-900 text-neutral-300'
-                " @click="() => (side = 'Ask')">
+                " @click="() => (side = 'ask')">
                 Sell
             </button>
         </div>
@@ -48,19 +48,19 @@ const availableBalance = computed(() => {
             <div class="mb-1 text-xs text-neutral-400">Order Type</div>
             <div class="grid grid-cols-2 gap-2">
                 <button class="rounded-md px-3 py-2 text-sm"
-                    :class="orderType === 'Limit' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
-                    @click="() => (orderType = 'Limit')">
+                    :class="orderType === 'limit' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
+                    @click="() => (orderType = 'limit')">
                     Limit
                 </button>
                 <button class="rounded-md px-3 py-2 text-sm"
-                    :class="orderType === 'Market' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
-                    @click="() => (orderType = 'Market')">
+                    :class="orderType === 'market' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
+                    @click="() => (orderType = 'market')">
                     Market
                 </button>
             </div>
         </div>
 
-        <div v-if="orderType === 'Limit'" class="mb-3">
+        <div v-if="orderType === 'limit'" class="mb-3">
             <div class="mb-1 text-xs text-neutral-400">Price</div>
             <input :value="price ?? ''"
                 @input="(e: any) => (price = e.target.value === '' ? null : Number(e.target.value))" type="number"
@@ -91,11 +91,11 @@ const availableBalance = computed(() => {
 
         <button
             class="mb-2 w-full rounded-md px-3 py-2 text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
-            :class="side === 'Bid'
+            :class="side === 'bid'
                 ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
                 : 'bg-rose-600 hover:bg-rose-500 text-white'
                 " :disabled="orderSubmit?.fetching" @click="submitOrder()">
-            {{ side === "Bid" ? "Buy" : "Sell" }} {{ orderType }}
+            {{ side === "bid" ? "Buy" : "Sell" }} {{ orderType }}
         </button>
         <div v-if="orderSubmit?.error" class="mb-2 text-xs text-rose-400">
             {{ orderSubmit.error }}
