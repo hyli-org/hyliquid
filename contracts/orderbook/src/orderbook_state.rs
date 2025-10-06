@@ -20,7 +20,7 @@ pub struct LightState {
     pub balances: HashMap<TokenName, HashMap<H256, Balance>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct FullState {
     pub light: LightState,
     pub users_info_mt: MonotreeCommitment<UserInfo>,
@@ -274,6 +274,12 @@ impl<T: MonotreeValue + Clone> MonotreeCommitment<T> {
         Ok(commitment)
     }
 
+    pub fn default_from_iter(
+        entries: impl IntoIterator<Item = (H256, T)>,
+    ) -> monotree::Result<Self> {
+        Self::from_iter("monotree", entries)
+    }
+
     pub fn upsert(&mut self, key: &H256, value: T) -> monotree::Result<()> {
         let key_bytes: [u8; 32] = (*key).into();
         let leaf_hash: [u8; 32] = value.to_hash_bytes();
@@ -324,35 +330,23 @@ impl<T: MonotreeValue + Clone> std::fmt::Debug for MonotreeCommitment<T> {
     }
 }
 
-impl Default for FullState {
-    fn default() -> Self {
-        Self {
-            light: LightState::default(),
-            users_info_mt: MonotreeCommitment::new("users-info"),
-            balances_mt: HashMap::new(),
-        }
-    }
-}
-
 impl Clone for FullState {
     fn clone(&self) -> Self {
         let user_entries = self
             .light
             .users_info
             .values()
-            .map(|user| (user.get_key(), user.clone()))
-            .collect::<Vec<_>>();
-        let users_info_mt = MonotreeCommitment::from_iter("users-info-clone", user_entries)
+            .map(|user| (user.get_key(), user.clone()));
+        let users_info_mt = MonotreeCommitment::default_from_iter(user_entries)
             .expect("Failed to rebuild users info monotree while cloning full state");
 
         let mut balances_mt = HashMap::new();
         for (token_name, balances) in &self.light.balances {
             let entries = balances
                 .iter()
-                .map(|(key, balance)| (*key, balance.clone()))
-                .collect::<Vec<_>>();
-            let namespace = format!("balances-clone-{token_name}");
-            let tree = MonotreeCommitment::from_iter(&namespace, entries)
+                .map(|(key, balance)| (*key, balance.clone()));
+
+            let tree = MonotreeCommitment::default_from_iter(entries)
                 .expect("Failed to rebuild balances monotree while cloning full state");
             balances_mt.insert(token_name.clone(), tree);
         }

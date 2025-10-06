@@ -69,8 +69,7 @@ impl ExecutionState {
                 balances,
             })),
             ExecutionMode::Full => {
-                let users_info_mt = MonotreeCommitment::from_iter(
-                    "monotree",
+                let users_info_mt = MonotreeCommitment::default_from_iter(
                     users_info
                         .values()
                         .map(|user_info| (user_info.get_key(), user_info.clone())),
@@ -79,8 +78,7 @@ impl ExecutionState {
 
                 let mut balances_mt = HashMap::new();
                 for (token, token_balances) in balances.iter() {
-                    let tree = MonotreeCommitment::from_iter(
-                        "monotree",
+                    let tree = MonotreeCommitment::default_from_iter(
                         token_balances
                             .iter()
                             .map(|(user_info_key, balance)| (*user_info_key, balance.clone())),

@@ -60,8 +60,7 @@ impl Orderbook {
         }
         match &self.execution_state {
             ExecutionState::Full(state) => {
-                let mut tree = MonotreeCommitment::<UserInfo>::from_iter(
-                    "users-info-proof",
+                let mut tree = MonotreeCommitment::<UserInfo>::default_from_iter(
                     state
                         .light
                         .users_info
@@ -118,9 +117,7 @@ impl Orderbook {
                     .balances
                     .get(token)
                     .ok_or_else(|| format!("No balances data found for token {token}"))?;
-                let namespace = format!("balances-proof-{token}");
-                let mut tree = MonotreeCommitment::<Balance>::from_iter(
-                    &namespace,
+                let mut tree = MonotreeCommitment::<Balance>::default_from_iter(
                     token_balances
                         .iter()
                         .map(|(key, balance)| (*key, balance.clone())),
