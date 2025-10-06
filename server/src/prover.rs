@@ -111,7 +111,11 @@ impl OrderbookProverModule {
 
                 let commitment_metadata = self
                     .orderbook
-                    .derive_zkvm_commitment_metadata_from_events(&user_info, &events)
+                    .derive_zkvm_commitment_metadata_from_events(
+                        &user_info,
+                        &events,
+                        &orderbook_action,
+                    )
                     .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
 
                 let permissioned_private_input = PermissionnedPrivateInput {

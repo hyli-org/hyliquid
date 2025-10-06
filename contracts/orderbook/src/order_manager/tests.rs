@@ -381,7 +381,7 @@ fn market_bid_requires_liquidity() {
     let err = manager
         .execute_order(&user.get_key(), &order)
         .expect_err("market order without liquidity should fail");
-    assert!(err.contains("No matching sell orders"));
+    assert!(err.contains("No matching Bid orders"));
 }
 
 #[test]
@@ -465,5 +465,5 @@ fn market_ask_without_bids_fails() {
     let err = manager
         .execute_order(&user.get_key(), &order)
         .expect_err("market ask without bids should fail");
-    assert!(err.contains("No matching buy orders"));
+    assert!(err.contains("No matching Ask orders"), "{err}");
 }

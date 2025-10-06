@@ -20,7 +20,7 @@ pub struct LightState {
     pub balances: HashMap<TokenName, HashMap<H256, Balance>>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default, Debug)]
 pub struct FullState {
     pub light: LightState,
     pub users_info_mt: MonotreeCommitment<UserInfo>,

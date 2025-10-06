@@ -492,9 +492,10 @@ impl Orderbook {
                                 as i128),
                             created_order.pair.1.clone(),
                         ),
-                        OrderSide::Ask => {
-                            (created_order.quantity as i128, created_order.pair.0.clone())
-                        }
+                        OrderSide::Ask => (
+                            -(created_order.quantity as i128),
+                            created_order.pair.0.clone(),
+                        ),
                     };
                     record_balance_change(
                         &mut balance_changes,
@@ -578,7 +579,7 @@ impl Orderbook {
                     executed_quantity,
                     ..
                 } => {
-                    let executed_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
+                    let updated_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
                             format!(
                                 "Executed order owner info (order_id: {order_id}) not found in order manager",
                             )
@@ -596,7 +597,7 @@ impl Orderbook {
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    executed_order_user_info,
+                                    updated_order_user_info,
                                     base_token,
                                     *executed_quantity as i128,
                                 )?;
@@ -612,7 +613,7 @@ impl Orderbook {
                                 touched_accounts
                                     .entry(quote_token.clone())
                                     .or_default()
-                                    .insert(*executed_order_user_info);
+                                    .insert(*updated_order_user_info);
                             }
                             OrderSide::Ask => {
                                 // Executed order owner receives quote token deducted to user
@@ -620,7 +621,7 @@ impl Orderbook {
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    executed_order_user_info,
+                                    updated_order_user_info,
                                     quote_token,
                                     (updated_order.price.unwrap() * executed_quantity / base_scale)
                                         as i128,
@@ -827,7 +828,7 @@ impl Orderbook {
                 .users_info
                 .get(user)
                 .cloned()
-                .ok_or_else(|| format!("No salt found for user '{user}'")),
+                .ok_or_else(|| format!("User info for '{user}' not found")),
             ExecutionState::Light(state) => state
                 .users_info
                 .get(user)

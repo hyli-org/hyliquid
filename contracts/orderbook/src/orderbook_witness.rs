@@ -5,9 +5,10 @@ use crate::{
     monotree_multi_proof::{MonotreeMultiProof, ProofStatus},
     monotree_proof::compute_root_from_proof,
     order_manager::OrderManager,
-    orderbook::{ExecutionMode, ExecutionState, Orderbook, OrderbookEvent, TokenName},
+    orderbook::{ExecutionMode, ExecutionState, Order, Orderbook, OrderbookEvent, TokenName},
     orderbook_state::{MonotreeCommitment, ZkVmState},
     smt_values::{Balance, BorshableH256 as H256, MonotreeValue, UserInfo},
+    OrderbookAction, PermissionnedOrderbookAction,
 };
 use monotree::{hasher::Sha2, verify_proof, Hasher};
 
@@ -363,10 +364,21 @@ impl Orderbook {
         }
     }
 
-    pub fn verify_orders_owners(&self) -> Result<(), String> {
+    pub fn verify_orders_owners(&self, action: &OrderbookAction) -> Result<(), String> {
         for (order_id, user_info_key) in &self.order_manager.orders_owner {
             // Verify that the order exists
-            if !self.order_manager.orders.contains_key(order_id) {
+            if !self.order_manager.orders.contains_key(order_id)
+                // If the action is creating this order, it's expected to not find it in orders
+                && !matches!(
+                    action,
+                    OrderbookAction::PermissionnedOrderbookAction(
+                        PermissionnedOrderbookAction::CreateOrder(Order {
+                            order_id: create_order_id,
+                            ..
+                        })
+                    ) if create_order_id == order_id
+                )
+            {
                 return Err(format!("Order with id {order_id} does not exist"));
             }
             // Verify that user info exists
@@ -400,6 +412,7 @@ impl Orderbook {
         &self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
+        action: &PermissionnedOrderbookAction,
     ) -> Result<(ZkVmState, OrderManager), String> {
         // Atm, we copy everything (will be merklized in a future version)
         let mut zkvm_order_manager = self.order_manager.clone();
@@ -420,6 +433,21 @@ impl Orderbook {
                         zkvm_order_manager
                             .orders_owner
                             .insert(order_id.clone(), *order_owner);
+                    } else if let PermissionnedOrderbookAction::CreateOrder(Order {
+                        order_id: create_order_id,
+                        ..
+                    }) = action
+                    {
+                        if create_order_id == order_id {
+                            // Special case: the order was created in the same tx, we can use the user_info
+                            zkvm_order_manager
+                                .orders_owner
+                                .insert(order_id.clone(), user_info.get_key());
+                        }
+                    } else {
+                        return Err(format!(
+                            "Order with id {order_id} does not have an owner in orders_owner mapping"
+                        ));
                     }
                 }
                 OrderbookEvent::BalanceUpdated {
@@ -491,12 +519,13 @@ impl Orderbook {
         &self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
+        action: &PermissionnedOrderbookAction,
     ) -> Result<Vec<u8>, String> {
         if !matches!(self.execution_state.mode(), ExecutionMode::Full) {
             return Err("Can only generate zkvm commitment in FullMode".to_string());
         }
 
-        let (zkvm_state, order_manager) = self.for_zkvm(user_info, events)?;
+        let (zkvm_state, order_manager) = self.for_zkvm(user_info, events, action)?;
 
         let mut zk_orderbook = Orderbook {
             hashed_secret: self.hashed_secret,
