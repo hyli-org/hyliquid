@@ -6,7 +6,7 @@ use crate::{
     monotree_proof::compute_root_from_proof,
     order_manager::OrderManager,
     orderbook::{ExecutionMode, ExecutionState, Orderbook, OrderbookEvent, TokenName},
-    orderbook_state::ZkVmState,
+    orderbook_state::{MonotreeCommitment, ZkVmState},
     smt_values::{Balance, BorshableH256 as H256, MonotreeValue, UserInfo},
 };
 use monotree::{hasher::Sha2, verify_proof, Hasher};
@@ -60,14 +60,22 @@ impl Orderbook {
         }
         match &self.execution_state {
             ExecutionState::Full(state) => {
-                let mut tree = state.users_info_mt.clone();
+                let mut tree = MonotreeCommitment::<UserInfo>::new("users-info-proof");
+                let existing_entries: Vec<(H256, UserInfo)> = state
+                    .light
+                    .users_info
+                    .values()
+                    .map(|user| (user.get_key(), user.clone()))
+                    .collect();
+                tree.upsert_batch(&existing_entries)
+                    .map_err(|e| format!("Failed to rebuild users info tree: {e}"))?;
 
                 let entries: Vec<(H256, UserInfo)> = users_info
                     .iter()
                     .map(|user| (user.get_key(), user.clone()))
                     .collect();
                 tree.upsert_batch(&entries)
-                    .map_err(|e| format!("Failed to update users info clone: {e}"))?;
+                    .map_err(|e| format!("Failed to update users info proof tree: {e}"))?;
 
                 let keys: Vec<[u8; 32]> = entries.iter().map(|(key, _)| (*key).into()).collect();
                 // Aggregate the freshly inserted leaves into a single multiproof so callers can share siblings.
@@ -102,11 +110,20 @@ impl Orderbook {
                     balances_map.insert(user_info.clone(), balance);
                 }
 
-                let mut tree = state
-                    .balances_mt
+                let token_balances = state
+                    .light
+                    .balances
                     .get(token)
-                    .ok_or_else(|| format!("No balances tree found for token {token}"))?
-                    .clone();
+                    .ok_or_else(|| format!("No balances data found for token {token}"))?;
+                let mut tree =
+                    MonotreeCommitment::<Balance>::new(&format!("balances-proof-{token}"));
+                let existing_entries: Vec<(H256, Balance)> = token_balances
+                    .iter()
+                    .map(|(key, balance)| (*key, balance.clone()))
+                    .collect();
+                tree.upsert_batch(&existing_entries).map_err(|e| {
+                    format!("Failed to rebuild balances tree for token {token}: {e}")
+                })?;
 
                 let entries: Vec<(H256, Balance)> = balances_map
                     .iter()
@@ -136,12 +153,18 @@ impl Orderbook {
 
     pub fn get_user_info_from_key(&self, key: &H256) -> Result<UserInfo, String> {
         match &self.execution_state {
-            ExecutionState::Full(state) => state.users_info_mt.get(key).cloned().ok_or_else(|| {
-                format!(
-                    "No user info found for key {:?}",
-                    hex::encode(key.as_slice())
-                )
-            }),
+            ExecutionState::Full(state) => state
+                .light
+                .users_info
+                .values()
+                .find(|info| info.get_key() == *key)
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "No user info found for key {:?}",
+                        hex::encode(key.as_slice())
+                    )
+                }),
             ExecutionState::Light(state) => state
                 .users_info
                 .iter()

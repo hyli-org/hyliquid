@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::monotree_proof::BorshableMonotreeProof;
 use crate::order_manager::OrderManager;
-use crate::orderbook_state::{FullState, LightState, MonotreeMap, ZkVmState};
+use crate::orderbook_state::{FullState, LightState, MonotreeCommitment, ZkVmState};
 use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
 use sdk::{ContractName, LaneId, TxContext};
 
@@ -69,7 +69,7 @@ impl ExecutionState {
                 balances,
             })),
             ExecutionMode::Full => {
-                let mut users_info_mt = MonotreeMap::default();
+                let mut users_info_mt = MonotreeCommitment::default();
                 let user_entries = users_info
                     .iter()
                     .map(|(_, user_info)| (user_info.get_key(), user_info.clone()))
@@ -80,7 +80,7 @@ impl ExecutionState {
 
                 let mut balances_mt = HashMap::new();
                 for (token, token_balances) in balances.iter() {
-                    let mut tree = MonotreeMap::default();
+                    let mut tree = MonotreeCommitment::default();
                     let leaves = token_balances
                         .iter()
                         .map(|(user_info_key, balance)| (*user_info_key, balance.clone()))
@@ -92,9 +92,12 @@ impl ExecutionState {
                 }
 
                 Ok(ExecutionState::Full(FullState {
+                    light: LightState {
+                        users_info,
+                        balances,
+                    },
                     users_info_mt,
                     balances_mt,
-                    users_info,
                 }))
             }
             ExecutionMode::ZkVm => Ok(ExecutionState::ZkVm(ZkVmState::default())),
@@ -221,7 +224,8 @@ impl Orderbook {
                         state
                             .balances_mt
                             .entry((*token).clone())
-                            .or_insert_with(MonotreeMap::default);
+                            .or_insert_with(MonotreeCommitment::default);
+                        state.light.balances.entry((*token).clone()).or_default();
                     }
                     ExecutionState::Light(state) => {
                         state.balances.entry((*token).clone()).or_default();
@@ -254,6 +258,7 @@ impl Orderbook {
         let mut events = match &mut self.execution_state {
             ExecutionState::Full(state) => {
                 state
+                    .light
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
 
@@ -750,11 +755,7 @@ impl Orderbook {
 
     pub fn get_balances(&self) -> HashMap<TokenName, HashMap<H256, Balance>> {
         match &self.execution_state {
-            ExecutionState::Full(state) => state
-                .balances_mt
-                .iter()
-                .map(|(token, merkle_map)| (token.clone(), merkle_map.data.clone()))
-                .collect(),
+            ExecutionState::Full(state) => state.light.balances.clone(),
             ExecutionState::Light(state) => state.balances.clone(),
             ExecutionState::ZkVm(state) => {
                 let mut balances: HashMap<TokenName, HashMap<H256, Balance>> = HashMap::new();
@@ -769,9 +770,10 @@ impl Orderbook {
     pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
         match &self.execution_state {
             ExecutionState::Full(state) => state
-                .balances_mt
+                .light
+                .balances
                 .get(token)
-                .and_then(|map| map.get(&user.get_key()).cloned())
+                .and_then(|balances| balances.get(&user.get_key()).cloned())
                 .unwrap_or_default(),
             ExecutionState::Light(state) => state
                 .balances
@@ -822,19 +824,12 @@ impl Orderbook {
 
     pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
         match &self.execution_state {
-            ExecutionState::Full(state) => {
-                let user_info = state
-                    .users_info
-                    .get(user)
-                    .ok_or_else(|| format!("No salt found for user '{user}'"))?;
-                let key = user_info.get_key();
-                state.users_info_mt.get(&key).cloned().ok_or_else(|| {
-                    format!(
-                        "Failed to get user info for user '{user}' with key {:?}",
-                        hex::encode(key.as_slice())
-                    )
-                })
-            }
+            ExecutionState::Full(state) => state
+                .light
+                .users_info
+                .get(user)
+                .cloned()
+                .ok_or_else(|| format!("No salt found for user '{user}'")),
             ExecutionState::Light(state) => state
                 .users_info
                 .get(user)

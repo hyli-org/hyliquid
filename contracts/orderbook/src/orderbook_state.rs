@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::marker::PhantomData;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use monotree::{hasher::Sha2, Monotree};
@@ -21,9 +22,9 @@ pub struct LightState {
 
 #[derive(Debug)]
 pub struct FullState {
-    pub users_info_mt: MonotreeMap<UserInfo>,
-    pub balances_mt: HashMap<TokenName, MonotreeMap<Balance>>,
-    pub users_info: HashMap<String, UserInfo>,
+    pub light: LightState,
+    pub users_info_mt: MonotreeCommitment<UserInfo>,
+    pub balances_mt: HashMap<TokenName, MonotreeCommitment<Balance>>,
 }
 
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
@@ -98,6 +99,7 @@ impl Orderbook {
                     .upsert(&user_info.get_key(), user_info.clone())
                     .map_err(|e| format!("Failed to update user info in monotree: {e}"))?;
                 state
+                    .light
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
                 self.users_info_merkle_root =
@@ -149,10 +151,14 @@ impl Orderbook {
                 let tree = state
                     .balances_mt
                     .entry(token.to_string())
-                    .or_insert_with(MonotreeMap::default);
+                    .or_insert_with(MonotreeCommitment::default);
                 tree.upsert_batch(&balances_to_update).map_err(|e| {
                     format!("Failed to update balances on token {token} in monotree: {e}")
                 })?;
+                let light_balances = state.light.balances.entry(token.to_string()).or_default();
+                for (user_info_key, balance) in &balances_to_update {
+                    light_balances.insert(*user_info_key, balance.clone());
+                }
                 self.balances_merkle_roots.insert(
                     token.to_string(),
                     monotree_root_to_borshable(tree.root.as_ref()),
@@ -237,29 +243,25 @@ pub(crate) fn monotree_root_to_borshable(root: Option<&MonotreeHash>) -> H256 {
     }
 }
 
-pub struct MonotreeMap<T: MonotreeValue + Clone> {
+pub struct MonotreeCommitment<T: MonotreeValue + Clone> {
     pub tree: Sha256Monotree,
     pub root: Option<MonotreeHash>,
-    pub data: HashMap<H256, T>,
+    _marker: PhantomData<T>,
 }
 
-impl<T: MonotreeValue + Clone> Default for MonotreeMap<T> {
+impl<T: MonotreeValue + Clone> Default for MonotreeCommitment<T> {
     fn default() -> Self {
         Self::new("monotree")
     }
 }
 
-impl<T: MonotreeValue + Clone> MonotreeMap<T> {
+impl<T: MonotreeValue + Clone> MonotreeCommitment<T> {
     pub fn new(namespace: &str) -> Self {
         Self {
             tree: Sha256Monotree::new(namespace),
             root: None,
-            data: HashMap::new(),
+            _marker: PhantomData,
         }
-    }
-
-    pub fn get(&self, key: &H256) -> Option<&T> {
-        self.data.get(key)
     }
 
     pub fn upsert(&mut self, key: &H256, value: T) -> monotree::Result<()> {
@@ -268,7 +270,6 @@ impl<T: MonotreeValue + Clone> MonotreeMap<T> {
         self.root = self
             .tree
             .insert(self.root.as_ref(), &key_bytes, &leaf_hash)?;
-        self.data.insert(*key, value);
         Ok(())
     }
 
@@ -285,39 +286,17 @@ impl<T: MonotreeValue + Clone> MonotreeMap<T> {
             current_root = self
                 .tree
                 .insert(current_root.as_ref(), &key_bytes, &leaf_hash)?;
-            self.data.insert(*key, value.clone());
         }
         self.tree.commit();
         self.root = current_root;
         Ok(())
     }
 }
-impl<T: MonotreeValue + Clone> Clone for MonotreeMap<T> {
-    fn clone(&self) -> Self {
-        let mut clone = MonotreeMap::new("monotree-clone");
-        clone.data = self.data.clone();
 
-        let mut root = None;
-        clone.tree.prepare();
-        for (key, value) in &self.data {
-            let key_bytes: [u8; 32] = (*key).into();
-            let leaf_bytes: [u8; 32] = value.to_hash_bytes();
-            root = clone
-                .tree
-                .insert(root.as_ref(), &key_bytes, &leaf_bytes)
-                .expect("Failed to insert into monotree clone");
-        }
-        clone.tree.commit();
-        clone.root = root;
-        clone
-    }
-}
-
-impl<T: MonotreeValue + Clone> std::fmt::Debug for MonotreeMap<T> {
+impl<T: MonotreeValue + Clone> std::fmt::Debug for MonotreeCommitment<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MonotreeMap")
+        f.debug_struct("MonotreeCommitment")
             .field("root", &self.root.map(hex::encode))
-            .field("entries", &self.data.len())
             .finish()
     }
 }
@@ -325,24 +304,42 @@ impl<T: MonotreeValue + Clone> std::fmt::Debug for MonotreeMap<T> {
 impl Default for FullState {
     fn default() -> Self {
         Self {
-            users_info_mt: MonotreeMap::new("users-info"),
+            light: LightState::default(),
+            users_info_mt: MonotreeCommitment::new("users-info"),
             balances_mt: HashMap::new(),
-            users_info: HashMap::new(),
         }
     }
 }
 
 impl Clone for FullState {
     fn clone(&self) -> Self {
+        let mut users_info_mt = MonotreeCommitment::new("users-info-clone");
+        let user_entries = self
+            .light
+            .users_info
+            .values()
+            .map(|user| (user.get_key(), user.clone()))
+            .collect::<Vec<_>>();
+        users_info_mt
+            .upsert_batch(&user_entries)
+            .expect("Failed to rebuild users info monotree while cloning full state");
+
         let mut balances_mt = HashMap::new();
-        for (token_name, tree) in &self.balances_mt {
-            balances_mt.insert(token_name.clone(), tree.clone());
+        for (token_name, balances) in &self.light.balances {
+            let mut tree = MonotreeCommitment::new(&format!("balances-clone-{token_name}"));
+            let entries = balances
+                .iter()
+                .map(|(key, balance)| (*key, balance.clone()))
+                .collect::<Vec<_>>();
+            tree.upsert_batch(&entries)
+                .expect("Failed to rebuild balances monotree while cloning full state");
+            balances_mt.insert(token_name.clone(), tree);
         }
 
         Self {
-            users_info_mt: self.users_info_mt.clone(),
+            light: self.light.clone(),
+            users_info_mt,
             balances_mt,
-            users_info: self.users_info.clone(),
         }
     }
 }
