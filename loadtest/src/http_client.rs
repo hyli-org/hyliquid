@@ -85,9 +85,8 @@ pub struct UserTrades {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ApiTrade {
-    pub trade_id: String,
+    pub trade_id: u32,
     pub instrument_id: u32,
-    pub user_id: u32,
     pub price: u64,
     pub qty: u64,
     pub trade_time: String,
