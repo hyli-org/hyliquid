@@ -7,6 +7,7 @@ use tracing::info;
 #[derive(Debug)]
 pub struct Asset {
     pub asset_id: i64,
+    pub contract_name: String,
     pub symbol: String,
     pub scale: i16,
     pub step: i64,
@@ -51,6 +52,7 @@ impl AssetService {
                     row.get("symbol"),
                     Asset {
                         asset_id: row.get("asset_id"),
+                        contract_name: row.get("contract_name"),
                         symbol: row.get("symbol"),
                         scale: row.get("scale"),
                         step: row.get("step"),
@@ -150,6 +152,13 @@ impl AssetService {
 
     pub async fn get_asset<'a>(&'a self, symbol: &str) -> Option<&'a Asset> {
         self.asset_map.get(symbol)
+    }
+
+    pub async fn get_symbol_from_contract_name(&self, contract_name: &str) -> Option<String> {
+        self.asset_map
+            .values()
+            .find(|asset| asset.contract_name == contract_name)
+            .map(|asset| asset.symbol.clone())
     }
 
     pub async fn add_asset(&mut self, asset: Asset) -> Result<(), AppError> {
