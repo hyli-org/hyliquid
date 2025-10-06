@@ -81,9 +81,12 @@ impl Orderbook {
                     .map_err(|e| format!("Failed to update users info proof tree: {e}"))?;
 
                 // Aggregate the freshly inserted leaves into a single multiproof so callers can share siblings.
-                let multi_proof =
-                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &proof_keys)
-                        .map_err(|e| format!("Failed to create users info multi-proof: {e}"))?;
+                let multi_proof = MonotreeMultiProof::build(
+                    &mut tree.tree,
+                    tree.root.as_ref(),
+                    proof_keys.iter().cloned(),
+                )
+                .map_err(|e| format!("Failed to create users info multi-proof: {e}"))?;
 
                 Ok(Some(multi_proof))
             }
@@ -136,11 +139,14 @@ impl Orderbook {
                 })?;
 
                 // Merge all balance proofs for this token into one multiproof payload.
-                let multi_proof =
-                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &proof_keys)
-                        .map_err(|e| {
-                            format!("Failed to create balances multi-proof for token {token}: {e}")
-                        })?;
+                let multi_proof = MonotreeMultiProof::build(
+                    &mut tree.tree,
+                    tree.root.as_ref(),
+                    proof_keys.iter().cloned(),
+                )
+                .map_err(|e| {
+                    format!("Failed to create balances multi-proof for token {token}: {e}")
+                })?;
 
                 Ok((balances_map, Some(multi_proof)))
             }

@@ -67,23 +67,26 @@ pub struct MonotreeMultiProof {
 
 impl MonotreeMultiProof {
     /// Builds a multi-proof by collecting individual proofs and deduplicating shared nodes.
-    pub fn build<D, H>(
+    pub fn build<D, H, K>(
         tree: &mut Monotree<D, H>,
         root: Option<&Hash>,
-        keys: &[Hash],
+        keys: K,
     ) -> Result<Self>
     where
         D: monotree::Database,
         H: monotree::Hasher,
+        K: IntoIterator<Item = Hash>,
     {
         let mut nodes: Vec<ProofNode> = Vec::new();
         let mut node_indexes: HashMap<ProofNode, usize> = HashMap::new();
-        let mut entries: Vec<MultiProofEntry> = Vec::with_capacity(keys.len());
+        let keys_iter = keys.into_iter();
+        let (_, upper_bound) = keys_iter.size_hint();
+        let mut entries: Vec<MultiProofEntry> = Vec::with_capacity(upper_bound.unwrap_or(0));
 
         // Collect each per-leaf proof in key order, reusing siblings that have already been emitted.
-        for key in keys {
-            match tree.get_merkle_proof(root, key)? {
-                None => entries.push(MultiProofEntry::new(*key, None)),
+        for key in keys_iter {
+            match tree.get_merkle_proof(root, &key)? {
+                None => entries.push(MultiProofEntry::new(key, None)),
                 Some(proof) => {
                     let mut path: Vec<u32> = Vec::with_capacity(proof.len());
                     for (right, cut) in proof {
@@ -101,7 +104,7 @@ impl MonotreeMultiProof {
                             .map_err(|_| Errors::new("multi proof node index overflow"))?;
                         path.push(index);
                     }
-                    entries.push(MultiProofEntry::new(*key, Some(path)));
+                    entries.push(MultiProofEntry::new(key, Some(path)));
                 }
             }
         }
@@ -181,7 +184,8 @@ mod tests {
             root = tree.insert(root.as_ref(), key, leaf).unwrap();
         }
 
-        let proof = MonotreeMultiProof::build(&mut tree, root.as_ref(), &keys).unwrap();
+        let proof =
+            MonotreeMultiProof::build(&mut tree, root.as_ref(), keys.iter().cloned()).unwrap();
 
         // Expect some deduplication to happen for a non-trivial tree.
         assert!(proof.node_count() <= 3 * keys.len());
@@ -211,7 +215,8 @@ mod tests {
         let mut all_keys = keys.clone();
         all_keys.push(missing);
 
-        let proof = MonotreeMultiProof::build(&mut tree, root.as_ref(), &all_keys).unwrap();
+        let proof =
+            MonotreeMultiProof::build(&mut tree, root.as_ref(), all_keys.iter().cloned()).unwrap();
 
         // Missing key should be flagged as absent.
         assert_eq!(proof.proof_status(&missing), Some(ProofStatus::Absent));
@@ -245,7 +250,8 @@ mod tests {
         }
 
         let keys: Vec<Hash> = pairs.iter().map(|(k, _)| *k).collect();
-        let multiproof = MonotreeMultiProof::build(&mut tree, root.as_ref(), &keys).unwrap();
+        let multiproof =
+            MonotreeMultiProof::build(&mut tree, root.as_ref(), keys.iter().cloned()).unwrap();
 
         // Build the naive set of siblings by querying each proof individually.
         let mut tree_for_naive = Monotree::default();
