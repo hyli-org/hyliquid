@@ -332,22 +332,22 @@ impl<T: MonotreeValue + Clone> std::fmt::Debug for MonotreeCommitment<T> {
 
 impl Clone for FullState {
     fn clone(&self) -> Self {
-        let user_entries = self
-            .light
-            .users_info
-            .values()
-            .map(|user| (user.get_key(), user.clone()));
-        let users_info_mt = MonotreeCommitment::default_from_iter(user_entries)
-            .expect("Failed to rebuild users info monotree while cloning full state");
+        let users_info_mt = MonotreeCommitment::default_from_iter(
+            self.light
+                .users_info
+                .values()
+                .map(|user| (user.get_key(), user.clone())),
+        )
+        .expect("Failed to rebuild users info monotree while cloning full state");
 
         let mut balances_mt = HashMap::new();
         for (token_name, balances) in &self.light.balances {
-            let entries = balances
-                .iter()
-                .map(|(key, balance)| (*key, balance.clone()));
-
-            let tree = MonotreeCommitment::default_from_iter(entries)
-                .expect("Failed to rebuild balances monotree while cloning full state");
+            let tree = MonotreeCommitment::default_from_iter(
+                balances
+                    .iter()
+                    .map(|(key, balance)| (*key, balance.clone())),
+            )
+            .expect("Failed to rebuild balances monotree while cloning full state");
             balances_mt.insert(token_name.clone(), tree);
         }
 
