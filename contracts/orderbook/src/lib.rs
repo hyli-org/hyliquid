@@ -7,9 +7,7 @@ use sdk::{merkle_utils::BorshableMerkleProof, RunResult};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    orderbook::{
-        ExecutionState, Order, OrderSide, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair,
-    },
+    orderbook::{ExecutionState, Order, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair},
     smt_values::UserInfo,
 };
 
@@ -18,7 +16,6 @@ pub mod orderbook;
 pub mod orderbook_state;
 pub mod orderbook_witness;
 pub mod smt_values;
-mod tests;
 pub mod utils;
 
 impl sdk::FullStateRevert for Orderbook {}
@@ -174,14 +171,14 @@ impl Orderbook {
             PermissionnedOrderbookAction::Deposit { token, amount } => {
                 self.deposit(&token, amount, &user_info)
             }
-            PermissionnedOrderbookAction::CreateOrder {
+            PermissionnedOrderbookAction::CreateOrder(Order {
                 order_id,
                 order_side,
                 order_type,
                 price,
                 pair,
                 quantity,
-            } => {
+            }) => {
                 // Assert that the order is correctly created
                 if order_type == OrderType::Limit && price.is_none() {
                     return Err("Limit orders must have a price".to_string());
@@ -320,29 +317,11 @@ pub enum OrderbookAction {
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
 pub enum PermissionnedOrderbookAction {
     AddSessionKey,
-    CreatePair {
-        pair: TokenPair,
-        info: PairInfo,
-    },
-    Deposit {
-        token: String,
-        amount: u64,
-    },
-    CreateOrder {
-        order_id: String,
-        order_side: OrderSide,
-        order_type: OrderType,
-        price: Option<u64>,
-        pair: TokenPair,
-        quantity: u64,
-    },
-    Cancel {
-        order_id: String,
-    },
-    Withdraw {
-        token: String,
-        amount: u64,
-    },
+    CreatePair { pair: TokenPair, info: PairInfo },
+    Deposit { token: String, amount: u64 },
+    CreateOrder(Order),
+    Cancel { order_id: String },
+    Withdraw { token: String, amount: u64 },
 }
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
@@ -365,4 +344,8 @@ impl From<sdk::StateCommitment> for Orderbook {
             .map_err(|e| format!("Could not decode Orderbook state: {e}"))
             .unwrap()
     }
+}
+
+pub mod test {
+    mod orderbook_tests;
 }

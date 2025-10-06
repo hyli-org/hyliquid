@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     order_manager::OrderManager,
-    orderbook::{ExecutionMode, ExecutionState, Orderbook, OrderbookEvent, TokenName},
+    orderbook::{ExecutionMode, ExecutionState, Order, Orderbook, OrderbookEvent, TokenName},
     orderbook_state::ZkVmState,
     smt_values::{Balance, BorshableH256 as H256, UserInfo},
     OrderbookAction, PermissionnedOrderbookAction,
@@ -273,10 +273,10 @@ impl Orderbook {
                 && !matches!(
                     action,
                     OrderbookAction::PermissionnedOrderbookAction(
-                        PermissionnedOrderbookAction::CreateOrder {
+                        PermissionnedOrderbookAction::CreateOrder(Order {
                             order_id: create_order_id,
                             ..
-                        }
+                        })
                     ) if create_order_id == order_id
                 )
             {
@@ -334,10 +334,10 @@ impl Orderbook {
                         zkvm_order_manager
                             .orders_owner
                             .insert(order_id.clone(), *order_owner);
-                    } else if let PermissionnedOrderbookAction::CreateOrder {
+                    } else if let PermissionnedOrderbookAction::CreateOrder(Order {
                         order_id: create_order_id,
                         ..
-                    } = action
+                    }) = action
                     {
                         if create_order_id == order_id {
                             // Special case: the order was created in the same tx, we can use the user_info
