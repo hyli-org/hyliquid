@@ -152,9 +152,10 @@ impl Orderbook {
                     .balances_mt
                     .entry(token.to_string())
                     .or_insert_with(MonotreeCommitment::default);
-                tree.upsert_batch(&balances_to_update).map_err(|e| {
-                    format!("Failed to update balances on token {token} in monotree: {e}")
-                })?;
+                tree.upsert_batch(balances_to_update.iter().cloned())
+                    .map_err(|e| {
+                        format!("Failed to update balances on token {token} in monotree: {e}")
+                    })?;
                 let light_balances = state.light.balances.entry(token.to_string()).or_default();
                 for (user_info_key, balance) in &balances_to_update {
                     light_balances.insert(*user_info_key, balance.clone());
@@ -264,6 +265,15 @@ impl<T: MonotreeValue + Clone> MonotreeCommitment<T> {
         }
     }
 
+    pub fn from_iter(
+        namespace: &str,
+        entries: impl IntoIterator<Item = (H256, T)>,
+    ) -> monotree::Result<Self> {
+        let mut commitment = Self::new(namespace);
+        commitment.upsert_batch(entries)?;
+        Ok(commitment)
+    }
+
     pub fn upsert(&mut self, key: &H256, value: T) -> monotree::Result<()> {
         let key_bytes: [u8; 32] = (*key).into();
         let leaf_hash: [u8; 32] = value.to_hash_bytes();
@@ -273,20 +283,33 @@ impl<T: MonotreeValue + Clone> MonotreeCommitment<T> {
         Ok(())
     }
 
-    pub fn upsert_batch(&mut self, entries: &[(H256, T)]) -> monotree::Result<()> {
-        if entries.is_empty() {
+    pub fn upsert_batch<I>(&mut self, entries: I) -> monotree::Result<()>
+    where
+        I: IntoIterator<Item = (H256, T)>,
+    {
+        let mut iter = entries.into_iter();
+
+        let Some((first_key, first_value)) = iter.next() else {
             return Ok(());
-        }
+        };
 
         self.tree.prepare();
         let mut current_root = self.root;
-        for (key, value) in entries.iter() {
-            let key_bytes: [u8; 32] = (*key).into();
-            let leaf_hash: [u8; 32] = value.to_hash_bytes();
+
+        let first_key_bytes: [u8; 32] = first_key.into();
+        let first_leaf = first_value.to_hash_bytes();
+        current_root = self
+            .tree
+            .insert(current_root.as_ref(), &first_key_bytes, &first_leaf)?;
+
+        for (key, value) in iter {
+            let key_bytes: [u8; 32] = key.into();
+            let leaf_hash = value.to_hash_bytes();
             current_root = self
                 .tree
                 .insert(current_root.as_ref(), &key_bytes, &leaf_hash)?;
         }
+
         self.tree.commit();
         self.root = current_root;
         Ok(())
@@ -313,25 +336,23 @@ impl Default for FullState {
 
 impl Clone for FullState {
     fn clone(&self) -> Self {
-        let mut users_info_mt = MonotreeCommitment::new("users-info-clone");
         let user_entries = self
             .light
             .users_info
             .values()
             .map(|user| (user.get_key(), user.clone()))
             .collect::<Vec<_>>();
-        users_info_mt
-            .upsert_batch(&user_entries)
+        let users_info_mt = MonotreeCommitment::from_iter("users-info-clone", user_entries)
             .expect("Failed to rebuild users info monotree while cloning full state");
 
         let mut balances_mt = HashMap::new();
         for (token_name, balances) in &self.light.balances {
-            let mut tree = MonotreeCommitment::new(&format!("balances-clone-{token_name}"));
             let entries = balances
                 .iter()
                 .map(|(key, balance)| (*key, balance.clone()))
                 .collect::<Vec<_>>();
-            tree.upsert_batch(&entries)
+            let namespace = format!("balances-clone-{token_name}");
+            let tree = MonotreeCommitment::from_iter(&namespace, entries)
                 .expect("Failed to rebuild balances monotree while cloning full state");
             balances_mt.insert(token_name.clone(), tree);
         }

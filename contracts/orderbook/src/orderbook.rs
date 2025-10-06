@@ -69,23 +69,23 @@ impl ExecutionState {
                 balances,
             })),
             ExecutionMode::Full => {
-                let mut users_info_mt = MonotreeCommitment::default();
-                let user_entries = users_info
-                    .iter()
-                    .map(|(_, user_info)| (user_info.get_key(), user_info.clone()))
-                    .collect::<Vec<_>>();
-                users_info_mt
-                    .upsert_batch(&user_entries)
-                    .map_err(|e| format!("Failed to update users info in monotree: {e}"))?;
+                let users_info_mt = MonotreeCommitment::from_iter(
+                    "monotree",
+                    users_info
+                        .values()
+                        .map(|user_info| (user_info.get_key(), user_info.clone())),
+                )
+                .map_err(|e| format!("Failed to update users info in monotree: {e}"))?;
 
                 let mut balances_mt = HashMap::new();
                 for (token, token_balances) in balances.iter() {
-                    let mut tree = MonotreeCommitment::default();
-                    let leaves = token_balances
-                        .iter()
-                        .map(|(user_info_key, balance)| (*user_info_key, balance.clone()))
-                        .collect::<Vec<_>>();
-                    tree.upsert_batch(&leaves).map_err(|e| {
+                    let tree = MonotreeCommitment::from_iter(
+                        "monotree",
+                        token_balances
+                            .iter()
+                            .map(|(user_info_key, balance)| (*user_info_key, balance.clone())),
+                    )
+                    .map_err(|e| {
                         format!("Failed to update balances on token {token} in monotree: {e}")
                     })?;
                     balances_mt.insert(token.clone(), tree);

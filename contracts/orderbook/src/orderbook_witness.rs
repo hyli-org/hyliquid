@@ -60,27 +60,30 @@ impl Orderbook {
         }
         match &self.execution_state {
             ExecutionState::Full(state) => {
-                let mut tree = MonotreeCommitment::<UserInfo>::new("users-info-proof");
-                let existing_entries: Vec<(H256, UserInfo)> = state
-                    .light
-                    .users_info
-                    .values()
-                    .map(|user| (user.get_key(), user.clone()))
-                    .collect();
-                tree.upsert_batch(&existing_entries)
-                    .map_err(|e| format!("Failed to rebuild users info tree: {e}"))?;
+                let mut tree = MonotreeCommitment::<UserInfo>::from_iter(
+                    "users-info-proof",
+                    state
+                        .light
+                        .users_info
+                        .values()
+                        .map(|user| (user.get_key(), user.clone())),
+                )
+                .map_err(|e| format!("Failed to rebuild users info tree: {e}"))?;
 
-                let entries: Vec<(H256, UserInfo)> = users_info
-                    .iter()
-                    .map(|user| (user.get_key(), user.clone()))
-                    .collect();
-                tree.upsert_batch(&entries)
+                let mut proof_entries = Vec::with_capacity(users_info.len());
+                let mut proof_keys = Vec::with_capacity(users_info.len());
+                for user in users_info.iter() {
+                    let key = user.get_key();
+                    proof_keys.push(key.into());
+                    proof_entries.push((key, user.clone()));
+                }
+
+                tree.upsert_batch(proof_entries.iter().cloned())
                     .map_err(|e| format!("Failed to update users info proof tree: {e}"))?;
 
-                let keys: Vec<[u8; 32]> = entries.iter().map(|(key, _)| (*key).into()).collect();
                 // Aggregate the freshly inserted leaves into a single multiproof so callers can share siblings.
                 let multi_proof =
-                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &keys)
+                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &proof_keys)
                         .map_err(|e| format!("Failed to create users info multi-proof: {e}"))?;
 
                 Ok(Some(multi_proof))
@@ -115,30 +118,32 @@ impl Orderbook {
                     .balances
                     .get(token)
                     .ok_or_else(|| format!("No balances data found for token {token}"))?;
-                let mut tree =
-                    MonotreeCommitment::<Balance>::new(&format!("balances-proof-{token}"));
-                let existing_entries: Vec<(H256, Balance)> = token_balances
-                    .iter()
-                    .map(|(key, balance)| (*key, balance.clone()))
-                    .collect();
-                tree.upsert_batch(&existing_entries).map_err(|e| {
-                    format!("Failed to rebuild balances tree for token {token}: {e}")
-                })?;
+                let namespace = format!("balances-proof-{token}");
+                let mut tree = MonotreeCommitment::<Balance>::from_iter(
+                    &namespace,
+                    token_balances
+                        .iter()
+                        .map(|(key, balance)| (*key, balance.clone())),
+                )
+                .map_err(|e| format!("Failed to rebuild balances tree for token {token}: {e}"))?;
 
-                let entries: Vec<(H256, Balance)> = balances_map
-                    .iter()
-                    .map(|(user, balance)| (user.get_key(), balance.clone()))
-                    .collect();
-                tree.upsert_batch(&entries).map_err(|e| {
+                let mut entries: Vec<(H256, Balance)> = Vec::with_capacity(balances_map.len());
+                let mut proof_keys: Vec<[u8; 32]> = Vec::with_capacity(balances_map.len());
+                for (user, balance) in balances_map.iter() {
+                    let key = user.get_key();
+                    proof_keys.push(key.into());
+                    entries.push((key, balance.clone()));
+                }
+                tree.upsert_batch(entries.iter().cloned()).map_err(|e| {
                     format!("Failed to update balances clone for token {token}: {e}")
                 })?;
 
-                let keys: Vec<[u8; 32]> = entries.iter().map(|(key, _)| (*key).into()).collect();
                 // Merge all balance proofs for this token into one multiproof payload.
                 let multi_proof =
-                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &keys).map_err(
-                        |e| format!("Failed to create balances multi-proof for token {token}: {e}"),
-                    )?;
+                    MonotreeMultiProof::build(&mut tree.tree, tree.root.as_ref(), &proof_keys)
+                        .map_err(|e| {
+                            format!("Failed to create balances multi-proof for token {token}: {e}")
+                        })?;
 
                 Ok((balances_map, Some(multi_proof)))
             }
