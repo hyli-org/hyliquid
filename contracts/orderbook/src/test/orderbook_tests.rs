@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::orderbook::{
     ExecutionMode, Order, OrderSide, OrderType, Orderbook, PairInfo, TokenPair,
@@ -12,8 +12,8 @@ use crate::{
 };
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
-use sdk::ZkContract;
 use sdk::{guest, LaneId};
+use sdk::{tracing, ZkContract};
 use sdk::{BlobIndex, Calldata, ContractName, Identity, TxContext, TxHash};
 use sha3::{Digest, Sha3_256};
 
@@ -78,7 +78,7 @@ fn run_action(
         .execute_permissionned_action(user_info.clone(), action.clone(), &private_payload)
         .expect("light execution");
 
-    sdk::info!("light events: {:?}", events);
+    tracing::debug!("light events: {:?}", events);
 
     let commitment_metadata = full
         .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &action)
@@ -88,7 +88,7 @@ fn run_action(
         .execute_permissionned_action(user_info.clone(), action.clone(), &private_payload)
         .expect("full execution");
 
-    sdk::info!("full events: {:?}\n\n\n", events_full);
+    tracing::debug!("full events: {:?}\n\n\n", events_full);
     assert!(
         events.len() == events_full.len(),
         "light and full events should match"
@@ -123,195 +123,178 @@ fn run_action(
     );
 }
 
-#[test_log::test]
-fn test_light_full_zkvm_pipeline_execution() {
-    let (_, _, _, lane_id, secret) = get_ctx();
+#[derive(Default, Clone, Copy)]
+struct BalanceExpectation {
+    base: i128,
+    quote: i128,
+}
 
-    let mut light = Orderbook::init(lane_id.clone(), ExecutionMode::Light, secret.clone()).unwrap();
-    let mut full = Orderbook::init(lane_id.clone(), ExecutionMode::Full, secret.clone()).unwrap();
+#[derive(Clone, Copy)]
+struct BalanceDelta<'a> {
+    user: &'a str,
+    base: i128,
+    quote: i128,
+}
 
-    let pair: TokenPair = ("HYLLAR".to_string(), "ORANJ".to_string());
-    let base_token = pair.0.clone();
-    let quote_token = pair.1.clone();
-    let pair_info = PairInfo {
-        base_scale: 0,
-        quote_scale: 0,
+#[derive(Clone)]
+struct OrderSpec {
+    id: &'static str,
+    side: OrderSide,
+    price: Option<u64>,
+    quantity: u64,
+}
+
+fn delta<'a>(user: &'a str, base: i128, quote: i128) -> BalanceDelta<'a> {
+    BalanceDelta { user, base, quote }
+}
+
+fn qty(amount: u64) -> i128 {
+    amount as i128
+}
+
+fn notional(amount: u64, price: u64) -> i128 {
+    i128::from(amount) * i128::from(price)
+}
+fn apply_balance_deltas<'a>(
+    expected: &mut HashMap<&'a str, BalanceExpectation>,
+    deltas: &[BalanceDelta<'a>],
+) {
+    for delta in deltas {
+        let entry = expected.get_mut(delta.user).expect("balance entry");
+        entry.base += delta.base;
+        entry.quote += delta.quote;
+    }
+}
+
+fn assert_stage<'a>(
+    stage: &str,
+    light: &Orderbook,
+    full: &Orderbook,
+    expected: &HashMap<&'a str, BalanceExpectation>,
+    users: &[&'a str],
+    base_token: &str,
+    quote_token: &str,
+) {
+    for &user in users {
+        let expected_entry = expected.get(user).expect("expected balances");
+        let expected_base: u64 = expected_entry.base.try_into().expect("base >= 0");
+        let expected_quote: u64 = expected_entry.quote.try_into().expect("quote >= 0");
+
+        let light_user = light.get_user_info(user).expect("light user info");
+        let full_user = full.get_user_info(user).expect("full user info");
+
+        let light_base = light.get_balance(&light_user, base_token);
+        let full_base = full.get_balance(&full_user, base_token);
+        let light_quote = light.get_balance(&light_user, quote_token);
+        let full_quote = full.get_balance(&full_user, quote_token);
+
+        assert_eq!(
+                light_base.0, expected_base,
+                "{stage}: user {user} base ({base_token}) balance mismatch for light (expected {expected_base}, got {light_base:?})"
+            );
+        assert_eq!(
+                full_base.0, expected_base,
+                "{stage}: user {user} base ({base_token}) balance mismatch for full (expected {expected_base}, got {full_base:?})"
+            );
+        assert_eq!(
+                light_quote.0, expected_quote,
+                "{stage}: user {user} quote ({quote_token}) balance mismatch for light (expected {expected_quote}, got {light_quote:?})"
+            );
+        assert_eq!(
+                full_quote.0, expected_quote,
+                "{stage}: user {user} quote ({quote_token}) balance mismatch for full (expected {expected_quote}, got {full_quote:?})"
+            );
+    }
+}
+
+fn signer_for<'a>(users: &[&'a str], signers: &'a [TestSigner], user: &str) -> &'a TestSigner {
+    let index = users
+        .iter()
+        .position(|candidate| *candidate == user)
+        .expect("signer index");
+    &signers[index]
+}
+
+fn submit_signed_order<'a>(
+    light: &mut Orderbook,
+    full: &mut Orderbook,
+    users: &[&'a str],
+    signers: &'a [TestSigner],
+    user: &str,
+    order: Order,
+) {
+    let signer = signer_for(users, signers, user);
+    let user_info = full.get_user_info(user).expect("user info for signature");
+    let order_id = order.order_id.clone();
+    let msg = format!("{}:{}:create_order:{}", user, user_info.nonce, order_id);
+    let signature = signer.sign(&msg);
+    let private_input = CreateOrderPrivateInput {
+        signature,
+        public_key: signer.public_key.clone(),
     };
+    let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
 
-    let user1_name = "user1";
-    let user2_name = "user2";
+    run_action(
+        light,
+        full,
+        user,
+        PermissionnedOrderbookAction::CreateOrder(order),
+        private_payload,
+    );
+}
 
-    let signer1 = TestSigner::new(1);
-    let signer2 = TestSigner::new(2);
-
-    // 1. Register user 1
-    // 2. Register user 2
-    // 3. Create pair via light, replicate on full
-    // 4. Deposit ORANJ for user1
-    // 5. Deposit HYLLAR for user2
-    // 6. Create bid order for user1
-    // 7. Create ask order for user2 that should match bid order
-
-    let add_session_key_user1 = borsh::to_vec(&AddSessionKeyPrivateInput {
-        new_public_key: signer1.public_key.clone(),
+fn add_session_key<'a>(
+    light: &mut Orderbook,
+    full: &mut Orderbook,
+    users: &[&'a str],
+    signers: &'a [TestSigner],
+    user: &str,
+) {
+    let signer = signer_for(users, signers, user);
+    let payload = borsh::to_vec(&AddSessionKeyPrivateInput {
+        new_public_key: signer.public_key.clone(),
     })
-    .expect("serialize add session key input for user1");
+    .expect("serialize add session key input");
 
-    sdk::info!("Step 1: adding session key for {}", user1_name);
     run_action(
-        &mut light,
-        &mut full,
-        user1_name,
+        light,
+        full,
+        user,
         PermissionnedOrderbookAction::AddSessionKey,
-        add_session_key_user1,
+        payload,
     );
+}
 
-    sdk::info!("Step 2: registering {}", user2_name);
-    let add_session_key_user2 = borsh::to_vec(&AddSessionKeyPrivateInput {
-        new_public_key: signer2.public_key.clone(),
-    })
-    .expect("serialize add session key input for user2");
-
-    sdk::info!("Step 2: adding session key for {}", user2_name);
+fn deposit(light: &mut Orderbook, full: &mut Orderbook, user: &str, token: &str, amount: u64) {
     run_action(
-        &mut light,
-        &mut full,
-        user2_name,
-        PermissionnedOrderbookAction::AddSessionKey,
-        add_session_key_user2,
-    );
-
-    sdk::info!(
-        "Step 3: creating trading pair {}/{}",
-        base_token,
-        quote_token
-    );
-    run_action(
-        &mut light,
-        &mut full,
-        user1_name,
-        PermissionnedOrderbookAction::CreatePair {
-            pair: pair.clone(),
-            info: pair_info.clone(),
-        },
-        Vec::new(),
-    );
-
-    sdk::info!(
-        "Step 4: depositing 1_000 for {} for {}",
-        quote_token,
-        user1_name
-    );
-    run_action(
-        &mut light,
-        &mut full,
-        user1_name,
+        light,
+        full,
+        user,
         PermissionnedOrderbookAction::Deposit {
-            token: quote_token.clone(),
-            amount: 1_000_u64,
+            token: token.to_string(),
+            amount,
         },
         Vec::new(),
     );
+}
 
-    sdk::info!("Step 5: depositing 1_000 {} for {}", base_token, user2_name);
-    run_action(
-        &mut light,
-        &mut full,
-        user2_name,
-        PermissionnedOrderbookAction::Deposit {
-            token: base_token.clone(),
-            amount: 1_000_u64,
-        },
-        Vec::new(),
-    );
-
-    let bid_order_id = "bid-user1".to_string();
-    let bid_quantity = 50_u64;
-    let bid_price = Some(10_u64);
-    let user1_info_for_bid = full
-        .get_user_info(user1_name)
-        .expect("user1 info before bid order");
-    let bid_msg = format!(
-        "{}:{}:create_order:{}",
-        user1_name, user1_info_for_bid.nonce, bid_order_id
-    );
-    let bid_signature = signer1.sign(&bid_msg);
-    let bid_private_input = CreateOrderPrivateInput {
-        signature: bid_signature,
-        public_key: signer1.public_key.clone(),
-    };
-    let bid_private_payload =
-        borsh::to_vec(&bid_private_input).expect("serialize create order input for bid order");
-
-    sdk::info!(
-        "Step 6: creating bid order {} for {}",
-        bid_order_id,
-        user1_name
-    );
-    run_action(
-        &mut light,
-        &mut full,
-        user1_name,
-        PermissionnedOrderbookAction::CreateOrder(Order {
-            order_id: bid_order_id.clone(),
-            order_side: OrderSide::Bid,
-            order_type: OrderType::Limit,
-            price: bid_price,
-            pair: pair.clone(),
-            quantity: bid_quantity,
-        }),
-        bid_private_payload,
-    );
-
-    let ask_order_id = "ask-user2".to_string();
-    let ask_quantity = bid_quantity;
-    let ask_price = bid_price;
-    let user2_info_for_ask = full
-        .get_user_info(user2_name)
-        .expect("user2 info before ask order");
-    let ask_msg = format!(
-        "{}:{}:create_order:{}",
-        user2_name, user2_info_for_ask.nonce, ask_order_id
-    );
-    let ask_signature = signer2.sign(&ask_msg);
-    let ask_private_input = CreateOrderPrivateInput {
-        signature: ask_signature,
-        public_key: signer2.public_key.clone(),
-    };
-    let ask_private_payload =
-        borsh::to_vec(&ask_private_input).expect("serialize create order input for ask order");
-
-    sdk::info!(
-        "Step 7: creating ask order {} for {}",
-        ask_order_id,
-        user2_name
-    );
-    run_action(
-        &mut light,
-        &mut full,
-        user2_name,
-        PermissionnedOrderbookAction::CreateOrder(Order {
-            order_id: ask_order_id.clone(),
-            order_side: OrderSide::Ask,
-            order_type: OrderType::Limit,
-            price: ask_price,
-            pair: pair.clone(),
-            quantity: ask_quantity,
-        }),
-        ask_private_payload,
-    );
-
-    sdk::info!("Verifying matching orders were cleared");
-    assert!(
-        full.order_manager.orders.is_empty(),
-        "order book should be empty after matching orders"
-    );
-
-    sdk::info!("Ensuring light and full states remain in sync");
-    assert_eq!(
-        light.order_manager, full.order_manager,
-        "light and full commitments diverged: {light:?} != {full:?}"
-    );
+#[allow(clippy::too_many_arguments)]
+fn execute_market_order<'a>(
+    stage: &str,
+    order: Order,
+    user: &'a str,
+    light: &mut Orderbook,
+    full: &mut Orderbook,
+    users: &[&'a str],
+    signers: &'a [TestSigner],
+    expected: &mut HashMap<&'a str, BalanceExpectation>,
+    base_token: &str,
+    quote_token: &str,
+    deltas: &[BalanceDelta<'a>],
+) {
+    submit_signed_order(light, full, users, signers, user, order);
+    apply_balance_deltas(expected, deltas);
+    assert_stage(stage, light, full, expected, users, base_token, quote_token);
 }
 
 #[test_log::test]
@@ -329,86 +312,25 @@ fn test_complex_multi_user_orderbook() {
         quote_scale: 0,
     };
 
-    // Create 3 users
     let users = ["alice", "bob", "charlie"];
-    let mut signers = vec![];
-
-    // Initialize signers for each user
-    for i in 0..users.len() {
-        signers.push(TestSigner::new((i + 1) as u8));
-    }
-
-    #[derive(Clone, Copy)]
-    struct BalanceExpectation {
-        base: i128,
-        quote: i128,
-    }
-
-    let assert_balances = |stage: &str,
-                           light: &Orderbook,
-                           full: &Orderbook,
-                           expected: &HashMap<&str, BalanceExpectation>,
-                           users: &[&str],
-                           base_token: &str,
-                           quote_token: &str| {
-        for &user in users {
-            let expected_entry = expected.get(user).expect("expected balances");
-            let expected_base: u64 = expected_entry.base.try_into().expect("base >= 0");
-            let expected_quote: u64 = expected_entry.quote.try_into().expect("quote >= 0");
-
-            let light_user = light.get_user_info(user).expect("light user info");
-            let full_user = full.get_user_info(user).expect("full user info");
-
-            let light_base = light.get_balance(&light_user, base_token);
-            let full_base = full.get_balance(&full_user, base_token);
-            let light_quote = light.get_balance(&light_user, quote_token);
-            let full_quote = full.get_balance(&full_user, quote_token);
-
-            assert_eq!(
-                    light_base.0, expected_base,
-                    "{stage}: user {user} base ({base_token}) balance mismatch for light (expected {expected_base}, got {light_base:?})"
-                );
-            assert_eq!(
-                    full_base.0, expected_base,
-                    "{stage}: user {user} base ({base_token}) balance mismatch for full (expected {expected_base}, got {full_base:?})"
-                );
-            assert_eq!(
-                    light_quote.0, expected_quote,
-                    "{stage}: user {user} quote ({quote_token}) balance mismatch for light (expected {expected_quote}, got {light_quote:?})"
-                );
-            assert_eq!(
-                    full_quote.0, expected_quote,
-                    "{stage}: user {user} quote ({quote_token}) balance mismatch for full (expected {expected_quote}, got {full_quote:?})"
-                );
-        }
-    };
-
-    let mut expected_balances: std::collections::HashMap<&str, BalanceExpectation> = users
-        .iter()
-        .map(|&user| (user, BalanceExpectation { base: 0, quote: 0 }))
+    let (alice, bob, charlie) = (users[0], users[1], users[2]);
+    let signers: Vec<TestSigner> = (0..users.len())
+        .map(|idx| TestSigner::new((idx + 1) as u8))
         .collect();
 
-    // Step 1: Add session keys for all users
-    for (i, &user_name) in users.iter().enumerate() {
-        let add_session_key = borsh::to_vec(&AddSessionKeyPrivateInput {
-            new_public_key: signers[i].public_key.clone(),
-        })
-        .expect("serialize add session key input");
+    let mut expected_balances: HashMap<&str, BalanceExpectation> = users
+        .iter()
+        .map(|&user| (user, BalanceExpectation::default()))
+        .collect();
 
-        run_action(
-            &mut light,
-            &mut full,
-            user_name,
-            PermissionnedOrderbookAction::AddSessionKey,
-            add_session_key,
-        );
+    for &user in &users {
+        add_session_key(&mut light, &mut full, &users, &signers, user);
     }
 
-    // Step 2: Create trading pair
     run_action(
         &mut light,
         &mut full,
-        users[0],
+        alice,
         PermissionnedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info.clone(),
@@ -416,43 +338,20 @@ fn test_complex_multi_user_orderbook() {
         Vec::new(),
     );
 
-    // Step 3: Fund all users with both tokens and record expected balances
     let funded_amount = 10_000_u64;
-    for &user_name in &users {
-        run_action(
-            &mut light,
-            &mut full,
-            user_name,
-            PermissionnedOrderbookAction::Deposit {
-                token: base_token.clone(),
-                amount: funded_amount,
-            },
-            Vec::new(),
-        );
-        run_action(
-            &mut light,
-            &mut full,
-            user_name,
-            PermissionnedOrderbookAction::Deposit {
-                token: quote_token.clone(),
-                amount: funded_amount,
-            },
-            Vec::new(),
+    for &user in &users {
+        deposit(&mut light, &mut full, user, &base_token, funded_amount);
+        deposit(&mut light, &mut full, user, &quote_token, funded_amount);
+        apply_balance_deltas(
+            &mut expected_balances,
+            &[
+                delta(user, qty(funded_amount), 0),
+                delta(user, 0, qty(funded_amount)),
+            ],
         );
     }
 
-    for &user_name in &users {
-        let light_user = light.get_user_info(user_name).expect("light user info");
-        let base_balance = light.get_balance(&light_user, &base_token).0 as i128;
-        let quote_balance = light.get_balance(&light_user, &quote_token).0 as i128;
-        let entry = expected_balances
-            .get_mut(user_name)
-            .expect("user balance entry");
-        entry.base = base_balance;
-        entry.quote = quote_balance;
-    }
-
-    assert_balances(
+    assert_stage(
         "after deposits",
         &light,
         &full,
@@ -462,71 +361,110 @@ fn test_complex_multi_user_orderbook() {
         &quote_token,
     );
 
-    // Step 4: We create a set of limit orders
-    // Each of the three users will place 3 Ask limit orders and 3 Bid limit orders
-    let limit_orders = [
-        ("ask-lim1", OrderSide::Ask, OrderType::Limit, Some(14), 30),
-        ("ask-lim2", OrderSide::Ask, OrderType::Limit, Some(13), 35),
-        ("ask-lim3", OrderSide::Ask, OrderType::Limit, Some(12), 25),
-        ("ask-lim4", OrderSide::Ask, OrderType::Limit, Some(11), 20),
-        ("ask-lim5", OrderSide::Ask, OrderType::Limit, Some(10), 30),
-        ("ask-lim6", OrderSide::Ask, OrderType::Limit, Some(9), 40),
-        /////////////
-        ("bid-lim1", OrderSide::Bid, OrderType::Limit, Some(8), 20),
-        ("bid-lim2", OrderSide::Bid, OrderType::Limit, Some(7), 15),
-        ("bid-lim3", OrderSide::Bid, OrderType::Limit, Some(6), 25),
-        ("bid-lim4", OrderSide::Bid, OrderType::Limit, Some(5), 20),
-        ("bid-lim5", OrderSide::Bid, OrderType::Limit, Some(4), 15),
-        ("bid-lim6", OrderSide::Bid, OrderType::Limit, Some(3), 10),
+    let limit_orders = vec![
+        OrderSpec {
+            id: "ask-lim1",
+            side: OrderSide::Ask,
+            price: Some(14),
+            quantity: 30,
+        },
+        OrderSpec {
+            id: "ask-lim2",
+            side: OrderSide::Ask,
+            price: Some(13),
+            quantity: 35,
+        },
+        OrderSpec {
+            id: "ask-lim3",
+            side: OrderSide::Ask,
+            price: Some(12),
+            quantity: 25,
+        },
+        OrderSpec {
+            id: "ask-lim4",
+            side: OrderSide::Ask,
+            price: Some(11),
+            quantity: 20,
+        },
+        OrderSpec {
+            id: "ask-lim5",
+            side: OrderSide::Ask,
+            price: Some(10),
+            quantity: 30,
+        },
+        OrderSpec {
+            id: "ask-lim6",
+            side: OrderSide::Ask,
+            price: Some(9),
+            quantity: 40,
+        },
+        OrderSpec {
+            id: "bid-lim1",
+            side: OrderSide::Bid,
+            price: Some(8),
+            quantity: 20,
+        },
+        OrderSpec {
+            id: "bid-lim2",
+            side: OrderSide::Bid,
+            price: Some(7),
+            quantity: 15,
+        },
+        OrderSpec {
+            id: "bid-lim3",
+            side: OrderSide::Bid,
+            price: Some(6),
+            quantity: 25,
+        },
+        OrderSpec {
+            id: "bid-lim4",
+            side: OrderSide::Bid,
+            price: Some(5),
+            quantity: 20,
+        },
+        OrderSpec {
+            id: "bid-lim5",
+            side: OrderSide::Bid,
+            price: Some(4),
+            quantity: 15,
+        },
+        OrderSpec {
+            id: "bid-lim6",
+            side: OrderSide::Bid,
+            price: Some(3),
+            quantity: 10,
+        },
     ];
 
-    for (i, (order_id, side, order_type, price, quantity)) in limit_orders.iter().enumerate() {
-        let user = users[i % users.len()];
-
-        let user_index = users
-            .iter()
-            .position(|candidate| *candidate == user)
-            .expect("user index");
-        let signer = &signers[user_index];
-        let user_info = full.get_user_info(user).expect("user info for signature");
-        let msg = format!("{}:{}:create_order:{}", user, user_info.nonce, order_id);
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
+    for (index, spec) in limit_orders.iter().enumerate() {
+        let user = users[index % users.len()];
+        let order = Order {
+            order_id: spec.id.to_string(),
+            order_side: spec.side.clone(),
+            order_type: OrderType::Limit,
+            price: spec.price,
+            pair: pair.clone(),
+            quantity: spec.quantity,
         };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
 
-        run_action(
-            &mut light,
-            &mut full,
-            user,
-            PermissionnedOrderbookAction::CreateOrder(Order {
-                order_id: order_id.to_string(),
-                order_side: side.clone(),
-                order_type: order_type.clone(),
-                price: *price,
-                pair: pair.clone(),
-                quantity: *quantity,
-            }),
-            private_payload,
-        );
+        submit_signed_order(&mut light, &mut full, &users, &signers, user, order);
 
-        // Update expected balances
-        expected_balances
-            .entry(user)
-            .and_modify(|entry| match side {
-                OrderSide::Ask => {
-                    entry.base -= *quantity as i128;
-                }
-                OrderSide::Bid => {
-                    let price = price.expect("bid limit order should have price");
-                    entry.quote -= (*quantity * price) as i128;
-                }
-            });
+        match spec.side {
+            OrderSide::Ask => apply_balance_deltas(
+                &mut expected_balances,
+                &[delta(user, -qty(spec.quantity), 0)],
+            ),
+            OrderSide::Bid => {
+                let price = spec.price.expect("bid limit order should have price");
+                apply_balance_deltas(
+                    &mut expected_balances,
+                    &[delta(user, 0, -notional(spec.quantity, price))],
+                );
+            }
+        }
     }
 
-    let buy_orders = light.order_manager.buy_orders.get(&(pair)).unwrap().clone();
+    let buy_orders = light.order_manager.buy_orders.get(&pair).unwrap().clone();
     let sell_orders = light.order_manager.sell_orders.get(&pair).unwrap().clone();
 
     let all_order_ids: Vec<String> = buy_orders
@@ -535,9 +473,9 @@ fn test_complex_multi_user_orderbook() {
         .cloned()
         .collect();
 
-    let limit_order_ids: std::collections::HashSet<String> = limit_orders
+    let limit_order_ids: HashSet<String> = limit_orders
         .iter()
-        .map(|(order_id, _, _, _, _)| order_id.to_string())
+        .map(|spec| spec.id.to_string())
         .collect();
 
     for order_id in &all_order_ids {
@@ -552,7 +490,7 @@ fn test_complex_multi_user_orderbook() {
         "Mismatch in number of orders in order book"
     );
 
-    assert_balances(
+    assert_stage(
         "after limit orders",
         &light,
         &full,
@@ -562,542 +500,237 @@ fn test_complex_multi_user_orderbook() {
         &quote_token,
     );
 
-    // Step 5: Create a market order that will partially match ask-lim6
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after partially filling ask-lim6",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
             pair: pair.clone(),
-            quantity: 20, // this consumes half of "ask-lim6"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
+            quantity: 20,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, qty(20), -notional(20, 9)),
+            delta(charlie, 0, notional(20, 9)),
+        ],
+    );
 
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Ask of 20 consumes hald of "ask-lim6" (20@9)
-            entry.base += 20;
-            entry.quote -= (20 * 9) as i128;
-        });
-
-        expected_balances.entry("charlie").and_modify(|entry| {
-            entry.quote += (20 * 9) as i128;
-        });
-
-        assert_balances(
-            "after market order 1",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
-
-    // Step 6: Create a market order that will fully match ask-lim6 and partially match ask-lim5
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after clearing ask-lim6 and half of ask-lim5",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
             pair: pair.clone(),
-            quantity: 20 + 15, // this consumes last half of "ask-lim6" and half of "ask-lim5"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
+            quantity: 35,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, qty(20), -notional(20, 9)),
+            delta(alice, qty(15), -notional(15, 10)),
+            delta(charlie, 0, notional(20, 9)),
+            delta(bob, 0, notional(15, 10)),
+        ],
+    );
 
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Ask of 20 consumes half of "ask-lim6" (20@9)
-            entry.base += 20;
-            entry.quote -= (20 * 9) as i128;
-            // Market Ask of 15 consumes half of "ask-lim5" (15@10)
-            entry.base += 15;
-            entry.quote -= (15 * 10) as i128;
-        });
-
-        expected_balances.entry("charlie").and_modify(|entry| {
-            entry.quote += (20 * 9) as i128;
-        });
-        expected_balances.entry("bob").and_modify(|entry| {
-            entry.quote += (15 * 10) as i128;
-        });
-
-        assert_balances(
-            "after market order 2",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
-
-    // Step 7: Create a market order that will fully match ask-lim5
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after clearing ask-lim5",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
             pair: pair.clone(),
-            quantity: 15, // this consumes last half of "ask-lim5"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
+            quantity: 15,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, qty(15), -notional(15, 10)),
+            delta(bob, 0, notional(15, 10)),
+        ],
+    );
 
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Ask of 15 consumes half of "ask-lim5" (15@10)
-            entry.base += 15;
-            entry.quote -= (15 * 10) as i128;
-        });
-
-        expected_balances.entry("bob").and_modify(|entry| {
-            entry.quote += (15 * 10) as i128;
-        });
-
-        assert_balances(
-            "after market order 3",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
-
-    // Step 8: Create a market order that will partially match ask-lim4 (own user with own order)
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after self match on ask-lim4",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
             pair: pair.clone(),
-            quantity: 10, // this consumes half of "ask-lim4"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
+            quantity: 10,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, qty(10), -notional(10, 11)),
+            delta(alice, 0, notional(10, 11)),
+        ],
+    );
 
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Ask of 10 consumes half of "ask-lim4" (10@11)
-            entry.base += 10;
-            entry.quote -= (10 * 11) as i128;
-        });
-
-        expected_balances.entry("alice").and_modify(|entry| {
-            entry.quote += (10 * 11) as i128;
-        });
-
-        assert_balances(
-            "after market order 3",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
-
-    // Step 9: Create a market order that will execute all orders
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after clearing remaining ask orders",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
             pair: pair.clone(),
-            quantity: 10 + 25 + 35 + 30, // this consumes half of "ask-lim4", and fully ask-lim3, ask-lim2 and ask-lim1
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
-
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Ask of 10 consumes half of "ask-lim4" (10@11)
-            entry.base += 10;
-            entry.quote -= (10 * 11) as i128;
-            // Market Ask of 10 consumes half of "ask-lim3" (25@12)
-            entry.base += 25;
-            entry.quote -= (25 * 12) as i128;
-            // Market Ask of 10 consumes half of "ask-lim2" (35@13)
-            entry.base += 35;
-            entry.quote -= (35 * 13) as i128;
-            // Market Ask of 10 consumes half of "ask-lim1" (30@14)
-            entry.base += 30;
-            entry.quote -= (30 * 14) as i128;
-        });
-
-        expected_balances.entry("alice").and_modify(|entry| {
-            entry.quote += (10 * 11) as i128;
-            entry.quote += (30 * 14) as i128;
-        });
-
-        expected_balances.entry("bob").and_modify(|entry| {
-            entry.quote += (35 * 13) as i128;
-        });
-
-        expected_balances.entry("charlie").and_modify(|entry| {
-            entry.quote += (25 * 12) as i128;
-        });
-
-        assert_balances(
-            "after market order 4",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
+            quantity: 100,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, qty(10), -notional(10, 11)),
+            delta(alice, qty(25), -notional(25, 12)),
+            delta(alice, qty(35), -notional(35, 13)),
+            delta(alice, qty(30), -notional(30, 14)),
+            delta(alice, 0, notional(10, 11)),
+            delta(alice, 0, notional(30, 14)),
+            delta(bob, 0, notional(35, 13)),
+            delta(charlie, 0, notional(25, 12)),
+        ],
+    );
 
     let sell_orders = light.order_manager.sell_orders.get(&pair).unwrap().clone();
     assert!(sell_orders.is_empty(), "all sell orders should be filled");
 
-    // Step 10 Create a market order that will partially match bid-lim1
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after partially filling bid-lim1",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
             pair: pair.clone(),
-            quantity: 10, // this consumes half of "bid-lim1"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
+            quantity: 10,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, -qty(10), notional(10, 8)),
+            delta(alice, qty(10), 0),
+        ],
+    );
 
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Bid of 10 consumes half of "bid-lim1" (10@8)
-            entry.base -= 10;
-            entry.quote += 10 * 8;
-        });
-
-        expected_balances
-            .entry("alice")
-            .and_modify(|entry| entry.base += 10);
-
-        assert_balances(
-            "after market order 5",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
-
-    // Step 11 Create a market order that will fully match bid-lim1 and partually match bid-lim2
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after clearing bid-lim1 and half of bid-lim2",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
             pair: pair.clone(),
-            quantity: 10 + 10, // this consumes last half of "bid-lim1" and half of "bid-lim2"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
+            quantity: 20,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, -qty(10), notional(10, 8)),
+            delta(alice, -qty(10), notional(10, 7)),
+            delta(alice, qty(10), 0),
+            delta(bob, qty(10), 0),
+        ],
+    );
 
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Bid of 20 consumes half of "bid-lim1" (10@8)
-            entry.base -= 10;
-            entry.quote += 10 * 8;
-            // Market Bid of 10 consumes half of "bid-lim2" (10@7)
-            entry.base -= 10;
-            entry.quote += 10 * 7;
-        });
-
-        expected_balances.entry("alice").and_modify(|entry| {
-            entry.base += 10;
-        });
-        expected_balances.entry("bob").and_modify(|entry| {
-            entry.base += 10;
-        });
-
-        assert_balances(
-            "after market order 6",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
-
-    // Step 12 Create a market order that will fully match bid-lim2
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after clearing bid-lim2",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
             pair: pair.clone(),
-            quantity: 5, // this consumes last half of "bid-lim2"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
+            quantity: 5,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[delta(alice, -qty(5), notional(5, 7)), delta(bob, qty(5), 0)],
+    );
 
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Bid of 5 consumes half of "bid-lim2" (5@7)
-            entry.base -= 5;
-            entry.quote += 5 * 7;
-        });
-
-        expected_balances.entry("bob").and_modify(|entry| {
-            entry.base += 5;
-        });
-
-        assert_balances(
-            "after market order 7",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
-
-    // Step 13 Create a market order that will execute all orders
-    {
-        let market_order = Order {
+    execute_market_order(
+        "after clearing remaining bid orders",
+        Order {
             order_id: "market1".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
             pair: pair.clone(),
-            quantity: 25 + 20 + 15 + 10, // this consumes "bid-lim3", "bid-lim4", "bid-lim5" and "bid-lim6"
-        };
-        let alice = users[0];
-        let signer = &signers[0];
-        let user_info = full.get_user_info(alice).expect("user info for signature");
-
-        let msg = format!(
-            "{}:{}:create_order:{}",
-            alice, user_info.nonce, market_order.order_id
-        );
-        let signature = signer.sign(&msg);
-        let private_input = CreateOrderPrivateInput {
-            signature,
-            public_key: signer.public_key.clone(),
-        };
-        let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
-        run_action(
-            &mut light,
-            &mut full,
-            alice,
-            PermissionnedOrderbookAction::CreateOrder(market_order),
-            private_payload,
-        );
-
-        // Update expected balances
-        expected_balances.entry(alice).and_modify(|entry| {
-            // Market Bid of 5 consumes half of "bid-lim3" (25@6)
-            entry.base -= 25;
-            entry.quote += 25 * 6;
-            // Market Bid of 5 consumes half of "bid-lim4" (20@5)
-            entry.base -= 20;
-            entry.quote += 20 * 5;
-            // Market Bid of 5 consumes half of "bid-lim5" (15@4)
-            entry.base -= 15;
-            entry.quote += 15 * 4;
-            // Market Bid of 5 consumes half of "bid-lim6" (10@3)
-            entry.base -= 10;
-            entry.quote += 10 * 3;
-        });
-
-        expected_balances.entry("charlie").and_modify(|entry| {
-            entry.base += 25;
-        });
-        expected_balances.entry("alice").and_modify(|entry| {
-            entry.base += 20;
-        });
-        expected_balances.entry("bob").and_modify(|entry| {
-            entry.base += 15;
-        });
-        expected_balances.entry("charlie").and_modify(|entry| {
-            entry.base += 10;
-        });
-
-        assert_balances(
-            "after market order 8",
-            &light,
-            &full,
-            &expected_balances,
-            &users,
-            &base_token,
-            &quote_token,
-        );
-    }
+            quantity: 70,
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_token,
+        &quote_token,
+        &[
+            delta(alice, -qty(25), notional(25, 6)),
+            delta(alice, -qty(20), notional(20, 5)),
+            delta(alice, -qty(15), notional(15, 4)),
+            delta(alice, -qty(10), notional(10, 3)),
+            delta(charlie, qty(25), 0),
+            delta(alice, qty(20), 0),
+            delta(bob, qty(15), 0),
+            delta(charlie, qty(10), 0),
+        ],
+    );
 
     let sell_orders = light.order_manager.sell_orders.get(&pair).unwrap().clone();
     assert!(sell_orders.is_empty(), "all sell orders should be filled");
