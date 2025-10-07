@@ -125,6 +125,7 @@ pub struct PairInfo {
     sqlx(type_name = "order_side", rename_all = "lowercase")
 )]
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum OrderSide {
     Bid, // Buy
     Ask, // Sell
@@ -136,11 +137,13 @@ pub enum OrderSide {
     sqlx(type_name = "order_type", rename_all = "lowercase")
 )]
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum OrderType {
     Market,
     Limit,
     Stop,
     StopLimit,
+    StopMarket,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]

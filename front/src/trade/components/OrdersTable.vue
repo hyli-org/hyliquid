@@ -44,35 +44,24 @@ const handlePageSizeChange = async (event: Event) => {
             <table class="w-full text-sm">
                 <thead class="sticky top-0 bg-neutral-900/60 text-neutral-400">
                     <tr>
-                        <th
-                            class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
+                        <th class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
                             @click="handleColumnSort('created_at')"
-                            :title="`Sort by Created At ${getSortIcon('created_at')}`"
-                        >
+                            :title="`Sort by Created At ${getSortIcon('created_at')}`">
                             Created At {{ getSortIcon("created_at") }}
                         </th>
                         <th class="px-3 py-2 text-left font-medium">Symbol</th>
                         <th class="px-3 py-2 text-left font-medium">Side</th>
-                        <th
-                            class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
-                            @click="handleColumnSort('qty')"
-                            :title="`Sort by Quantity ${getSortIcon('qty')}`"
-                        >
+                        <th class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
+                            @click="handleColumnSort('qty')" :title="`Sort by Quantity ${getSortIcon('qty')}`">
                             Qty {{ getSortIcon("qty") }}
                         </th>
                         <th class="px-3 py-2 text-left font-medium">Qty Remaining</th>
-                        <th
-                            class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
-                            @click="handleColumnSort('price')"
-                            :title="`Sort by Price ${getSortIcon('price')}`"
-                        >
+                        <th class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
+                            @click="handleColumnSort('price')" :title="`Sort by Price ${getSortIcon('price')}`">
                             Price {{ getSortIcon("price") }}
                         </th>
-                        <th
-                            class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
-                            @click="handleColumnSort('status')"
-                            :title="`Sort by Status ${getSortIcon('status')}`"
-                        >
+                        <th class="px-3 py-2 text-left font-medium cursor-pointer hover:text-neutral-200 select-none"
+                            @click="handleColumnSort('status')" :title="`Sort by Status ${getSortIcon('status')}`">
                             Status {{ getSortIcon("status") }}
                         </th>
                     </tr>
@@ -90,7 +79,7 @@ const handlePageSizeChange = async (event: Event) => {
                     <tr v-for="o in orders" :key="o.symbol + o.price + o.type" class="border-t border-neutral-900">
                         <td class="px-3 py-2">{{ o.created_at.toLocaleString() }}</td>
                         <td class="px-3 py-2">{{ o.symbol }}</td>
-                        <td class="px-3 py-2" :class="o.side === 'Bid' ? 'text-emerald-400' : 'text-rose-400'">
+                        <td class="px-3 py-2" :class="o.side === 'bid' ? 'text-emerald-400' : 'text-rose-400'">
                             {{ o.side }}
                         </td>
                         <td class="px-3 py-2 tabular-nums">{{ instrumentsState.toRealQty(o.symbol, o.qty) }}</td>
@@ -108,19 +97,14 @@ const handlePageSizeChange = async (event: Event) => {
         </div>
 
         <!-- Pagination controls -->
-        <div
-            v-if="pagination"
-            class="flex items-center justify-between p-3 border-t border-neutral-800 bg-neutral-900/30"
-        >
+        <div v-if="pagination"
+            class="flex items-center justify-between p-3 border-t border-neutral-800 bg-neutral-900/30">
             <div class="flex items-center gap-4">
                 <!-- Page size selector -->
                 <div class="flex items-center gap-2">
                     <label class="text-sm text-neutral-400">Per page:</label>
-                    <select
-                        :value="activityState.ordersPageSize"
-                        @change="handlePageSizeChange"
-                        class="px-2 py-1 text-sm bg-neutral-800 border border-neutral-700 rounded text-neutral-200"
-                    >
+                    <select :value="activityState.ordersPageSize" @change="handlePageSizeChange"
+                        class="px-2 py-1 text-sm bg-neutral-800 border border-neutral-700 rounded text-neutral-200">
                         <option v-for="size in pageSizeOptions" :key="size" :value="size">
                             {{ size }}
                         </option>
@@ -138,11 +122,8 @@ const handlePageSizeChange = async (event: Event) => {
 
             <!-- Pagination navigation -->
             <div v-if="pagination.total_pages > 1" class="flex items-center gap-2">
-                <button
-                    @click="prevOrdersPage"
-                    :disabled="!pagination.has_prev"
-                    class="px-3 py-1 text-sm bg-neutral-800 border border-neutral-700 rounded text-neutral-200 hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
+                <button @click="prevOrdersPage" :disabled="!pagination.has_prev"
+                    class="px-3 py-1 text-sm bg-neutral-800 border border-neutral-700 rounded text-neutral-200 hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed">
                     Previous
                 </button>
 
@@ -150,11 +131,8 @@ const handlePageSizeChange = async (event: Event) => {
                     Page {{ pagination.page }} of {{ pagination.total_pages }}
                 </span>
 
-                <button
-                    @click="nextOrdersPage"
-                    :disabled="!pagination.has_next"
-                    class="px-3 py-1 text-sm bg-neutral-800 border border-neutral-700 rounded text-neutral-200 hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
+                <button @click="nextOrdersPage" :disabled="!pagination.has_next"
+                    class="px-3 py-1 text-sm bg-neutral-800 border border-neutral-700 rounded text-neutral-200 hover:bg-neutral-700 disabled:opacity-50 disabled:cursor-not-allowed">
                     Next
                 </button>
             </div>

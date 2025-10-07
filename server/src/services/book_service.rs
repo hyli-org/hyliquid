@@ -36,6 +36,7 @@ impl BookWriterService {
         }
     }
 
+    #[tracing::instrument(skip(self))]
     pub async fn write_events(
         &self,
         user: &str,

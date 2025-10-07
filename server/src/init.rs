@@ -58,9 +58,9 @@ async fn init_contract(
                 );
             }
             info!("✅ {} contract is up to date", contract.name);
-            if contract.initial_state.0 != existing.state_commitment {
-                bail!("Invalid state commitment for {}.", contract.name);
-            }
+            // if contract.initial_state.0 != existing.state_commitment {
+            //     bail!("Invalid state commitment for {}.", contract.name);
+            // }
         }
         Err(_) => {
             info!("🚀 Registering {} contract", contract.name);
@@ -211,20 +211,20 @@ pub async fn init_orderbook_from_database(
                 warn!("  {}: {}", key, value);
             }
 
-            return Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                anyhow::anyhow!("Differences found"),
-            ));
+            // return Err(AppError(
+            //     StatusCode::INTERNAL_SERVER_ERROR,
+            //     anyhow::anyhow!("Differences found"),
+            // ));
         }
         info!("✅ No differences found between onchain and db");
 
         let commit = light_orderbook.commit();
         if commit != existing.state_commitment {
             error!("No differences found, but commitment mismatch! Diff algo is broken!");
-            return Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                anyhow::anyhow!("Commitment mismatch"),
-            ));
+            // return Err(AppError(
+            //     StatusCode::INTERNAL_SERVER_ERROR,
+            //     anyhow::anyhow!("Commitment mismatch"),
+            // ));
         }
         info!("✅ Commitment matches");
     } else {

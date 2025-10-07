@@ -75,6 +75,40 @@ async function main() {
     .use(wsRoute)
     //@ts-ignore
     .use(createApiRoutes(bookService, userService, assetService))
+    // Proxy all unknown requests to the Rust server
+    .all(
+      "/*",
+      async ({ request, path }: { request: Request; path: string }) => {
+        const targetUrl = `${config.serverBaseUrl}${path}`;
+
+        try {
+          // Forward the request to the Rust server
+          const response = await fetch(targetUrl, {
+            method: request.method,
+            headers: request.headers,
+            body:
+              request.method !== "GET" && request.method !== "HEAD"
+                ? await request.blob()
+                : undefined,
+          });
+          console.log(
+            `🔄 Forwarded request ${request.method} ${path} to ${targetUrl}`
+          );
+
+          // Forward the response back to the client
+          return new Response(response.body, {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+          });
+        } catch (error) {
+          console.error(`Proxy error for ${targetUrl}:`, error);
+          return new Response("Proxy Error: Unable to forward request", {
+            status: 502,
+          });
+        }
+      }
+    )
     .onError(({ error }: { error: Error }) => {
       console.error("Unhandled error:", error);
     });
@@ -89,6 +123,7 @@ async function main() {
   console.log(
     `🔌 WebSocket server running at ws://${config.host}:${config.port}`
   );
+  console.log(`🔄 Proxying unknown requests to ${config.serverBaseUrl}`);
 
   // Display available endpoints dynamically
   try {

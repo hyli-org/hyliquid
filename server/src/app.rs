@@ -32,6 +32,7 @@ use sdk::{BlobTransaction, ContractName, LaneId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use tracing::Instrument;
 
 use crate::{
     prover::OrderbookProverRequest, services::asset_service::AssetService,
@@ -222,6 +223,8 @@ async fn get_nonce(
     Ok(Json(nonce))
 }
 
+#[axum::debug_handler]
+#[tracing::instrument(skip(ctx))]
 async fn create_pair(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -304,6 +307,7 @@ async fn create_pair(
     .await
 }
 
+#[tracing::instrument(skip(ctx))]
 async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -346,6 +350,7 @@ async fn add_session_key(
     .await
 }
 
+#[tracing::instrument(skip(ctx))]
 async fn deposit(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -389,6 +394,7 @@ async fn deposit(
     .await
 }
 
+#[tracing::instrument(skip(ctx))]
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -431,6 +437,7 @@ async fn create_order(
     .await
 }
 
+#[tracing::instrument(skip(ctx))]
 async fn cancel_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -488,6 +495,7 @@ async fn cancel_order(
     .await
 }
 
+#[tracing::instrument(skip(ctx))]
 async fn withdraw(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -546,6 +554,7 @@ async fn withdraw(
     .await
 }
 
+#[tracing::instrument(skip(ctx, action_private_input))]
 async fn process_orderbook_action<T: BorshSerialize>(
     user_info: UserInfo,
     events: Vec<OrderbookEvent>,
@@ -556,16 +565,16 @@ async fn process_orderbook_action<T: BorshSerialize>(
     tracing::info!("Orderbook execution results: {:?}", events);
     let book_service = ctx.book_writer_service.lock().await;
 
-    let tx_hash = ctx
-        .client
-        .send_tx_blob(BlobTransaction::new(
-            "orderbook@orderbook",
-            vec![
-                OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone())
-                    .as_blob(ctx.orderbook_cn.clone()),
-            ],
-        ))
-        .await?;
+    let tx_hash =
+        ctx.client
+            .send_tx_blob(BlobTransaction::new(
+                "orderbook@orderbook",
+                vec![
+                    OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone())
+                        .as_blob(ctx.orderbook_cn.clone()),
+                ],
+            ))
+    .await?;
 
     book_service
         .write_events(&user_info.user, tx_hash.clone(), events.clone())
