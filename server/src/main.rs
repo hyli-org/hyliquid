@@ -224,7 +224,7 @@ async fn main() -> Result<()> {
 
     let node_client =
         Arc::new(NodeApiHttpClient::new(config.node_url.clone()).context("build node client")?);
-    let indexer_client = Arc::new(
+    let _indexer_client = Arc::new(
         IndexerApiHttpClient::new(config.indexer_url.clone()).context("build indexer client")?,
     );
 
@@ -281,14 +281,7 @@ async fn main() -> Result<()> {
         initial_state: light_state.commit(),
     }];
 
-    match server::init::init_node(
-        node_client.clone(),
-        indexer_client.clone(),
-        contracts,
-        !args.no_check,
-    )
-    .await
-    {
+    match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {
         Ok(_) => {}
         Err(e) => {
             error!("Error initializing node: {:?}", e);
