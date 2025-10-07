@@ -29,7 +29,7 @@ use sp1_sdk::{Prover, ProverClient};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::error;
+use tracing::{error, level_filters::LevelFilter};
 use tracing_perfetto_sdk_schema as schema;
 use tracing_perfetto_sdk_schema::trace_config;
 
@@ -191,8 +191,10 @@ fn init_tracing() {
     let _ = global::set_tracer_provider(tracer_provider);
 
     // Configure tracing subscriber with env filter
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info,tower_http=debug,server=debug"));
+    let env_filter = EnvFilter::builder()
+        .with_default_directive(LevelFilter::INFO.into())
+        .from_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
 
     // Initialize the tracing subscriber with both console output and OTLP
     tracing_subscriber::registry()
