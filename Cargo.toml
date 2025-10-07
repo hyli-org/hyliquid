@@ -13,6 +13,8 @@ sp1-sdk = { version = "5.0.3", default-features = false }
 sp1-helper = "5.0.3"
 sp1-zkvm = { version = "5.0.3", default-features = false }
 
+tracing = "0.1.41"
+
 contracts = { path = "contracts", default-features = false, package = "contracts" }
 orderbook = { path = "contracts/orderbook", package = "orderbook" }
 server = { path = "server", default-features = false, package = "server" }

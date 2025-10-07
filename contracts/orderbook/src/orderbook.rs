@@ -204,6 +204,7 @@ pub enum OrderbookEvent {
 
 /// impl of functions for actions execution
 impl Orderbook {
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn create_pair(
         &mut self,
         pair: &TokenPair,
@@ -248,6 +249,7 @@ impl Orderbook {
         }])
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn add_session_key(
         &mut self,
         mut user_info: UserInfo,
@@ -298,6 +300,7 @@ impl Orderbook {
         Ok(events)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn deposit(
         &mut self,
         token: &str,
@@ -325,6 +328,7 @@ impl Orderbook {
         Ok(events)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn withdraw(
         &mut self,
         token: &str,
@@ -360,6 +364,7 @@ impl Orderbook {
         Ok(events)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn cancel_order(
         &mut self,
         order_id: OrderId,
@@ -413,6 +418,7 @@ impl Orderbook {
         Ok(vec![])
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn execute_order(
         &mut self,
         user_info: &UserInfo,

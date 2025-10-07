@@ -27,6 +27,7 @@ impl OrderManager {
     }
 
     /// Inserts a new order into the appropriate data structures
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn insert_order(
         &mut self,
         order: &Order,
@@ -69,6 +70,7 @@ impl OrderManager {
     }
 
     /// Cancels an order and removes it from data structures
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn cancel_order(&mut self, order_id: &OrderId) -> Result<Vec<OrderbookEvent>, String> {
         let order = self
             .orders
@@ -103,6 +105,7 @@ impl OrderManager {
     }
 
     /// Executes an order and returns generated events
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn execute_order(
         &mut self,
         user_info_key: &H256,
@@ -216,6 +219,7 @@ impl OrderManager {
         Ok(events)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn clear_executed_orders(&mut self, events: &[OrderbookEvent]) {
         for event in events {
             if let OrderbookEvent::OrderExecuted { order_id, .. } = event {
