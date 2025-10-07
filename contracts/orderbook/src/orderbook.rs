@@ -146,17 +146,6 @@ pub enum OrderType {
     StopMarket,
 }
 
-/// Context struct for creating an order, containing all necessary proofs and mappings.
-#[derive(Debug, Clone)]
-pub struct CreateOrderCtx {
-    pub users_info: HashSet<UserInfo>,
-    pub users_info_proof: BorshableMerkleProof,
-    pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
-    pub balances: HashMap<TokenName, HashMap<UserInfo, Balance>>,
-    pub balances_proof: HashMap<TokenName, BorshableMerkleProof>,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub struct Order {
     pub order_id: OrderId,
@@ -509,9 +498,10 @@ impl Orderbook {
                                 as i128),
                             created_order.pair.1.clone(),
                         ),
-                        OrderSide::Ask => {
-                            (created_order.quantity as i128, created_order.pair.0.clone())
-                        }
+                        OrderSide::Ask => (
+                            -(created_order.quantity as i128),
+                            created_order.pair.0.clone(),
+                        ),
                     };
                     record_balance_change(
                         &mut balance_changes,
@@ -595,7 +585,7 @@ impl Orderbook {
                     executed_quantity,
                     ..
                 } => {
-                    let executed_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
+                    let updated_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
                             format!(
                                 "Executed order owner info (order_id: {order_id}) not found in order manager",
                             )
@@ -613,7 +603,7 @@ impl Orderbook {
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    executed_order_user_info,
+                                    updated_order_user_info,
                                     base_token,
                                     *executed_quantity as i128,
                                 )?;
@@ -629,7 +619,7 @@ impl Orderbook {
                                 touched_accounts
                                     .entry(quote_token.clone())
                                     .or_default()
-                                    .insert(*executed_order_user_info);
+                                    .insert(*updated_order_user_info);
                             }
                             OrderSide::Ask => {
                                 // Executed order owner receives quote token deducted to user
@@ -637,7 +627,7 @@ impl Orderbook {
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    executed_order_user_info,
+                                    updated_order_user_info,
                                     quote_token,
                                     (updated_order.price.unwrap() * executed_quantity / base_scale)
                                         as i128,
@@ -847,7 +837,7 @@ impl Orderbook {
                 let user_info = state
                     .users_info
                     .get(user)
-                    .ok_or_else(|| format!("No salt found for user '{user}'"))?;
+                    .ok_or_else(|| format!("User info for '{user}' not found"))?;
                 let key = user_info.get_key();
                 state.users_info_mt.get(&key).map_err(|e| {
                     format!(

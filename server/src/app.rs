@@ -425,14 +425,7 @@ async fn create_order(
         signature: auth.signature.expect("Missing signature in headers"),
     };
 
-    let orderbook_action = PermissionnedOrderbookAction::CreateOrder {
-        order_id: request.order_id,
-        order_side: request.order_side,
-        order_type: request.order_type,
-        price: request.price,
-        pair: request.pair,
-        quantity: request.quantity,
-    };
+    let orderbook_action = PermissionnedOrderbookAction::CreateOrder(request);
 
     process_orderbook_action(
         user_info,

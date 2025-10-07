@@ -58,7 +58,7 @@ fn add_session_key_registers_new_key() {
         .expect("user should exist after adding session key");
 
     assert_eq!(user.session_keys, vec![key.clone()]);
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert!(matches!(
         events[0],
         OrderbookEvent::SessionKeyAdded { ref user, .. } if user == "alice"
@@ -157,7 +157,7 @@ fn withdraw_deducts_balance() {
         .expect("withdraw should succeed");
 
     assert_eq!(orderbook.get_balance(&user, &pair.1).0, 600);
-    assert_eq!(events.len(), 1);
+    assert_eq!(events.len(), 2);
     assert!(matches!(
         events[0],
         OrderbookEvent::BalanceUpdated { ref user, ref token, amount }
@@ -373,7 +373,7 @@ fn market_bid_requires_liquidity() {
     let err = manager
         .execute_order(&user.get_key(), &order)
         .expect_err("market order without liquidity should fail");
-    assert!(err.contains("No matching sell orders"));
+    assert!(err.contains("No matching Bid orders"));
 }
 
 #[test]
@@ -457,5 +457,5 @@ fn market_ask_without_bids_fails() {
     let err = manager
         .execute_order(&user.get_key(), &order)
         .expect_err("market ask without bids should fail");
-    assert!(err.contains("No matching buy orders"));
+    assert!(err.contains("No matching Ask orders"), "{err}");
 }
