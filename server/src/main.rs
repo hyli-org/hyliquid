@@ -23,7 +23,7 @@ use server::{
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
     conf::Conf,
     database::{DatabaseModule, DatabaseModuleCtx},
-    prover::OrderbookProverCtx,
+    prover::{OrderbookProverCtx, OrderbookProverModule},
 };
 use sp1_sdk::{Prover, ProverClient};
 use sqlx::postgres::{PgPool, PgPoolOptions};
@@ -47,6 +47,9 @@ pub struct Args {
 
     #[arg(long, default_value = "false")]
     pub no_check: bool,
+
+    #[arg(long, default_value = "false")]
+    pub no_prover: bool,
 
     /// Clean the data directory before starting the server
     /// Argument used by hylix tests commands
@@ -258,6 +261,7 @@ async fn main() -> Result<()> {
         user_service.clone(),
         book_service.clone(),
         &node_client,
+        !args.no_check,
     )
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;
@@ -275,7 +279,14 @@ async fn main() -> Result<()> {
         initial_state: light_state.commit(),
     }];
 
-    match server::init::init_node(node_client.clone(), indexer_client.clone(), contracts).await {
+    match server::init::init_node(
+        node_client.clone(),
+        indexer_client.clone(),
+        contracts,
+        !args.no_check,
+    )
+    .await
+    {
         Ok(_) => {}
         Err(e) => {
             error!("Error initializing node: {:?}", e);
@@ -308,7 +319,7 @@ async fn main() -> Result<()> {
         client: node_client.clone(),
     });
 
-    let _orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
+    let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
         node_client: node_client.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
@@ -326,9 +337,12 @@ async fn main() -> Result<()> {
     handler
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
         .await?;
-    //   handler
-    //     .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
-    //   .await?;
+
+    if !args.no_prover {
+        handler
+            .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
+            .await?;
+    }
 
     handler
         .build_module::<DatabaseModule>(database_ctx.clone())

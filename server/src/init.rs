@@ -33,9 +33,10 @@ pub async fn init_node(
     node: Arc<NodeApiHttpClient>,
     indexer: Arc<IndexerApiHttpClient>,
     contracts: Vec<ContractInit>,
+    check_commitment: bool,
 ) -> Result<()> {
     for contract in contracts {
-        init_contract(&node, &indexer, contract).await?;
+        init_contract(&node, &indexer, contract, check_commitment).await?;
     }
     Ok(())
 }
@@ -44,6 +45,7 @@ async fn init_contract(
     node: &NodeApiHttpClient,
     indexer: &IndexerApiHttpClient,
     contract: ContractInit,
+    check_commitment: bool,
 ) -> Result<()> {
     match indexer.get_indexer_contract(&contract.name).await {
         Ok(existing) => {
@@ -58,9 +60,9 @@ async fn init_contract(
                 );
             }
             info!("✅ {} contract is up to date", contract.name);
-            // if contract.initial_state.0 != existing.state_commitment {
-            //     bail!("Invalid state commitment for {}.", contract.name);
-            // }
+            if check_commitment && contract.initial_state.0 != existing.state_commitment {
+                bail!("Invalid state commitment for {}.", contract.name);
+            }
         }
         Err(_) => {
             info!("🚀 Registering {} contract", contract.name);
@@ -103,6 +105,7 @@ pub async fn init_orderbook_from_database(
     user_service: Arc<RwLock<UserService>>,
     book_service: Arc<RwLock<BookService>>,
     node: &NodeApiHttpClient,
+    check_commitment: bool,
 ) -> Result<(Orderbook, Orderbook), AppError> {
     let asset_service = asset_service.read().await;
     let user_service = user_service.read().await;
@@ -201,6 +204,11 @@ pub async fn init_orderbook_from_database(
         ));
     }
 
+    if !check_commitment {
+        info!("🔍 Checking commitment is disabled, skipping");
+        return Ok((light_orderbook, full_orderbook));
+    }
+
     if let Ok(existing) = node.get_contract(ContractName::from("orderbook")).await {
         let onchain = Orderbook::from(existing.state_commitment.clone());
         // Log existing & new orderbook and spot diff
@@ -211,20 +219,20 @@ pub async fn init_orderbook_from_database(
                 warn!("  {}: {}", key, value);
             }
 
-            // return Err(AppError(
-            //     StatusCode::INTERNAL_SERVER_ERROR,
-            //     anyhow::anyhow!("Differences found"),
-            // ));
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow::anyhow!("Differences found"),
+            ));
         }
         info!("✅ No differences found between onchain and db");
 
         let commit = light_orderbook.commit();
         if commit != existing.state_commitment {
             error!("No differences found, but commitment mismatch! Diff algo is broken!");
-            // return Err(AppError(
-            //     StatusCode::INTERNAL_SERVER_ERROR,
-            //     anyhow::anyhow!("Commitment mismatch"),
-            // ));
+            return Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow::anyhow!("Commitment mismatch"),
+            ));
         }
         info!("✅ Commitment matches");
     } else {
