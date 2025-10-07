@@ -22,12 +22,13 @@ use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
     conf::Conf,
+    database::{DatabaseModule, DatabaseModuleCtx},
     prover::OrderbookProverCtx,
 };
 use sp1_sdk::{Prover, ProverClient};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tracing::error;
 use tracing_perfetto_sdk_schema as schema;
 use tracing_perfetto_sdk_schema::trace_config;
@@ -230,14 +231,6 @@ async fn main() -> Result<()> {
     let asset_service = Arc::new(RwLock::new(
         server::services::asset_service::AssetService::new(pool.clone()).await,
     ));
-    let book_writer_service = Arc::new(Mutex::new(
-        server::services::book_service::BookWriterService::new(
-            pool.clone(),
-            user_service.clone(),
-            asset_service.clone(),
-            config.trigger_url.clone(),
-        ),
-    ));
     let book_service = Arc::new(RwLock::new(
         server::services::book_service::BookService::new(pool.clone()),
     ));
@@ -301,13 +294,18 @@ async fn main() -> Result<()> {
     });
 
     let orderbook_ctx = Arc::new(OrderbookModuleCtx {
-        node_client: node_client.clone(),
         api: api_ctx.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         lane_id: validator_lane_id.clone(),
         default_state: light_state.clone(),
-        book_writer_service,
-        asset_service,
+        asset_service: asset_service.clone(),
+    });
+
+    let database_ctx = Arc::new(DatabaseModuleCtx {
+        pool: pool.clone(),
+        user_service: user_service.clone(),
+        asset_service: asset_service.clone(),
+        client: node_client.clone(),
     });
 
     let _orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
@@ -331,6 +329,10 @@ async fn main() -> Result<()> {
     //   handler
     //     .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
     //   .await?;
+
+    handler
+        .build_module::<DatabaseModule>(database_ctx.clone())
+        .await?;
 
     handler
         .build_module::<ApiModule>(api_module_ctx.clone())
