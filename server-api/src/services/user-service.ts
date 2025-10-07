@@ -14,7 +14,6 @@ import { DatabaseQueries } from "../database/queries";
 import { CustomError } from "@/middleware";
 
 export class UserService {
-  private userIdMap: Map<string, number> = new Map();
   private queries: DatabaseQueries;
 
   constructor(queries: DatabaseQueries) {
@@ -24,18 +23,7 @@ export class UserService {
   /**
    * Initialize the service by loading all users into memory
    */
-  async initialize(): Promise<void> {
-    console.log("Loading users into memory...");
-
-    const users = await this.queries.getAllUsers();
-    this.userIdMap.clear();
-
-    for (const user of users) {
-      this.userIdMap.set(user.identity, user.user_id);
-    }
-
-    console.log(`Loaded ${this.userIdMap.size} users into memory`);
-  }
+  async initialize(): Promise<void> {}
 
   /**
    * Get user by identity
@@ -48,20 +36,11 @@ export class UserService {
    * Get user ID by identity, with fallback to database lookup
    */
   async getUserId(user: string): Promise<number> {
-    // Check in-memory cache first
-    const cachedUserId = this.userIdMap.get(user);
-    if (cachedUserId !== undefined) {
-      return cachedUserId;
-    }
-
-    // Fallback to database lookup
     const userRecord = await this.queries.getUserByIdentity(user);
     if (!userRecord) {
       throw new CustomError(`User not found: ${user}`, 404);
     }
 
-    // Cache the result for future lookups
-    this.userIdMap.set(user, userRecord.user_id);
     return userRecord.user_id;
   }
 
@@ -190,27 +169,6 @@ export class UserService {
    * Check if a user exists
    */
   hasUser(user: string): boolean {
-    return this.userIdMap.has(user);
-  }
-
-  /**
-   * Get user count
-   */
-  getUserCount(): number {
-    return this.userIdMap.size;
-  }
-
-  /**
-   * Manually add a user to the cache (useful for testing or real-time updates)
-   */
-  cacheUser(identity: string, userId: number): void {
-    this.userIdMap.set(identity, userId);
-  }
-
-  /**
-   * Remove a user from the cache
-   */
-  removeUserFromCache(identity: string): void {
-    this.userIdMap.delete(identity);
+    return this.queries.getUserByIdentity(user) !== null;
   }
 }

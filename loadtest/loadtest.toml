@@ -19,17 +19,17 @@ qty_scale = 8        # Number of decimal places for quantity
 model = "closed"
 
 # For closed model: number of virtual users
-users = 10
+users = 50
 
 # For open model: requests per second target
 rps = 50
 
 # Test duration in seconds
-duration = 20
+duration = 120
 
 # Ramp-up configuration
-ramp_users_per_second = 2 # Add N users per second during ramp-up
-ramp_duration = 5         # Ramp-up duration in seconds
+ramp_users_per_second = 1 # Add N users per second during ramp-up
+ramp_duration = 60         # Ramp-up duration in seconds
 
 [maker]
 # Maker (liquidity provider) configuration
