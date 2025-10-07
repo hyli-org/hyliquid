@@ -14,7 +14,6 @@ use hyli_modules::{
         websocket::WebSocketModule,
         BuildApiContextInner, ModulesHandler,
     },
-    utils::logger::setup_tracing,
 };
 use orderbook::orderbook::OrderbookEvent;
 use prometheus::Registry;
@@ -23,13 +22,15 @@ use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
     conf::Conf,
-    prover::{OrderbookProverCtx, OrderbookProverModule},
+    prover::OrderbookProverCtx,
 };
 use sp1_sdk::{Prover, ProverClient};
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 use tracing::error;
+use tracing_perfetto_sdk_schema as schema;
+use tracing_perfetto_sdk_schema::trace_config;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -42,6 +43,9 @@ pub struct Args {
 
     #[arg(long, default_value = "false")]
     pub clean_db: bool,
+
+    #[arg(long, default_value = "false")]
+    pub no_check: bool,
 
     /// Clean the data directory before starting the server
     /// Argument used by hylix tests commands
@@ -122,16 +126,86 @@ async fn setup_database(config: &Conf, clean_db: bool) -> Result<PgPool> {
     Ok(pool)
 }
 
+pub fn minimal_trace_config() -> schema::TraceConfig {
+    schema::TraceConfig {
+        buffers: vec![trace_config::BufferConfig {
+            size_kb: Some(1024),
+            ..Default::default()
+        }],
+        data_sources: vec![trace_config::DataSource {
+            config: Some(schema::DataSourceConfig {
+                name: Some("rust_tracing".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }],
+        ..Default::default()
+    }
+}
+
+fn init_tracing() {
+    use opentelemetry::{global, trace::TracerProvider as _};
+    use opentelemetry_otlp::WithExportConfig;
+    use opentelemetry_sdk::{
+        trace::{self, BatchConfigBuilder, SdkTracerProvider},
+        Resource,
+    };
+    use tracing_opentelemetry::OpenTelemetryLayer;
+    use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+
+    // Set up W3C trace context propagator
+    global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
+
+    // Configure resource with service name
+    let resource = Resource::builder_empty()
+        .with_service_name("hyliquid-orderbook")
+        .build();
+
+    // Build OTLP exporter using tonic (grpc)
+    let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
+        .with_tonic()
+        .with_endpoint("http://localhost:4317")
+        .build()
+        .expect("Failed to create OTLP exporter");
+
+    // Create batch span processor
+    let batch_config = BatchConfigBuilder::default().build();
+    let batch_processor = trace::BatchSpanProcessor::builder(otlp_exporter)
+        .with_batch_config(batch_config)
+        .build();
+
+    // Create tracer provider
+    let tracer_provider = SdkTracerProvider::builder()
+        .with_span_processor(batch_processor)
+        .with_resource(resource)
+        .build();
+
+    // Get tracer before setting as global
+    let tracer = tracer_provider.tracer("hyliquid-orderbook");
+
+    // Set as global tracer provider
+    let _ = global::set_tracer_provider(tracer_provider);
+
+    // Configure tracing subscriber with env filter
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info,tower_http=debug,server=debug"));
+
+    // Initialize the tracing subscriber with both console output and OTLP
+    tracing_subscriber::registry()
+        .with(env_filter)
+        .with(tracing_subscriber::fmt::layer())
+        .with(OpenTelemetryLayer::new(tracer))
+        .init();
+
+    tracing::info!("Tracing initialized with OTLP exporter to http://localhost:4317");
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
-    setup_tracing(
-        &config.log_format,
-        format!("{}(nopkey)", config.id.clone(),),
-    )
-    .context("setting up tracing")?;
+    init_tracing();
 
     let config = Arc::new(config);
 
@@ -236,7 +310,7 @@ async fn main() -> Result<()> {
         asset_service,
     });
 
-    let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
+    let _orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
         node_client: node_client.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
@@ -254,9 +328,9 @@ async fn main() -> Result<()> {
     handler
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
         .await?;
-    handler
-        .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
-        .await?;
+    //   handler
+    //     .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
+    //   .await?;
 
     handler
         .build_module::<ApiModule>(api_module_ctx.clone())

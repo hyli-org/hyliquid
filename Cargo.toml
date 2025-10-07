@@ -3,11 +3,11 @@ resolver = "2"
 members = ["contracts", "contracts/orderbook", "server", "loadtest"]
 
 [workspace.dependencies]
-sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", tag = "v0.14.0-rc3" }
-client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", tag = "v0.14.0-rc3" }
-hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", tag = "v0.14.0-rc3" }
-hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", tag = "v0.14.0-rc3" }
-hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", tag = "v0.14.0-rc3" }
+sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "rest_traces" }
+client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "rest_traces" }
+hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "rest_traces" }
+hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "rest_traces" }
+hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "rest_traces" }
 
 sp1-sdk = { version = "5.0.3", default-features = false }
 sp1-helper = "5.0.3"
