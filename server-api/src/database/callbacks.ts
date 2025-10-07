@@ -57,10 +57,10 @@ export class DatabaseCallbacks {
 
       // Set up notification listener on the dedicated connection
       this.notificationClient.on("notification", (message: any) => {
-        console.log("Database notification received", {
-          channel: message.channel,
-          payload: message.payload,
-        });
+        // console.log("Database notification received", {
+        //   channel: message.channel,
+        //   payload: message.payload,
+        // });
         if (message.channel === "trades") {
           this.handleNewTrades();
         }
@@ -178,7 +178,7 @@ export class DatabaseCallbacks {
         }
 
         for (const [user_id, payload] of payloads) {
-          console.log("Notifying trade callback for user", user_id, payload);
+          // console.log("Notifying trade callback for user", user_id, payload);
           this.tradeNotifCallbacks.get(user_id)?.(payload);
         }
       })
@@ -194,7 +194,7 @@ export class DatabaseCallbacks {
         [this.last_seen_order_id]
       )
       .then(async (result) => {
-        console.log(`New orders after ${this.last_seen_order_id}`, result.rows);
+        // console.log(`New orders after ${this.last_seen_order_id}`, result.rows);
         if (result.rows.length === 0) {
           console.log("No new orders");
           return;
@@ -226,7 +226,7 @@ export class DatabaseCallbacks {
           }
         }
         for (const [user_id, payload] of payloads) {
-          console.log("Notifying order callback for user", user_id, payload);
+          // console.log("Notifying order callback for user", user_id, payload);
           this.orderNotifCallbacks.get(user_id)?.(payload);
         }
       });

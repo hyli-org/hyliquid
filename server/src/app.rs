@@ -9,10 +9,7 @@ use axum::{
     Router,
 };
 use borsh::BorshSerialize;
-use client_sdk::{
-    contract_indexer::AppError,
-    rest_client::{NodeApiClient, NodeApiHttpClient},
-};
+use client_sdk::contract_indexer::AppError;
 use hyli_modules::{
     bus::{BusClientSender, SharedMessageBus},
     module_bus_client, module_handle_messages,
@@ -28,15 +25,14 @@ use orderbook::{
     PermissionnedOrderbookAction, WithdrawPrivateInput,
 };
 use reqwest::StatusCode;
-use sdk::{BlobTransaction, ContractName, LaneId};
+use sdk::{BlobTransaction, ContractName, Hashed, LaneId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::Instrument;
 
 use crate::{
-    prover::OrderbookProverRequest, services::asset_service::AssetService,
-    services::book_service::BookWriterService,
+    database::DatabaseRequest, prover::OrderbookProverRequest,
+    services::asset_service::AssetService,
 };
 use rand::RngCore;
 
@@ -46,11 +42,9 @@ pub struct OrderbookModule {
 
 pub struct OrderbookModuleCtx {
     pub api: Arc<BuildApiContextInner>,
-    pub node_client: Arc<NodeApiHttpClient>,
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
     pub default_state: Orderbook,
-    pub book_writer_service: Arc<Mutex<BookWriterService>>,
     pub asset_service: Arc<RwLock<AssetService>>,
 }
 
@@ -64,6 +58,7 @@ pub struct OrderbookModuleBusClient {
     sender(WsTopicMessage<OrderbookEvent>),
     sender(WsTopicMessage<String>),
     sender(OrderbookProverRequest),
+    sender(DatabaseRequest),
     receiver(WsInMessage<OrderbookWsInMessage>),
 }
 }
@@ -77,13 +72,11 @@ impl Module for OrderbookModule {
         let bus = OrderbookModuleBusClient::new_from_bus(bus.new_handle()).await;
 
         let state = RouterCtx {
-            client: ctx.node_client.clone(),
             orderbook_cn: ctx.orderbook_cn.clone(),
             default_state: ctx.default_state.clone(),
             bus: bus.clone(),
             orderbook: orderbook.clone(),
             lane_id: ctx.lane_id.clone(),
-            book_writer_service: ctx.book_writer_service.clone(),
             asset_service: ctx.asset_service.clone(),
         };
 
@@ -124,13 +117,11 @@ impl Module for OrderbookModule {
 #[derive(Clone)]
 #[allow(dead_code)]
 struct RouterCtx {
-    pub client: Arc<NodeApiHttpClient>,
     pub bus: OrderbookModuleBusClient,
     pub orderbook_cn: ContractName,
     pub default_state: Orderbook,
     pub orderbook: Arc<Mutex<Orderbook>>,
     pub lane_id: LaneId,
-    pub book_writer_service: Arc<Mutex<BookWriterService>>,
     pub asset_service: Arc<RwLock<AssetService>>,
 }
 
@@ -563,22 +554,25 @@ async fn process_orderbook_action<T: BorshSerialize>(
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
     tracing::info!("Orderbook execution results: {:?}", events);
-    let book_service = ctx.book_writer_service.lock().await;
 
-    let tx_hash =
-        ctx.client
-            .send_tx_blob(BlobTransaction::new(
-                "orderbook@orderbook",
-                vec![
-                    OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone())
-                        .as_blob(ctx.orderbook_cn.clone()),
-                ],
-            ))
-    .await?;
+    let blob_tx = BlobTransaction::new(
+        "orderbook@orderbook",
+        vec![
+            OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone())
+                .as_blob(ctx.orderbook_cn.clone()),
+        ],
+    );
+    let tx_hash = blob_tx.hashed();
 
-    book_service
-        .write_events(&user_info.user, tx_hash.clone(), events.clone())
-        .await?;
+    // Send write events request to database module
+    // Database module will send the blob tx to the node
+    let mut bus = ctx.bus.clone();
+    bus.send(DatabaseRequest::WriteEvents {
+        user: user_info.user.clone(),
+        tx_hash: tx_hash.clone(),
+        events: events.clone(),
+        blob_tx,
+    })?;
 
     let action_private_input = borsh::to_vec(action_private_input).map_err(|e| {
         AppError(
@@ -588,7 +582,6 @@ async fn process_orderbook_action<T: BorshSerialize>(
     })?;
 
     // Send tx to prover
-    let mut bus = ctx.bus.clone();
     bus.send(OrderbookProverRequest::TxToProve {
         events,
         user_info,

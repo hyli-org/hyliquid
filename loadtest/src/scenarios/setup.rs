@@ -206,7 +206,18 @@ async fn get_nonce_transaction(user: &mut GooseUser) -> TransactionResult {
     let user_state = user.get_session_data_mut::<UserState>().unwrap();
 
     let client = OrderbookClient::new(&config).unwrap();
-    let current_nonce = client.get_nonce(&user_state.auth).await.unwrap();
+    let current_nonce = loop {
+        match client.get_nonce(&user_state.auth).await {
+            Ok(nonce) => break Ok(nonce),
+            Err(e) => {
+                if e.to_string().contains("404") {
+                    continue;
+                }
+                break Err(e);
+            }
+        }
+    }
+    .unwrap();
 
     user_state.nonce = current_nonce;
 
