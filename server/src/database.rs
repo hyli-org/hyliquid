@@ -42,6 +42,7 @@ pub struct DatabaseModuleCtx {
     pub user_service: Arc<RwLock<UserService>>,
     pub asset_service: Arc<RwLock<AssetService>>,
     pub client: Arc<NodeApiHttpClient>,
+    pub no_blobs: bool,
 }
 
 pub struct DatabaseModule {
@@ -85,7 +86,9 @@ impl DatabaseModule {
                 blob_tx,
             } => {
                 self.write_events(&user, tx_hash, events).await?;
-                self.ctx.client.send_tx_blob(blob_tx).await?;
+                if !self.ctx.no_blobs {
+                    self.ctx.client.send_tx_blob(blob_tx).await?;
+                }
             }
         }
         Ok(())

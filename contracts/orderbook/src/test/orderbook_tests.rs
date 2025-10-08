@@ -166,6 +166,7 @@ fn apply_balance_deltas<'a>(
     }
 }
 
+#[track_caller]
 fn assert_stage<'a>(
     stage: &str,
     light: &Orderbook,
@@ -279,6 +280,7 @@ fn deposit(light: &mut Orderbook, full: &mut Orderbook, user: &str, symbol: &str
 }
 
 #[allow(clippy::too_many_arguments)]
+#[track_caller]
 fn execute_market_order<'a>(
     stage: &str,
     order: Order,
@@ -478,7 +480,7 @@ fn test_complex_multi_user_orderbook() {
     let all_order_ids: Vec<String> = buy_orders
         .iter()
         .chain(sell_orders.iter())
-        .cloned()
+        .flat_map(|(_price, orders)| orders.iter().cloned())
         .collect();
 
     let limit_order_ids: HashSet<String> = limit_orders

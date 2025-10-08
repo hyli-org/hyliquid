@@ -51,6 +51,9 @@ pub struct Args {
     #[arg(long, default_value = "false")]
     pub no_prover: bool,
 
+    #[arg(long, default_value = "false")]
+    pub no_blobs: bool,
+
     /// Clean the data directory before starting the server
     /// Argument used by hylix tests commands
     #[arg(long, default_value = "false")]
@@ -312,6 +315,7 @@ async fn main() -> Result<()> {
         user_service: user_service.clone(),
         asset_service: asset_service.clone(),
         client: node_client.clone(),
+        no_blobs: args.no_blobs,
     });
 
     let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {

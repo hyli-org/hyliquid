@@ -229,12 +229,8 @@ fn cancel_order_refunds_and_removes() {
         .expect("cancellation should succeed");
 
     assert!(orderbook.order_manager.orders.is_empty());
-    assert!(orderbook
-        .order_manager
-        .buy_orders
-        .get(&pair)
-        .map(|queue| queue.is_empty())
-        .unwrap_or(true));
+    assert_eq!(orderbook.order_manager.count_buy_orders(&pair), 0);
+    assert_eq!(orderbook.order_manager.count_sell_orders(&pair), 0);
     assert_eq!(orderbook.get_balance(&user, &pair.1).0, 10);
 
     assert!(events.iter().any(|event| matches!(
@@ -311,7 +307,12 @@ fn limit_bid_inserts_when_price_too_low() {
     ));
     assert!(manager.orders.contains_key(&taker_order.order_id));
     assert_eq!(
-        manager.buy_orders.get(&taker_order.pair).unwrap().front(),
+        manager
+            .buy_orders
+            .get(&taker_order.pair)
+            .unwrap()
+            .first_key_value()
+            .map(|(_price, orders)| orders.front().unwrap()),
         Some(&taker_order.order_id)
     );
 }
@@ -335,7 +336,8 @@ fn limit_ask_inserts_when_no_bids() {
         manager
             .sell_orders
             .get(&order.pair)
-            .and_then(|queue| queue.front()),
+            .and_then(|queue| queue.first_key_value())
+            .map(|(_price, orders)| orders.front().unwrap()),
         Some(&order.order_id)
     );
 }
@@ -389,7 +391,11 @@ fn limit_ask_inserts_when_price_above_best_bid() {
     ));
     assert!(manager.orders.contains_key(&taker_order.order_id));
     assert_eq!(
-        manager.sell_orders.get(&taker_order.pair).unwrap().front(),
+        manager
+            .sell_orders
+            .get(&taker_order.pair)
+            .and_then(|queue| queue.first_key_value())
+            .map(|(_price, orders)| orders.front().unwrap()),
         Some(&taker_order.order_id)
     );
 }
@@ -488,4 +494,193 @@ fn market_ask_without_bids_fails() {
         .execute_order(&user.get_key(), &order)
         .expect_err("market ask without bids should fail");
     assert!(err.contains("No matching Ask orders"), "{err}");
+}
+
+#[test]
+fn perf_insert_order_sequential() {
+    use std::time::Instant;
+
+    let mut manager = OrderManager::new();
+    let user = test_user("perf_user");
+    let num_orders = 10_000;
+
+    // Test d'insertion séquentielle (meilleur cas - ordres déjà triés)
+    println!("\n=== Performance Test: insert_order (Sequential) ===");
+    println!(
+        "Inserting {} bid orders in ascending price order",
+        num_orders
+    );
+
+    let start = Instant::now();
+    for i in 0..num_orders {
+        let order = make_limit_order(
+            &format!("bid-{}", i),
+            OrderSide::Bid,
+            100 + i as u64, // Prix croissant
+            10,
+        );
+        manager
+            .insert_order(&order, &user.get_key())
+            .expect("insertion should succeed");
+    }
+    let duration = start.elapsed();
+
+    println!("Total time: {:?}", duration);
+    println!("Average time per insertion: {:?}", duration / num_orders);
+    println!(
+        "Orders per second: {:.0}",
+        num_orders as f64 / duration.as_secs_f64()
+    );
+    println!("Total orders in book: {}", manager.orders.len());
+
+    assert_eq!(manager.orders.len(), num_orders as usize);
+    assert_eq!(
+        manager.count_buy_orders(&sample_pair()),
+        num_orders as usize
+    );
+}
+
+#[test]
+fn perf_insert_order_reverse() {
+    use std::time::Instant;
+
+    let mut manager = OrderManager::new();
+    let user = test_user("perf_user");
+    let num_orders = 10_000;
+
+    // Test d'insertion en ordre inverse (pire cas - insertion toujours en tête)
+    println!("\n=== Performance Test: insert_order (Reverse) ===");
+    println!(
+        "Inserting {} bid orders in descending price order",
+        num_orders
+    );
+
+    let start = Instant::now();
+    for i in 0..num_orders {
+        let order = make_limit_order(
+            &format!("bid-{}", i),
+            OrderSide::Bid,
+            100_000 - i as u64, // Prix décroissant
+            10,
+        );
+        manager
+            .insert_order(&order, &user.get_key())
+            .expect("insertion should succeed");
+    }
+    let duration = start.elapsed();
+
+    println!("Total time: {:?}", duration);
+    println!("Average time per insertion: {:?}", duration / num_orders);
+    println!(
+        "Orders per second: {:.0}",
+        num_orders as f64 / duration.as_secs_f64()
+    );
+    println!("Total orders in book: {}", manager.orders.len());
+
+    assert_eq!(manager.orders.len(), num_orders as usize);
+    assert_eq!(
+        manager.count_buy_orders(&sample_pair()),
+        num_orders as usize
+    );
+}
+
+#[test]
+fn perf_insert_order_random() {
+    use std::time::Instant;
+
+    let mut manager = OrderManager::new();
+    let user = test_user("perf_user");
+    let num_orders = 10_000;
+
+    // Test d'insertion aléatoire (cas moyen)
+    println!("\n=== Performance Test: insert_order (Random) ===");
+    println!("Inserting {} bid orders with random prices", num_orders);
+
+    // Génération de prix pseudo-aléatoires (déterministe pour la reproductibilité)
+    let mut prices = Vec::new();
+    let mut seed = 12345u64;
+    for _ in 0..num_orders {
+        seed = (seed.wrapping_mul(1103515245).wrapping_add(12345)) % (1u64 << 31);
+        prices.push(1000 + (seed % 90_000));
+    }
+
+    let start = Instant::now();
+    for (i, price) in prices.iter().enumerate() {
+        let order = make_limit_order(&format!("bid-{}", i), OrderSide::Bid, *price, 10);
+        manager
+            .insert_order(&order, &user.get_key())
+            .expect("insertion should succeed");
+    }
+    let duration = start.elapsed();
+
+    println!("Total time: {:?}", duration);
+    println!("Average time per insertion: {:?}", duration / num_orders);
+    println!(
+        "Orders per second: {:.0}",
+        num_orders as f64 / duration.as_secs_f64()
+    );
+    println!("Total orders in book: {}", manager.orders.len());
+
+    assert_eq!(manager.orders.len(), num_orders as usize);
+    assert_eq!(
+        manager.count_buy_orders(&sample_pair()),
+        num_orders as usize
+    );
+}
+
+#[test]
+fn perf_insert_order_mixed_sides() {
+    use std::time::Instant;
+
+    let mut manager = OrderManager::new();
+    let user = test_user("perf_user");
+    let num_orders_per_side = 5_000;
+
+    // Test d'insertion avec les deux côtés du carnet
+    println!("\n=== Performance Test: insert_order (Mixed Sides) ===");
+    println!(
+        "Inserting {} bid orders and {} ask orders",
+        num_orders_per_side, num_orders_per_side
+    );
+
+    let start = Instant::now();
+
+    // Insertion de bids
+    for i in 0..num_orders_per_side {
+        let order = make_limit_order(&format!("bid-{}", i), OrderSide::Bid, 50_000 - i as u64, 10);
+        manager
+            .insert_order(&order, &user.get_key())
+            .expect("insertion should succeed");
+    }
+
+    // Insertion d'asks
+    for i in 0..num_orders_per_side {
+        let order = make_limit_order(&format!("ask-{}", i), OrderSide::Ask, 60_000 + i as u64, 10);
+        manager
+            .insert_order(&order, &user.get_key())
+            .expect("insertion should succeed");
+    }
+
+    let duration = start.elapsed();
+    let total_orders = num_orders_per_side * 2;
+
+    println!("Total time: {:?}", duration);
+    println!("Average time per insertion: {:?}", duration / total_orders);
+    println!(
+        "Orders per second: {:.0}",
+        total_orders as f64 / duration.as_secs_f64()
+    );
+    println!("Total orders in book: {}", manager.orders.len());
+    println!("Bid orders: {}", manager.count_buy_orders(&sample_pair()));
+    println!("Ask orders: {}", manager.count_sell_orders(&sample_pair()));
+
+    assert_eq!(manager.orders.len(), total_orders as usize);
+    assert_eq!(
+        manager.count_buy_orders(&sample_pair()),
+        num_orders_per_side as usize
+    );
+    assert_eq!(
+        manager.count_sell_orders(&sample_pair()),
+        num_orders_per_side as usize
+    );
 }

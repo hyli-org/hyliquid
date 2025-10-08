@@ -4,14 +4,27 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
 
+trait OrderList {
+    fn pop_best(&mut self, side: &OrderSide) -> Option<(u64, VecDeque<OrderId>)>;
+}
+
+impl OrderList for BTreeMap<u64, VecDeque<OrderId>> {
+    fn pop_best(&mut self, side: &OrderSide) -> Option<(u64, VecDeque<OrderId>)> {
+        match side {
+            OrderSide::Bid => self.pop_first(),
+            OrderSide::Ask => self.pop_last(),
+        }
+    }
+}
+
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq)]
 pub struct OrderManager {
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,
-    // Buy orders sorted by price (highest first) for each symbol pair
-    pub buy_orders: BTreeMap<Pair, VecDeque<OrderId>>,
-    // Sell orders sorted by price (lowest first) for each symbol pair
-    pub sell_orders: BTreeMap<Pair, VecDeque<OrderId>>,
+    // Buy orders sorted by price for each token pair
+    pub buy_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+    // Sell orders sorted by price for each token pair
+    pub sell_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
 
     // Mapping of order IDs to their owners
     // This field will not be commited.
@@ -24,6 +37,50 @@ mod tests;
 impl OrderManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn count_buy_orders(&self, pair: &Pair) -> usize {
+        self.buy_orders
+            .get(pair)
+            .map(|v| v.values().map(|v| v.len()).sum())
+            .unwrap_or(0)
+    }
+
+    pub fn count_sell_orders(&self, pair: &Pair) -> usize {
+        self.sell_orders
+            .get(pair)
+            .map(|v| v.values().map(|v| v.len()).sum())
+            .unwrap_or(0)
+    }
+
+    pub fn side_map(&self, side: &OrderSide) -> &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
+        match side {
+            OrderSide::Bid => &self.buy_orders,
+            OrderSide::Ask => &self.sell_orders,
+        }
+    }
+
+    pub fn side_map_mut(
+        &mut self,
+        side: &OrderSide,
+    ) -> &mut BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
+        match side {
+            OrderSide::Bid => &mut self.buy_orders,
+            OrderSide::Ask => &mut self.sell_orders,
+        }
+    }
+
+    pub fn get_order_list_mut(
+        &mut self,
+        side: &OrderSide,
+        pair: Pair,
+        price: u64,
+    ) -> &mut VecDeque<OrderId> {
+        self.side_map_mut(side)
+            .entry(pair)
+            .or_default()
+            .entry(price)
+            .or_default()
     }
 
     /// Inserts a new order into the appropriate data structures
@@ -39,24 +96,10 @@ impl OrderManager {
             return Err("Price cannot be zero".to_string());
         }
 
-        let order_list = match order.order_side {
-            OrderSide::Bid => self.buy_orders.entry(order.pair.clone()).or_default(),
-            OrderSide::Ask => self.sell_orders.entry(order.pair.clone()).or_default(),
-        };
+        let order_list = self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
 
-        let insert_pos = order_list
-            .iter()
-            .position(|id| {
-                let other_order = self.orders.get(id).unwrap();
-                // To be inserted, the order must be <> than the current one
-                match order.order_side {
-                    OrderSide::Bid => other_order.price.unwrap_or(0) < price,
-                    OrderSide::Ask => other_order.price.unwrap_or(0) > price,
-                }
-            })
-            .unwrap_or(order_list.len());
+        order_list.push_back(order.order_id.clone());
 
-        order_list.insert(insert_pos, order.order_id.clone());
         self.orders.insert(order.order_id.clone(), order.clone());
 
         // Keep track of the order owner
@@ -77,22 +120,19 @@ impl OrderManager {
             .get(order_id)
             .ok_or(format!("Order {order_id} not found"))?
             .clone();
+        let price = order.price.ok_or("Price cannot be None for limit orders")?;
 
         // Remove the order from storage
         self.orders.remove(order_id);
 
         // Remove from order lists
-        match order.order_side {
-            OrderSide::Bid => {
-                if let Some(orders) = self.buy_orders.get_mut(&order.pair) {
-                    orders.retain(|id| id != order_id);
-                }
-            }
-            OrderSide::Ask => {
-                if let Some(orders) = self.sell_orders.get_mut(&order.pair) {
-                    orders.retain(|id| id != order_id);
-                }
-            }
+        let order_list = self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+        order_list.retain(|id| id != order_id);
+
+        if order_list.is_empty() {
+            self.side_map_mut(&order.order_side)
+                .get_mut(&order.pair)
+                .map(|v| v.remove(&price));
         }
 
         // Remove owner mapping
@@ -138,67 +178,75 @@ impl OrderManager {
             }
         };
 
-        while let Some(existing_order_id) = counter_orders.pop_front() {
-            let existing_order = self
-                .orders
-                .get_mut(&existing_order_id)
-                .ok_or(format!("Order {existing_order_id} not found"))?;
+        while let Some((existing_order_price, mut existing_order_ids)) =
+            counter_orders.pop_best(&order.order_side)
+        {
+            let mut break_outer = false;
+            while let Some(existing_order_id) = existing_order_ids.pop_front() {
+                let existing_order = self
+                    .orders
+                    .get_mut(&existing_order_id)
+                    .ok_or(format!("Order {existing_order_id} not found"))?;
 
-            // If the order is a limit order, check if the counter price respects the limit
-            if let Some(price) = order_to_execute.price {
-                let existing_order_price = existing_order.price.expect(
-                    "An order has been stored without a price limit. This should never happen",
-                );
+                // If the order is a limit order, check if the counter price respects the limit
+                if let Some(price) = order_to_execute.price {
+                    let price_should_defer = match order.order_side {
+                        OrderSide::Bid => existing_order_price > price,
+                        OrderSide::Ask => existing_order_price < price,
+                    };
 
-                let price_should_defer = match order.order_side {
-                    OrderSide::Bid => existing_order_price > price,
-                    OrderSide::Ask => existing_order_price < price,
-                };
+                    if price_should_defer {
+                        existing_order_ids.push_front(existing_order_id);
+                        counter_orders.insert(existing_order_price, existing_order_ids);
+                        return self.insert_order(&order_to_execute, user_info_key);
+                    }
+                }
 
-                if price_should_defer {
-                    counter_orders.push_front(existing_order_id);
-                    return self.insert_order(&order_to_execute, user_info_key);
+                match existing_order.quantity.cmp(&order_to_execute.quantity) {
+                    std::cmp::Ordering::Greater => {
+                        // Existing order is partially filled; put the remainder back at the front
+                        existing_order.quantity -= order_to_execute.quantity;
+                        existing_order_ids.push_front(existing_order_id.clone());
+                        counter_orders.insert(existing_order_price, existing_order_ids);
+
+                        events.push(OrderbookEvent::OrderUpdate {
+                            order_id: existing_order_id.clone(),
+                            taker_order_id: order_to_execute.order_id.clone(),
+                            executed_quantity: order_to_execute.quantity,
+                            remaining_quantity: existing_order.quantity,
+                            pair: existing_order.pair.clone(),
+                        });
+
+                        order_to_execute.quantity = 0;
+                        break_outer = true;
+                        break;
+                    }
+                    std::cmp::Ordering::Equal => {
+                        // Both orders are fully executed
+                        events.push(OrderbookEvent::OrderExecuted {
+                            order_id: existing_order_id.clone(),
+                            taker_order_id: order_to_execute.order_id.clone(),
+                            pair: existing_order.pair.clone(),
+                        });
+
+                        order_to_execute.quantity = 0;
+                        break_outer = true;
+                        break;
+                    }
+                    std::cmp::Ordering::Less => {
+                        // Existing order is fully filled; continue to look for liquidity
+                        events.push(OrderbookEvent::OrderExecuted {
+                            order_id: existing_order_id.clone(),
+                            taker_order_id: order_to_execute.order_id.clone(),
+                            pair: existing_order.pair.clone(),
+                        });
+
+                        order_to_execute.quantity -= existing_order.quantity;
+                    }
                 }
             }
-
-            match existing_order.quantity.cmp(&order_to_execute.quantity) {
-                std::cmp::Ordering::Greater => {
-                    // Existing order is partially filled; put the remainder back at the front
-                    existing_order.quantity -= order_to_execute.quantity;
-                    counter_orders.push_front(existing_order_id.clone());
-
-                    events.push(OrderbookEvent::OrderUpdate {
-                        order_id: existing_order_id.clone(),
-                        taker_order_id: order_to_execute.order_id.clone(),
-                        executed_quantity: order_to_execute.quantity,
-                        remaining_quantity: existing_order.quantity,
-                        pair: existing_order.pair.clone(),
-                    });
-
-                    order_to_execute.quantity = 0;
-                    break;
-                }
-                std::cmp::Ordering::Equal => {
-                    // Both orders are fully executed
-                    events.push(OrderbookEvent::OrderExecuted {
-                        order_id: existing_order_id.clone(),
-                        taker_order_id: order_to_execute.order_id.clone(),
-                        pair: existing_order.pair.clone(),
-                    });
-
-                    order_to_execute.quantity = 0;
-                    break;
-                }
-                std::cmp::Ordering::Less => {
-                    // Existing order is fully filled; continue to look for liquidity
-                    events.push(OrderbookEvent::OrderExecuted {
-                        order_id: existing_order_id.clone(),
-                        taker_order_id: order_to_execute.order_id.clone(),
-                        pair: existing_order.pair.clone(),
-                    });
-
-                    order_to_execute.quantity -= existing_order.quantity;
-                }
+            if break_outer {
+                break;
             }
         }
 
@@ -234,8 +282,8 @@ impl OrderManager {
     /// Helper function to compare order maps and generate diff entries
     fn diff_order_maps(
         &self,
-        self_orders: &BTreeMap<Pair, VecDeque<OrderId>>,
-        other_orders: &BTreeMap<Pair, VecDeque<OrderId>>,
+        self_orders: &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+        other_orders: &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
         field_name: &str,
     ) -> BTreeMap<String, String> {
         let mut diff = BTreeMap::new();
