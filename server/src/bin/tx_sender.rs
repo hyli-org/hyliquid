@@ -34,9 +34,9 @@ enum Commands {
     /// Create a new pair
     CreatePair {
         #[arg(long)]
-        pair_token1: String,
+        contract_name1: String,
         #[arg(long)]
-        pair_token2: String,
+        contract_name2: String,
     },
     /// Create a new order
     CreateOrder {
@@ -49,18 +49,18 @@ enum Commands {
         #[arg(long)]
         price: Option<u64>,
         #[arg(long)]
-        pair_token1: String,
+        asset_symbol1: String,
         #[arg(long)]
-        pair_token2: String,
+        asset_symbol2: String,
         #[arg(long)]
         quantity: u64,
     },
     /// Add a session key for user authentication
     AddSessionKey,
-    /// Deposit tokens
+    /// Deposit
     Deposit {
         #[arg(long)]
-        token: String,
+        symbol: String,
         #[arg(long)]
         amount: u64,
     },
@@ -69,10 +69,10 @@ enum Commands {
         #[arg(long)]
         order_id: String,
     },
-    // /// Withdraw tokens
+    // /// Withdraw
     Withdraw {
         #[arg(long)]
-        token: String,
+        symbol: String,
         #[arg(long)]
         amount: u64,
     },
@@ -128,11 +128,15 @@ async fn main() -> Result<()> {
 
     match args.command {
         Commands::CreatePair {
-            pair_token1,
-            pair_token2,
+            contract_name1,
+            contract_name2,
         } => {
+            let base_symbol = contract_name1.to_uppercase().clone();
+            let quote_symbol = contract_name2.to_uppercase().clone();
             let request = CreatePairRequest {
-                pair: (pair_token1, pair_token2),
+                pair: (base_symbol, quote_symbol),
+                base_contract: Some(contract_name1),
+                quote_contract: Some(contract_name2),
             };
 
             tracing::info!("Sending create pair request: {:?}", request);
@@ -178,9 +182,9 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Server returned error {status}: {error_text}");
             }
         }
-        Commands::Deposit { token, amount } => {
+        Commands::Deposit { symbol, amount } => {
             let request = DepositRequest {
-                token: token.clone(),
+                symbol: symbol.clone(),
                 amount,
             };
 
@@ -209,8 +213,8 @@ async fn main() -> Result<()> {
             order_side,
             order_type,
             price,
-            pair_token1,
-            pair_token2,
+            asset_symbol1,
+            asset_symbol2,
             quantity,
         } => {
             let order_side = match order_side.to_lowercase().as_str() {
@@ -230,7 +234,7 @@ async fn main() -> Result<()> {
                 order_side,
                 order_type,
                 price,
-                pair: (pair_token1, pair_token2),
+                pair: (asset_symbol1, asset_symbol2),
                 quantity,
             };
 
@@ -291,15 +295,16 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Server returned error {status}: {error_text}");
             }
         }
-        Commands::Withdraw { token, amount } => {
+        Commands::Withdraw { symbol, amount } => {
             tracing::info!(
-                "Sending withdraw request for token: {}, amount: {}",
-                token,
+                "Sending withdraw request for symbol: {}, amount: {}",
+                symbol,
                 amount
             );
 
-            // Create signature using the format: {user}:{nonce}:withdraw:{token}:{amount}
-            let data_to_sign = format!("{}:{}:withdraw:{}:{}", args.identity, nonce, token, amount);
+            // Create signature using the format: {user}:{nonce}:withdraw:{symbol}:{amount}
+            let data_to_sign =
+                format!("{}:{}:withdraw:{}:{}", args.identity, nonce, symbol, amount);
             let signature = create_signature(&signing_key, &data_to_sign)?;
 
             let response = client
@@ -308,7 +313,7 @@ async fn main() -> Result<()> {
                 .header("x-public-key", &public_key_hex)
                 .header("x-signature", &signature)
                 .header("Content-Type", "application/json")
-                .json(&serde_json::json!({ "token": token, "amount": amount }))
+                .json(&serde_json::json!({ "symbol": symbol, "amount": amount }))
                 .send()
                 .await
                 .context("Failed to send request to server")?;

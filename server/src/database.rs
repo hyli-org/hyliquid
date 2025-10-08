@@ -151,7 +151,7 @@ impl DatabaseModule {
                 }
                 OrderbookEvent::BalanceUpdated {
                     user,
-                    token,
+                    symbol,
                     amount,
                 } => {
                     if user == "orderbook" {
@@ -159,9 +159,9 @@ impl DatabaseModule {
                     }
                     let asset_service = self.ctx.asset_service.read().await;
                     let asset = asset_service
-                        .get_asset(&token)
+                        .get_asset(&symbol)
                         .await
-                        .ok_or_else(|| anyhow::anyhow!("Asset not found: {token}"))?;
+                        .ok_or_else(|| anyhow::anyhow!("Asset not found: {symbol}"))?;
                     let user_id = self
                         .ctx
                         .user_service

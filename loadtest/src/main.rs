@@ -160,7 +160,7 @@ async fn run_goose_test(config: Config, _shared_state: SharedState) -> Result<Go
         let str = format!("{}", config.load.ramp_users_per_second);
         goose_builder = goose_builder
             .set_default(GooseDefault::HatchRate, str.as_str())
-            .map_err(|e| anyhow::anyhow!("Failed to set hatch rate: {:?}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to set hatch rate: {e:?}"))?;
     }
 
     // Register setup scenario (always enabled)
@@ -210,7 +210,7 @@ fn setup_logging(verbose: bool) {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| format!("loadtest={},goose={}", log_level, log_level).into()),
+                .unwrap_or_else(|_| format!("loadtest={log_level},goose={log_level}").into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

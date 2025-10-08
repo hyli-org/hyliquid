@@ -51,8 +51,8 @@ while true; do
         --order-id $order_id \
         --order-side $side \
         --order-type $order_type \
-        --pair-token1 BTC \
-        --pair-token2 USDT \
+        --contract-name1 BTC \
+        --contract-name2 USDT \
         --quantity $quantity \
         --price $price
     

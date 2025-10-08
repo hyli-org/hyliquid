@@ -195,22 +195,6 @@ async fn place_ask_orders_transaction(user: &mut GooseUser) -> TransactionResult
     Ok(())
 }
 
-/// Transaction: Wait before next maker cycle
-// async fn maker_wait_transaction(_user: &mut GooseUser) -> TransactionResult {
-//     let config = {
-//         let global_config = GLOBAL_CONFIG.lock().unwrap();
-//         global_config.clone().unwrap()
-//     };
-
-//     // Wait before next maker cycle
-//     tokio::time::sleep(tokio::time::Duration::from_millis(
-//         config.maker.cycle_interval_ms,
-//     ))
-//     .await;
-
-//     Ok(())
-// }
-
 /// Transaction: get user orders
 async fn get_user_orders_transaction(user: &mut GooseUser) -> TransactionResult {
     let config = {

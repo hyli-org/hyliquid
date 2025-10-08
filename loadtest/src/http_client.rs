@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use goose::prelude::*;
 use orderbook::orderbook::{Order, OrderSide, OrderType};
 use serde::{Deserialize, Serialize};
+use server::app::{CancelOrderRequest, CreatePairRequest, DepositRequest};
 use std::time::Duration;
 
 use crate::auth::UserAuth;
@@ -93,22 +94,6 @@ pub struct ApiTrade {
     pub side: OrderSide,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CreatePairRequest {
-    pub pair: (String, String),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct DepositRequest {
-    pub token: String,
-    pub amount: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct CancelOrderRequest {
-    pub order_id: String,
-}
-
 impl OrderbookClient {
     pub fn new(config: &Config) -> Result<Self> {
         let client = reqwest::Client::builder()
@@ -124,7 +109,6 @@ impl OrderbookClient {
     }
 
     /// Get balance for a user
-
     pub async fn get_balances(
         &self,
         user: &mut GooseUser,
@@ -205,7 +189,7 @@ impl OrderbookClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("get_nonce failed with status {}: {}", status, error_text);
+            anyhow::bail!("get_nonce failed with status {status}: {error_text}");
         }
 
         let nonce = response.json::<u32>().await?;
@@ -235,18 +219,18 @@ impl OrderbookClient {
         Ok(())
     }
 
-    /// Deposit tokens
+    /// Deposit symbol
     pub async fn deposit(
         &self,
         user: &mut GooseUser,
         auth: &UserAuth,
-        token: &str,
+        symbol: &str,
         amount: u64,
     ) -> TransactionResult {
         let path = "/deposit";
 
         let request_body = DepositRequest {
-            token: token.to_string(),
+            symbol: symbol.to_string(),
             amount,
         };
 
@@ -334,10 +318,7 @@ impl OrderbookClient {
         quote_asset: &str,
         levels: u32,
     ) -> Result<OrderbookResponse, Box<TransactionError>> {
-        let path = format!(
-            "/api/book/{}/{}?levels={}&group_ticks=1",
-            base_asset, quote_asset, levels
-        );
+        let path = format!("/api/book/{base_asset}/{quote_asset}?levels={levels}&group_ticks=1");
 
         let goose_request = GooseRequest::builder()
             .path(path.as_str())
@@ -365,7 +346,15 @@ impl OrderbookClient {
     ) -> TransactionResult {
         let path = "/create_pair";
 
-        let request_body = CreatePairRequest { pair };
+        let request_body = {
+            let base_symbol = pair.0.clone();
+            let quote_symbol = pair.1.clone();
+            CreatePairRequest {
+                pair,
+                base_contract: Some(base_symbol),
+                quote_contract: Some(quote_symbol),
+            }
+        };
 
         let body = serde_json::to_vec(&request_body).unwrap();
 
