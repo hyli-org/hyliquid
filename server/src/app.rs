@@ -19,7 +19,7 @@ use hyli_modules::{
     },
 };
 use orderbook::{
-    orderbook::{Order, Orderbook, OrderbookEvent, PairInfo, TokenPair},
+    orderbook::{AssetInfo, Order, Orderbook, OrderbookEvent, Pair, PairInfo},
     smt_values::UserInfo,
     AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, WithdrawPrivateInput,
@@ -173,12 +173,16 @@ impl AuthHeaders {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreatePairRequest {
-    pub pair: TokenPair,
+    pub pair: Pair,
+    #[serde(default)]
+    pub base_contract: Option<String>,
+    #[serde(default)]
+    pub quote_contract: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DepositRequest {
-    pub token: String,
+    pub symbol: String,
     pub amount: u64,
 }
 
@@ -189,7 +193,7 @@ pub struct CancelOrderRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WithdrawRequest {
-    pub token: String,
+    pub symbol: String,
     pub amount: u64,
 }
 
@@ -232,20 +236,26 @@ async fn create_pair(
 
     let user = auth.identity;
 
+    let CreatePairRequest {
+        pair,
+        base_contract,
+        quote_contract,
+    } = request;
+
+    let base_symbol = pair.0.clone();
+    let quote_symbol = pair.1.clone();
+
     let asset_service = ctx.asset_service.read().await;
-    let base_asset = asset_service
-        .get_asset(&request.pair.0)
-        .await
-        .ok_or(AppError(
-            StatusCode::NOT_FOUND,
-            anyhow::anyhow!("Base asset not found: {}", request.pair.0),
-        ))?;
+    let base_asset = asset_service.get_asset(&base_symbol).await.ok_or(AppError(
+        StatusCode::NOT_FOUND,
+        anyhow::anyhow!("Base asset not found: {base_symbol}"),
+    ))?;
     let quote_asset = asset_service
-        .get_asset(&request.pair.1)
+        .get_asset(&quote_symbol)
         .await
         .ok_or(AppError(
             StatusCode::NOT_FOUND,
-            anyhow::anyhow!("Quote asset not found: {}", request.pair.1),
+            anyhow::anyhow!("Quote asset not found: {quote_symbol}"),
         ))?;
 
     if base_asset.scale >= 20 {
@@ -257,10 +267,33 @@ async fn create_pair(
             ),
         ));
     }
+    if quote_asset.scale >= 20 {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow::anyhow!(
+                "Unsupported pair scale: quote_scale >= 20: {}",
+                quote_asset.scale
+            ),
+        ));
+    }
+
+    let base_info = AssetInfo::new(
+        base_asset.scale as u64,
+        base_contract
+            .map(ContractName)
+            .unwrap_or_else(|| ContractName(base_symbol.clone())),
+    );
+
+    let quote_info = AssetInfo::new(
+        quote_asset.scale as u64,
+        quote_contract
+            .map(ContractName)
+            .unwrap_or_else(|| ContractName(quote_symbol.clone())),
+    );
 
     let info = PairInfo {
-        base_scale: base_asset.scale as u64,
-        quote_scale: quote_asset.scale as u64,
+        base: base_info,
+        quote: quote_info,
     };
     drop(asset_service);
 
@@ -275,7 +308,7 @@ async fn create_pair(
         });
 
         let events = orderbook
-            .create_pair(&request.pair, &info)
+            .create_pair(&pair, &info)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -283,10 +316,7 @@ async fn create_pair(
 
     let action_private_input = Vec::<u8>::new();
 
-    let orderbook_action = PermissionnedOrderbookAction::CreatePair {
-        pair: request.pair,
-        info,
-    };
+    let orderbook_action = PermissionnedOrderbookAction::CreatePair { pair, info };
 
     process_orderbook_action(
         user_info,
@@ -362,7 +392,7 @@ async fn deposit(
         });
 
         let events = orderbook
-            .deposit(&request.token, request.amount, &user_info)
+            .deposit(&request.symbol, request.amount, &user_info)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -371,7 +401,7 @@ async fn deposit(
     let action_private_input = Vec::<u8>::new();
 
     let orderbook_action = PermissionnedOrderbookAction::Deposit {
-        token: request.token,
+        symbol: request.symbol,
         amount: request.amount,
     };
 
@@ -505,21 +535,21 @@ async fn withdraw(
             )
         })?;
 
-        let balance = orderbook.get_balance(&user_info, &request.token);
+        let balance = orderbook.get_balance(&user_info, &request.symbol);
         if balance.0 < request.amount {
             return Err(AppError(
                 StatusCode::BAD_REQUEST,
                 anyhow::anyhow!(
                     "Not enough balance: withdrawing {} {} while having {}",
                     request.amount,
-                    request.token,
+                    request.symbol,
                     balance.0
                 ),
             ));
         };
 
         let events = orderbook
-            .withdraw(&request.token, &request.amount, &user_info)
+            .withdraw(&request.symbol, &request.amount, &user_info)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -531,7 +561,7 @@ async fn withdraw(
     };
 
     let orderbook_action = PermissionnedOrderbookAction::Withdraw {
-        token: request.token.clone(),
+        symbol: request.symbol.clone(),
         amount: request.amount,
     };
 

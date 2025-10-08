@@ -96,16 +96,16 @@ impl BookWriterService {
                 }
                 OrderbookEvent::BalanceUpdated {
                     user,
-                    token,
+                    symbol,
                     amount,
                 } => {
                     if user == "orderbook" {
                         continue;
                     }
                     let asset_service = self.asset_service.read().await;
-                    let asset = asset_service.get_asset(&token).await.ok_or(AppError(
+                    let asset = asset_service.get_asset(&symbol).await.ok_or(AppError(
                         StatusCode::NOT_FOUND,
-                        anyhow::anyhow!("Asset not found: {token}"),
+                        anyhow::anyhow!("Asset not found: {symbol}"),
                     ))?;
                     let user_id = self.user_service.read().await.get_user_id(&user).await?;
 

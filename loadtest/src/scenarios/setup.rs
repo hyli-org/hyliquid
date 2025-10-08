@@ -88,10 +88,10 @@ async fn get_balances_transaction(user: &mut GooseUser) -> TransactionResult {
     let base_asset_balance = balance
         .balances
         .iter()
-        .find(|b| b.token == config.instrument.base_asset)
+        .find(|b| b.symbol == config.instrument.base_asset)
         .cloned()
         .unwrap_or(Balance {
-            token: config.instrument.base_asset.clone(),
+            symbol: config.instrument.base_asset.clone(),
             available: 0,
             total: 0,
             reserved: 0,
@@ -99,10 +99,10 @@ async fn get_balances_transaction(user: &mut GooseUser) -> TransactionResult {
     let quote_asset_balance = balance
         .balances
         .iter()
-        .find(|b| b.token == config.instrument.quote_asset)
+        .find(|b| b.symbol == config.instrument.quote_asset)
         .cloned()
         .unwrap_or(Balance {
-            token: config.instrument.quote_asset.clone(),
+            symbol: config.instrument.quote_asset.clone(),
             available: 0,
             total: 0,
             reserved: 0,
@@ -142,7 +142,7 @@ async fn deposit_base_asset_transaction(user: &mut GooseUser) -> TransactionResu
 
     let client = OrderbookClient::new(&config).unwrap();
 
-    if (user_state.base_balance as u64) < config.user_setup.minimal_balance_base {
+    if user_state.base_balance < config.user_setup.minimal_balance_base {
         debug!(
             "Depositing {} {} for {}",
             config.user_setup.initial_deposit_base,
@@ -176,7 +176,7 @@ async fn deposit_quote_asset_transaction(user: &mut GooseUser) -> TransactionRes
 
     let user_state = user.get_session_data::<UserState>().unwrap();
 
-    if (user_state.quote_balance as u64) < config.user_setup.minimal_balance_quote {
+    if user_state.quote_balance < config.user_setup.minimal_balance_quote {
         debug!(
             "Depositing {} {} for {}",
             config.user_setup.initial_deposit_quote,

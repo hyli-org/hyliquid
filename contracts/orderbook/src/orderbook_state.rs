@@ -5,7 +5,7 @@ use sdk::merkle_utils::SHA256Hasher;
 use sparse_merkle_tree::SparseMerkleTree;
 use sparse_merkle_tree::{default_store::DefaultStore, traits::Value};
 
-use crate::orderbook::{OrderbookEvent, TokenName};
+use crate::orderbook::{OrderbookEvent, Symbol};
 use crate::orderbook_witness::ZkVmWitness;
 use crate::{
     orderbook::{ExecutionState, Orderbook},
@@ -15,35 +15,35 @@ use crate::{
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
 pub struct LightState {
     pub users_info: HashMap<String, UserInfo>,
-    pub balances: HashMap<TokenName, HashMap<H256, Balance>>,
+    pub balances: HashMap<Symbol, HashMap<H256, Balance>>,
 }
 
 #[derive(Default, Debug)]
 pub struct FullState {
     pub users_info_mt: SparseMerkleTree<SHA256Hasher, UserInfo, DefaultStore<UserInfo>>,
     pub balances_mt:
-        HashMap<TokenName, SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>>,
+        HashMap<Symbol, SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>>,
     pub users_info: HashMap<String, UserInfo>,
 }
 
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmState {
     pub users_info: ZkVmWitness<HashSet<UserInfo>>,
-    pub balances: HashMap<TokenName, ZkVmWitness<HashMap<H256, Balance>>>,
+    pub balances: HashMap<Symbol, ZkVmWitness<HashMap<H256, Balance>>>,
 }
 
 /// impl of functions for state management
 impl Orderbook {
     pub fn fund_account(
         &mut self,
-        token: &str,
+        symbol: &str,
         user_info: &UserInfo,
         amount: &Balance,
     ) -> Result<(), String> {
-        let current_balance = self.get_balance(user_info, token);
+        let current_balance = self.get_balance(user_info, symbol);
 
         self.update_balances(
-            token,
+            symbol,
             vec![(user_info.get_key(), Balance(current_balance.0 + amount.0))],
         )
         .map_err(|e| e.to_string())
@@ -51,21 +51,21 @@ impl Orderbook {
 
     pub fn deduct_from_account(
         &mut self,
-        token: &str,
+        symbol: &str,
         user_info: &UserInfo,
         amount: u64,
     ) -> Result<(), String> {
-        let current_balance = self.get_balance(user_info, token);
+        let current_balance = self.get_balance(user_info, symbol);
 
         if current_balance.0 < amount {
             return Err(format!(
-                "Insufficient balance: user {} has {} {} tokens, trying to remove {}",
-                user_info.user, current_balance.0, token, amount
+                "Insufficient balance: user {} has {} {}, trying to remove {}",
+                user_info.user, current_balance.0, symbol, amount
             ));
         }
 
         self.update_balances(
-            token,
+            symbol,
             vec![(user_info.get_key(), Balance(current_balance.0 - amount))],
         )
         .map_err(|e| e.to_string())
@@ -142,14 +142,14 @@ impl Orderbook {
 
     pub fn update_balances(
         &mut self,
-        token: &str,
+        symbol: &str,
         balances_to_update: Vec<(H256, Balance)>,
     ) -> Result<(), String> {
         match &mut self.execution_state {
             ExecutionState::Full(state) => {
                 let tree = state
                     .balances_mt
-                    .entry(token.to_string())
+                    .entry(symbol.to_string())
                     .or_insert_with(|| {
                         SparseMerkleTree::new(sparse_merkle_tree::H256::zero(), Default::default())
                     });
@@ -159,25 +159,25 @@ impl Orderbook {
                     .collect();
                 let new_root = tree
                     .update_all(leaves)
-                    .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?;
+                    .map_err(|e| format!("Failed to update balances on {symbol}: {e}"))?;
                 self.balances_merkle_roots
-                    .insert(token.to_string(), (*new_root).into());
+                    .insert(symbol.to_string(), (*new_root).into());
             }
             ExecutionState::Light(state) => {
-                let token_entry = state
+                let symbol_entry = state
                     .balances
-                    .get_mut(token)
-                    .ok_or_else(|| format!("Token {token} is not found in allowed tokens"))?;
+                    .get_mut(symbol)
+                    .ok_or_else(|| format!("{symbol} is not found in allowed symbols"))?;
                 for (user_info_key, balance) in balances_to_update {
-                    token_entry.insert(user_info_key, balance);
+                    symbol_entry.insert(user_info_key, balance);
                 }
                 self.balances_merkle_roots
-                    .entry(token.to_string())
+                    .entry(symbol.to_string())
                     .or_insert_with(|| sparse_merkle_tree::H256::zero().into());
             }
             ExecutionState::ZkVm(state) => {
-                let witness = state.balances.get(token).ok_or_else(|| {
-                    format!("No balance witness found for token {token} while running in ZkVm mode")
+                let witness = state.balances.get(symbol).ok_or_else(|| {
+                    format!("No balance witness found for {symbol} while running in ZkVm mode")
                 })?;
                 let leaves = balances_to_update
                     .iter()
@@ -189,9 +189,9 @@ impl Orderbook {
                     .0
                     .clone()
                     .compute_root::<SHA256Hasher>(leaves)
-                    .unwrap_or_else(|e| panic!("Failed to compute new root on token {token}: {e}"));
+                    .unwrap_or_else(|e| panic!("Failed to compute new root on {symbol}: {e}"));
                 self.balances_merkle_roots
-                    .insert(token.to_string(), (*new_root).into());
+                    .insert(symbol.to_string(), (*new_root).into());
             }
         }
 
@@ -223,11 +223,11 @@ impl Clone for FullState {
         let users_info_mt = SparseMerkleTree::new(user_info_root, user_info_store);
 
         let mut balances_mt = HashMap::new();
-        for (token_name, tree) in &self.balances_mt {
+        for (symbol, tree) in &self.balances_mt {
             let root = *tree.root();
             let store = tree.store().clone();
             let new_tree = SparseMerkleTree::new(root, store);
-            balances_mt.insert(token_name.clone(), new_tree);
+            balances_mt.insert(symbol.clone(), new_tree);
         }
 
         Self {

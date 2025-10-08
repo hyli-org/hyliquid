@@ -2,7 +2,7 @@ use crate::smt_values::BorshableH256 as H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, TokenPair};
+use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
 
 trait OrderList {
     fn pop_best(&mut self, side: &OrderSide) -> Option<(u64, VecDeque<OrderId>)>;
@@ -21,10 +21,10 @@ impl OrderList for BTreeMap<u64, VecDeque<OrderId>> {
 pub struct OrderManager {
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,
-    // Buy orders sorted by price (highest first) for each token pair
-    pub buy_orders: BTreeMap<TokenPair, BTreeMap<u64, VecDeque<OrderId>>>,
-    // Sell orders sorted by price (lowest first) for each token pair
-    pub sell_orders: BTreeMap<TokenPair, BTreeMap<u64, VecDeque<OrderId>>>,
+    // Buy orders sorted by price for each token pair
+    pub buy_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+    // Sell orders sorted by price for each token pair
+    pub sell_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
 
     // Mapping of order IDs to their owners
     // This field will not be commited.
@@ -39,24 +39,21 @@ impl OrderManager {
         Self::default()
     }
 
-    pub fn count_buy_orders(&self, pair: &TokenPair) -> usize {
+    pub fn count_buy_orders(&self, pair: &Pair) -> usize {
         self.buy_orders
             .get(pair)
             .map(|v| v.values().map(|v| v.len()).sum())
             .unwrap_or(0)
     }
 
-    pub fn count_sell_orders(&self, pair: &TokenPair) -> usize {
+    pub fn count_sell_orders(&self, pair: &Pair) -> usize {
         self.sell_orders
             .get(pair)
             .map(|v| v.values().map(|v| v.len()).sum())
             .unwrap_or(0)
     }
 
-    pub fn side_map(
-        &self,
-        side: &OrderSide,
-    ) -> &BTreeMap<TokenPair, BTreeMap<u64, VecDeque<OrderId>>> {
+    pub fn side_map(&self, side: &OrderSide) -> &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
         match side {
             OrderSide::Bid => &self.buy_orders,
             OrderSide::Ask => &self.sell_orders,
@@ -66,7 +63,7 @@ impl OrderManager {
     pub fn side_map_mut(
         &mut self,
         side: &OrderSide,
-    ) -> &mut BTreeMap<TokenPair, BTreeMap<u64, VecDeque<OrderId>>> {
+    ) -> &mut BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
         match side {
             OrderSide::Bid => &mut self.buy_orders,
             OrderSide::Ask => &mut self.sell_orders,
@@ -76,7 +73,7 @@ impl OrderManager {
     pub fn get_order_list_mut(
         &mut self,
         side: &OrderSide,
-        pair: TokenPair,
+        pair: Pair,
         price: u64,
     ) -> &mut VecDeque<OrderId> {
         self.side_map_mut(side)
@@ -285,8 +282,8 @@ impl OrderManager {
     /// Helper function to compare order maps and generate diff entries
     fn diff_order_maps(
         &self,
-        self_orders: &BTreeMap<TokenPair, BTreeMap<u64, VecDeque<OrderId>>>,
-        other_orders: &BTreeMap<TokenPair, BTreeMap<u64, VecDeque<OrderId>>>,
+        self_orders: &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+        other_orders: &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
         field_name: &str,
     ) -> BTreeMap<String, String> {
         let mut diff = BTreeMap::new();

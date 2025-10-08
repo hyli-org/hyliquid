@@ -59,7 +59,7 @@ pub fn export_metrics(
         let json_content = serde_json::to_string_pretty(&summary)
             .context("Failed to serialize metrics to JSON")?;
         fs::write(&json_path, json_content)
-            .with_context(|| format!("Failed to write JSON file: {:?}", json_path))?;
+            .with_context(|| format!("Failed to write JSON file: {json_path:?}"))?;
         tracing::info!("Exported metrics to: {:?}", json_path);
     }
 
@@ -265,7 +265,7 @@ fn calculate_percentiles_from_times(
 
 fn export_latencies_csv(metrics: &GooseMetrics, csv_path: &Path) -> Result<()> {
     let mut writer = csv::Writer::from_path(csv_path)
-        .with_context(|| format!("Failed to create CSV writer: {:?}", csv_path))?;
+        .with_context(|| format!("Failed to create CSV writer: {csv_path:?}"))?;
 
     // Write header
     writer.write_record([
@@ -290,7 +290,7 @@ fn export_latencies_csv(metrics: &GooseMetrics, csv_path: &Path) -> Result<()> {
             request.success_count.to_string(),
             request.fail_count.to_string(),
             request.raw_data.minimum_time.to_string(),
-            format!("{:.2}", mean_ms),
+            format!("{mean_ms:.2}"),
             percentiles.p50.to_string(),
             percentiles.p95.to_string(),
             percentiles.p99.to_string(),

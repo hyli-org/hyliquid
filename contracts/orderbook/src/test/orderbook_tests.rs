@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::orderbook::{
-    ExecutionMode, Order, OrderSide, OrderType, Orderbook, PairInfo, TokenPair,
+    AssetInfo, ExecutionMode, Order, OrderSide, OrderType, Orderbook, Pair, PairInfo,
 };
 use crate::smt_values::UserInfo;
 use crate::{
@@ -173,8 +173,8 @@ fn assert_stage<'a>(
     full: &Orderbook,
     expected: &HashMap<&'a str, BalanceExpectation>,
     users: &[&'a str],
-    base_token: &str,
-    quote_token: &str,
+    base_symbol: &str,
+    quote_symbol: &str,
 ) {
     for &user in users {
         let expected_entry = expected.get(user).expect("expected balances");
@@ -184,26 +184,26 @@ fn assert_stage<'a>(
         let light_user = light.get_user_info(user).expect("light user info");
         let full_user = full.get_user_info(user).expect("full user info");
 
-        let light_base = light.get_balance(&light_user, base_token);
-        let full_base = full.get_balance(&full_user, base_token);
-        let light_quote = light.get_balance(&light_user, quote_token);
-        let full_quote = full.get_balance(&full_user, quote_token);
+        let light_base = light.get_balance(&light_user, base_symbol);
+        let full_base = full.get_balance(&full_user, base_symbol);
+        let light_quote = light.get_balance(&light_user, quote_symbol);
+        let full_quote = full.get_balance(&full_user, quote_symbol);
 
         assert_eq!(
                 light_base.0, expected_base,
-                "{stage}: user {user} base ({base_token}) balance mismatch for light (expected {expected_base}, got {light_base:?})"
+                "{stage}: user {user} base ({base_symbol}) balance mismatch for light (expected {expected_base}, got {light_base:?})"
             );
         assert_eq!(
                 full_base.0, expected_base,
-                "{stage}: user {user} base ({base_token}) balance mismatch for full (expected {expected_base}, got {full_base:?})"
+                "{stage}: user {user} base ({base_symbol}) balance mismatch for full (expected {expected_base}, got {full_base:?})"
             );
         assert_eq!(
                 light_quote.0, expected_quote,
-                "{stage}: user {user} quote ({quote_token}) balance mismatch for light (expected {expected_quote}, got {light_quote:?})"
+                "{stage}: user {user} quote ({quote_symbol}) balance mismatch for light (expected {expected_quote}, got {light_quote:?})"
             );
         assert_eq!(
                 full_quote.0, expected_quote,
-                "{stage}: user {user} quote ({quote_token}) balance mismatch for full (expected {expected_quote}, got {full_quote:?})"
+                "{stage}: user {user} quote ({quote_symbol}) balance mismatch for full (expected {expected_quote}, got {full_quote:?})"
             );
     }
 }
@@ -266,13 +266,13 @@ fn add_session_key<'a>(
     );
 }
 
-fn deposit(light: &mut Orderbook, full: &mut Orderbook, user: &str, token: &str, amount: u64) {
+fn deposit(light: &mut Orderbook, full: &mut Orderbook, user: &str, symbol: &str, amount: u64) {
     run_action(
         light,
         full,
         user,
         PermissionnedOrderbookAction::Deposit {
-            token: token.to_string(),
+            symbol: symbol.to_string(),
             amount,
         },
         Vec::new(),
@@ -290,13 +290,21 @@ fn execute_market_order<'a>(
     users: &[&'a str],
     signers: &'a [TestSigner],
     expected: &mut HashMap<&'a str, BalanceExpectation>,
-    base_token: &str,
-    quote_token: &str,
+    base_symbol: &str,
+    quote_symbol: &str,
     deltas: &[BalanceDelta<'a>],
 ) {
     submit_signed_order(light, full, users, signers, user, order);
     apply_balance_deltas(expected, deltas);
-    assert_stage(stage, light, full, expected, users, base_token, quote_token);
+    assert_stage(
+        stage,
+        light,
+        full,
+        expected,
+        users,
+        base_symbol,
+        quote_symbol,
+    );
 }
 
 #[test_log::test]
@@ -306,12 +314,12 @@ fn test_complex_multi_user_orderbook() {
     let mut light = Orderbook::init(lane_id.clone(), ExecutionMode::Light, secret.clone()).unwrap();
     let mut full = Orderbook::init(lane_id.clone(), ExecutionMode::Full, secret.clone()).unwrap();
 
-    let pair: TokenPair = ("HYLLAR".to_string(), "ORANJ".to_string());
-    let base_token = pair.0.clone();
-    let quote_token = pair.1.clone();
+    let pair: Pair = ("HYLLAR".to_string(), "ORANJ".to_string());
+    let base_symbol = pair.0.clone();
+    let quote_symbol = pair.1.clone();
     let pair_info = PairInfo {
-        base_scale: 0,
-        quote_scale: 0,
+        base: AssetInfo::new(0, ContractName(base_symbol.clone())),
+        quote: AssetInfo::new(0, ContractName(quote_symbol.clone())),
     };
 
     let users = ["alice", "bob", "charlie"];
@@ -342,8 +350,8 @@ fn test_complex_multi_user_orderbook() {
 
     let funded_amount = 10_000_u64;
     for &user in &users {
-        deposit(&mut light, &mut full, user, &base_token, funded_amount);
-        deposit(&mut light, &mut full, user, &quote_token, funded_amount);
+        deposit(&mut light, &mut full, user, &base_symbol, funded_amount);
+        deposit(&mut light, &mut full, user, &quote_symbol, funded_amount);
         apply_balance_deltas(
             &mut expected_balances,
             &[
@@ -359,8 +367,8 @@ fn test_complex_multi_user_orderbook() {
         &full,
         &expected_balances,
         &users,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
     );
 
     let limit_orders = vec![
@@ -498,8 +506,8 @@ fn test_complex_multi_user_orderbook() {
         &full,
         &expected_balances,
         &users,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
     );
 
     execute_market_order(
@@ -518,8 +526,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, qty(20), -notional(20, 9)),
             delta(charlie, 0, notional(20, 9)),
@@ -542,8 +550,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, qty(20), -notional(20, 9)),
             delta(alice, qty(15), -notional(15, 10)),
@@ -568,8 +576,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, qty(15), -notional(15, 10)),
             delta(bob, 0, notional(15, 10)),
@@ -592,8 +600,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, qty(10), -notional(10, 11)),
             delta(alice, 0, notional(10, 11)),
@@ -616,8 +624,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, qty(10), -notional(10, 11)),
             delta(alice, qty(25), -notional(25, 12)),
@@ -649,8 +657,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, -qty(10), notional(10, 8)),
             delta(alice, qty(10), 0),
@@ -673,8 +681,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, -qty(10), notional(10, 8)),
             delta(alice, -qty(10), notional(10, 7)),
@@ -699,8 +707,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[delta(alice, -qty(5), notional(5, 7)), delta(bob, qty(5), 0)],
     );
 
@@ -720,8 +728,8 @@ fn test_complex_multi_user_orderbook() {
         &users,
         &signers,
         &mut expected_balances,
-        &base_token,
-        &quote_token,
+        &base_symbol,
+        &quote_symbol,
         &[
             delta(alice, -qty(25), notional(25, 6)),
             delta(alice, -qty(20), notional(20, 5)),

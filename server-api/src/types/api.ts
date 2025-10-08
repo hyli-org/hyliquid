@@ -9,7 +9,7 @@ export interface ConfigResponse {
 }
 
 export interface BalanceResponse {
-  token: string;
+  symbol: string;
   total: number;
   reserved: number;
   available: number;

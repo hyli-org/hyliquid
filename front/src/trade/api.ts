@@ -84,7 +84,7 @@ export interface ApiTrade {
 }
 
 interface ApiBalance {
-    token: string;
+    symbol: string;
     total: number;
     reserved: number;
     available: number;
@@ -280,7 +280,7 @@ export async function fetchBalances(): Promise<Balance[]> {
     const data: { balances: ApiBalance[] } = await response.json();
 
     return data.balances.map((balance) => ({
-        asset: balance.token,
+        asset: balance.symbol,
         available: balance.available,
         locked: balance.reserved,
         total: balance.total,
