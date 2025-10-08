@@ -23,10 +23,13 @@ impl BorshSerialize for BorshableMonotreeProof {
     }
 }
 
-pub fn compute_root_from_proof(leaf: &MonotreeHash, proof: &Proof) -> MonotreeHash {
+pub fn compute_root_from_proof_with_hasher<H: Hasher>(
+    hasher: &H,
+    leaf: &MonotreeHash,
+    proof: &Proof,
+) -> MonotreeHash {
     let mut hash = *leaf;
     for (is_right, path) in proof.iter().rev() {
-        let hasher = Sha2::new();
         if *is_right {
             let l = path.len();
             let combined = [&path[..l - 1], &hash[..], &path[l - 1..]].concat();
@@ -37,6 +40,10 @@ pub fn compute_root_from_proof(leaf: &MonotreeHash, proof: &Proof) -> MonotreeHa
         }
     }
     hash
+}
+
+pub fn compute_root_from_proof(leaf: &MonotreeHash, proof: &Proof) -> MonotreeHash {
+    compute_root_from_proof_with_hasher(&Sha2::new(), leaf, proof)
 }
 
 impl BorshDeserialize for BorshableMonotreeProof {

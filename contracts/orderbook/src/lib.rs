@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use sdk::RunResult;
+use sdk::{tracing::debug, RunResult};
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -59,6 +59,8 @@ impl sdk::ZkContract for Orderbook {
         self.verify_orders_owners(&action)
             .unwrap_or_else(|e| panic!("Failed to verify orders owners: {e}"));
 
+        debug!("Executing action: {:?}", action);
+
         let res = match action {
             OrderbookAction::PermissionnedOrderbookAction(action) => {
                 if tx_ctx.lane_id != self.lane_id {
@@ -75,7 +77,6 @@ impl sdk::ZkContract for Orderbook {
                 // Assert that used user_info is correct
                 self.has_user_info_key(user_info.get_key())
                     .unwrap_or_else(|e| panic!("User info provided by server is incorrect: {e}"));
-
                 let hashed_secret = Sha256::digest(&permissionned_private_input.secret)
                     .as_slice()
                     .to_vec();
@@ -89,6 +90,8 @@ impl sdk::ZkContract for Orderbook {
                     action,
                     &permissionned_private_input.private_input,
                 )?;
+
+                debug!("Events: {:?}", events);
 
                 let res = borsh::to_vec(&events)
                     .map_err(|e| format!("Failed to encode OrderbookEvents: {e}"))?;
@@ -161,12 +164,18 @@ impl Orderbook {
                 self.create_pair(&pair, &info)
             }
             PermissionnedOrderbookAction::AddSessionKey => {
+                debug!("Adding session key");
                 // On this step, the public key is provided in private_input and hence is never public.
                 // The orderbook server knows the public key as user informed it offchain.
                 let add_session_key_private_input =
                     borsh::from_slice::<AddSessionKeyPrivateInput>(private_input).map_err(|e| {
                         format!("Failed to deserialize CreateOrderPrivateInput: {e}")
                     })?;
+
+                debug!(
+                    "AddSessionKeyPrivateInput: {:?}",
+                    add_session_key_private_input
+                );
 
                 self.add_session_key(user_info, &add_session_key_private_input.new_public_key)
             }

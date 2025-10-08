@@ -3,9 +3,10 @@ use std::marker::PhantomData;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use monotree::{hasher::Sha2, Monotree};
-use monotree::{DefaultDatabase, Hash as MonotreeHash};
+use monotree::{DefaultDatabase, Hash as MonotreeHash, Hasher};
+use sdk::tracing::debug;
 
-use crate::monotree_multi_proof::ProofStatus;
+use crate::monotree_multi_proof::{MonotreeMultiProof, ProofStatus};
 use crate::monotree_proof::compute_root_from_proof;
 use crate::orderbook::{OrderbookEvent, TokenName};
 use crate::orderbook_witness::ZkVmWitness;
@@ -82,6 +83,7 @@ impl Orderbook {
             .checked_add(1)
             .ok_or("Nonce overflow")?;
         self.update_user_info_merkle_root(&updated_user_info)?;
+
         Ok(OrderbookEvent::NonceIncremented {
             user: user_info.user.clone(),
             nonce: updated_user_info.nonce,
@@ -89,53 +91,64 @@ impl Orderbook {
     }
 
     pub fn update_user_info_merkle_root(&mut self, user_info: &UserInfo) -> Result<(), String> {
+        debug!("Updating merkle root with user info: {:?}", user_info);
         if user_info.nonce == 0 {
             return Err("User info nonce cannot be zero".to_string());
         }
         match &mut self.execution_state {
             ExecutionState::Full(state) => {
+                debug!("Root before update: {:?}", state.users_info_mt.root);
                 state
                     .users_info_mt
                     .upsert(&user_info.get_key(), user_info.clone())
                     .map_err(|e| format!("Failed to update user info in monotree: {e}"))?;
+                debug!("Root after update: {:?}", state.users_info_mt.root);
                 state
                     .light
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
                 self.users_info_merkle_root =
                     monotree_root_to_borshable(state.users_info_mt.root.as_ref());
+                debug!("New users info root: {:?}", self.users_info_merkle_root);
             }
             ExecutionState::Light(state) => {
                 state
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
-                state
-                    .users_info
-                    .entry(user_info.user.clone())
-                    .or_insert_with(|| user_info.clone());
                 self.users_info_merkle_root = H256::from([0u8; 32]);
             }
             ExecutionState::ZkVm(state) => {
-                let key = user_info.get_key();
-                let multi_proof = state
+                let leaves = state.users_info.value.iter().map(|ui| {
+                    if ui.user == user_info.user {
+                        (ui.get_key().into(), user_info.to_hash_bytes())
+                    } else {
+                        (ui.get_key().into(), ui.to_hash_bytes())
+                    }
+                });
+                debug!("Leaves for new user info root: {:?}", leaves);
+                debug!("Proof none: {:?}", state.users_info.proof.is_none());
+
+                debug!(
+                    "Derived root computation start {:?}",
+                    state
+                        .users_info
+                        .proof
+                        .as_ref()
+                        .unwrap()
+                        .derived_root(&Sha2::new(), leaves.clone())
+                );
+
+                let new_root = state
                     .users_info
                     .proof
                     .as_ref()
-                    .ok_or_else(|| "Missing users_info multiproof".to_string())?;
-                let key_bytes: [u8; 32] = (*key).into();
-                let path = match multi_proof.proof_status(&key_bytes) {
-                    Some(ProofStatus::Present(path)) => path,
-                    Some(ProofStatus::Absent) | None => {
-                        return Err(format!(
-                            "No users_info proof found for user {} with key {}",
-                            user_info.user,
-                            hex::encode(key.as_slice())
-                        ))
-                    }
-                };
-                let leaf_hash = user_info.to_hash_bytes();
-                let new_root = compute_root_from_proof(&leaf_hash, &path);
-                self.users_info_merkle_root = H256::from(new_root);
+                    .ok_or("Error")?
+                    .derived_root(&Sha2::new(), leaves)
+                    .map_err(|e| format!("Failed to compute new user info root: {e}"))?;
+
+                if let Some(new_root) = new_root {
+                    self.users_info_merkle_root = H256::from(new_root);
+                }
             }
         }
         Ok(())
@@ -181,36 +194,21 @@ impl Orderbook {
                 let witness = state.balances.get(token).ok_or_else(|| {
                     format!("No balance witness found for token {token} while running in ZkVm mode")
                 })?;
-                if balances_to_update.is_empty() {
-                    return Ok(());
-                }
-                let mut current_root = self
-                    .balances_merkle_roots
-                    .get(token)
-                    .map(|h| h.as_slice().try_into().unwrap())
-                    .unwrap_or([0u8; 32]);
 
-                let multi_proof = witness.proof.as_ref().ok_or_else(|| {
-                    format!("Missing balance proof for token {token} while running in ZkVm mode")
-                })?;
+                let leaves = balances_to_update.iter().map(|(user_info_key, balance)| {
+                    ((*user_info_key.clone()), balance.to_hash_bytes())
+                });
 
-                for (user_info_key, balance) in balances_to_update.iter() {
-                    let key_bytes: [u8; 32] = (*user_info_key).into();
-                    let path = match multi_proof.proof_status(&key_bytes) {
-                        Some(ProofStatus::Present(path)) => path,
-                        Some(ProofStatus::Absent) | None => {
-                            return Err(format!(
-                                "Missing balance proof for token {token} and user key {}",
-                                hex::encode(user_info_key.as_slice())
-                            ));
-                        }
-                    };
-                    let leaf_hash = balance.to_hash_bytes();
-                    current_root = compute_root_from_proof(&leaf_hash, &path);
-                }
+                let new_root = &witness
+                    .proof
+                    .as_ref()
+                    .ok_or("Error")?
+                    .derived_root(&Sha2::new(), leaves)
+                    .map_err(|e| format!("Failed to compute new root on token {token}: {e}"))?
+                    .ok_or("Failed to compute new root: missing proof")?;
 
                 self.balances_merkle_roots
-                    .insert(token.to_string(), H256::from(current_root));
+                    .insert(token.to_string(), H256::from(*new_root));
             }
         }
 
@@ -263,6 +261,12 @@ impl<T: MonotreeValue + Clone> MonotreeCommitment<T> {
             root: None,
             _marker: PhantomData,
         }
+    }
+
+    pub fn insert(&mut self, key: &H256, value: &[u8; 32]) -> monotree::Result<()> {
+        self.root = self.tree.insert(self.root.as_ref(), key, value)?;
+
+        Ok(())
     }
 
     pub fn from_iter(
@@ -319,6 +323,13 @@ impl<T: MonotreeValue + Clone> MonotreeCommitment<T> {
         self.tree.commit();
         self.root = current_root;
         Ok(())
+    }
+
+    pub fn build_multi_proof<K>(&mut self, keys: K) -> monotree::Result<MonotreeMultiProof>
+    where
+        K: IntoIterator<Item = monotree::Hash>,
+    {
+        MonotreeMultiProof::build(&mut self.tree, self.root.as_ref(), keys)
     }
 }
 

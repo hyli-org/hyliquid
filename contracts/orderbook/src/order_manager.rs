@@ -127,12 +127,12 @@ impl OrderManager {
                 return if order.order_type == OrderType::Limit {
                     self.insert_order(&order_to_execute, user_info_key)
                 } else {
-                    let counter_side = match order.order_side {
-                        OrderSide::Bid => "sell",
-                        OrderSide::Ask => "buy",
+                    let side_label = match order.order_side {
+                        OrderSide::Bid => "Bid",
+                        OrderSide::Ask => "Ask",
                     };
                     Err(format!(
-                        "No matching {counter_side} orders for market order {}",
+                        "No matching {side_label} orders for market order {}",
                         order.order_id
                     ))
                 };

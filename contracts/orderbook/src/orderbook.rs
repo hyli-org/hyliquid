@@ -1,4 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use sdk::tracing::debug;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -6,7 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::monotree_proof::BorshableMonotreeProof;
 use crate::order_manager::OrderManager;
 use crate::orderbook_state::{FullState, LightState, MonotreeCommitment, ZkVmState};
-use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
+use crate::smt_values::{Balance, BorshableH256 as H256, MonotreeValue, UserInfo};
 use sdk::{ContractName, LaneId, TxContext};
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
@@ -260,6 +261,23 @@ impl Orderbook {
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
 
+                debug!(
+                    "------------- Merkle tree, root before inserting user info: {:?}",
+                    state.users_info_mt
+                );
+
+                let res = state
+                    .users_info_mt
+                    .insert(&user_info.get_key(), &user_info.to_hash_bytes())
+                    .map_err(|e| format!("Failed to insert user info in monotree: {e}"))?;
+
+                dbg!(&res);
+
+                debug!(
+                    "------------- Merkle tree, root after inserting user info: {:?}",
+                    state.users_info_mt
+                );
+
                 vec![OrderbookEvent::SessionKeyAdded {
                     user: user_info.user.to_string(),
                     salt: user_info.salt.clone(),
@@ -282,12 +300,20 @@ impl Orderbook {
             }
             ExecutionState::ZkVm(_) => vec![],
         };
+
+        debug!("User info after adding session key: {:?}", user_info);
+
         if user_info.nonce == 0 {
             // We incremente nonce to be able to add it to the SMT
             events.push(self.increment_nonce_and_save_user_info(&user_info)?);
         } else {
             self.update_user_info_merkle_root(&user_info)?;
         }
+
+        debug!(
+            "User info merkle root after adding session key: {:?}",
+            self.users_info_merkle_root
+        );
 
         Ok(events)
     }

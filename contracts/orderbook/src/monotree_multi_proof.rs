@@ -1,6 +1,7 @@
+use crate::monotree_proof::compute_root_from_proof_with_hasher;
 use borsh::{BorshDeserialize, BorshSerialize};
-use monotree::{Errors, Hash, Monotree, Proof, Result};
-use std::collections::{hash_map::Entry, HashMap};
+use monotree::{verify_proof, Errors, Hash, Monotree, Proof, Result};
+use std::collections::{hash_map::Entry, HashMap, HashSet};
 
 /// Represents a deduplicated proof node reused across multiple paths.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
@@ -67,11 +68,7 @@ pub struct MonotreeMultiProof {
 
 impl MonotreeMultiProof {
     /// Builds a multi-proof by collecting individual proofs and deduplicating shared nodes.
-    pub fn build<D, H, K>(
-        tree: &mut Monotree<D, H>,
-        root: Option<&Hash>,
-        keys: K,
-    ) -> Result<Self>
+    pub fn build<D, H, K>(tree: &mut Monotree<D, H>, root: Option<&Hash>, keys: K) -> Result<Self>
     where
         D: monotree::Database,
         H: monotree::Hasher,
@@ -142,6 +139,74 @@ impl MonotreeMultiProof {
                 ),
                 None => ProofStatus::Absent,
             })
+    }
+
+    /// Verifies that this multiproof authenticates every provided leaf against the expected root.
+    pub fn verify<H, I>(&self, hasher: &H, root: Option<&Hash>, leaves: I) -> Result<()>
+    where
+        H: monotree::Hasher,
+        I: IntoIterator<Item = (Hash, [u8; 32])>,
+    {
+        let mut provided: HashSet<Hash> = HashSet::new();
+
+        for (key, leaf) in leaves.into_iter() {
+            if !provided.insert(key) {
+                return Err(Errors::new(
+                    "multiproof verification received duplicate leaf key",
+                ));
+            }
+
+            match self.proof_status(&key) {
+                Some(ProofStatus::Present(path)) => {
+                    if !verify_proof(hasher, root, &leaf, Some(&path)) {
+                        return Err(Errors::new("multiproof verification failed"));
+                    }
+                }
+                Some(ProofStatus::Absent) => {
+                    return Err(Errors::new("multiproof recorded absence for provided key"));
+                }
+                None => {
+                    return Err(Errors::new("multiproof missing entry for provided key"));
+                }
+            }
+        }
+
+        for (key, status) in self.entries() {
+            if matches!(status, ProofStatus::Present(_)) && !provided.contains(key) {
+                return Err(Errors::new(
+                    "multiproof present entry was not supplied a leaf",
+                ));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Computes the Merkle root implied by a collection of leaves.
+    pub fn derived_root<H, I>(&self, hasher: &H, leaves: I) -> Result<Option<Hash>>
+    where
+        H: monotree::Hasher,
+        I: IntoIterator<Item = (Hash, [u8; 32])>,
+    {
+        let mut candidate: Option<Hash> = None;
+
+        for (key, leaf) in leaves.into_iter() {
+            match self.proof_status(&key) {
+                Some(ProofStatus::Present(path)) => {
+                    if candidate.is_none() {
+                        candidate = Some(compute_root_from_proof_with_hasher(hasher, &leaf, &path));
+                    }
+                }
+                Some(ProofStatus::Absent) => {
+                    return Err(Errors::new("multiproof absent entry for provided key"));
+                }
+                None => {
+                    return Err(Errors::new("multiproof missing entry for provided key"));
+                }
+            }
+        }
+
+        Ok(candidate)
     }
 
     /// Number of deduplicated nodes stored in this multi-proof.
@@ -287,5 +352,75 @@ mod tests {
                 panic!("expected inclusion proof for inserted key");
             }
         }
+    }
+
+    #[test]
+    fn multi_proof_verify_accepts_valid_leaves() {
+        let (keys, leaves) = sample_pairs(3);
+        let mut tree = Monotree::default();
+
+        let mut root = None;
+        for (key, leaf) in keys.iter().zip(leaves.iter()) {
+            root = tree.insert(root.as_ref(), key, leaf).unwrap();
+        }
+
+        let proof =
+            MonotreeMultiProof::build(&mut tree, root.as_ref(), keys.iter().cloned()).unwrap();
+
+        let hasher = Blake3::new();
+        let leaves_iter = keys
+            .iter()
+            .zip(leaves.iter())
+            .map(|(key, leaf)| (*key, *leaf));
+
+        proof
+            .verify(&hasher, root.as_ref(), leaves_iter)
+            .expect("multiproof should verify");
+
+        let derived = proof
+            .derived_root(
+                &hasher,
+                keys.iter()
+                    .zip(leaves.iter())
+                    .map(|(key, leaf)| (*key, *leaf)),
+            )
+            .expect("derived root computation must succeed")
+            .expect("root should be present");
+
+        assert_eq!(root.unwrap(), derived);
+    }
+
+    #[test]
+    fn multi_proof_verify_detects_bad_leaf() {
+        let (keys, leaves) = sample_pairs(2);
+        let mut tree = Monotree::default();
+
+        let mut root = None;
+        for (key, leaf) in keys.iter().zip(leaves.iter()) {
+            root = tree.insert(root.as_ref(), key, leaf).unwrap();
+        }
+
+        let proof =
+            MonotreeMultiProof::build(&mut tree, root.as_ref(), keys.iter().cloned()).unwrap();
+
+        let hasher = Blake3::new();
+
+        // Corrupt one leaf value
+        let mut leaves_iter = keys
+            .iter()
+            .zip(leaves.iter())
+            .map(|(key, leaf)| (*key, *leaf))
+            .collect::<Vec<_>>();
+        leaves_iter[0].1 = random_hash();
+
+        let err = proof
+            .verify(&hasher, root.as_ref(), leaves_iter.clone().into_iter())
+            .expect_err("verification should fail for mismatching leaf");
+        assert!(err.to_string().contains("verification failed"));
+
+        let derived = proof
+            .derived_root(&hasher, leaves_iter.into_iter())
+            .expect("derived root computation should still produce a candidate");
+        assert!(derived.is_some());
     }
 }

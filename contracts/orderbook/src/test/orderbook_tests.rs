@@ -10,8 +10,10 @@ use crate::{
     AddSessionKeyPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, PermissionnedPrivateInput,
 };
+use borsh::BorshDeserialize;
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
+use sdk::tracing::debug;
 use sdk::{guest, LaneId};
 use sdk::{tracing, ZkContract};
 use sdk::{BlobIndex, Calldata, ContractName, Identity, TxContext, TxHash};
@@ -78,8 +80,6 @@ fn run_action(
         .execute_permissionned_action(user_info.clone(), action.clone(), &private_payload)
         .expect("light execution");
 
-    tracing::debug!("light events: {:?}", events);
-
     let commitment_metadata = full
         .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &action)
         .expect("derive metadata");
@@ -88,7 +88,6 @@ fn run_action(
         .execute_permissionned_action(user_info.clone(), action.clone(), &private_payload)
         .expect("full execution");
 
-    tracing::debug!("full events: {:?}\n\n\n", events_full);
     assert!(
         events.len() == events_full.len(),
         "light and full events should match"
@@ -111,11 +110,22 @@ fn run_action(
         private_input: borsh::to_vec(&permissioned_private_input).expect("serialize private input"),
     };
 
+    debug!("Calldata: {:?}", calldata);
+
     let res = guest::execute::<Orderbook>(&commitment_metadata, &[calldata]);
 
     assert!(res.len() == 1, "expected one output");
     let hyli_output = &res[0];
     assert!(hyli_output.success, "execution failed");
+
+    if hyli_output.next_state != full.commit() {
+        let zk_state =
+            Orderbook::try_from_slice(&hyli_output.next_state.0).expect("deserialize zk state");
+        let full_state =
+            Orderbook::try_from_slice(&full.commit().0).expect("deserialize full state");
+        let diff = zk_state.diff(&full_state);
+        println!("STATE DIFF: {:?}", diff);
+    }
 
     assert!(
         hyli_output.next_state == full.commit(),
