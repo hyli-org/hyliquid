@@ -423,6 +423,8 @@ async fn create_order(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
+    let public_key = auth.public_key.expect("Missing public key in headers");
+    let signature = auth.signature.expect("Missing signature in headers");
 
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
@@ -434,6 +436,22 @@ async fn create_order(
             )
         })?;
 
+        orderbook::utils::verify_user_signature_authorization(
+            &user_info,
+            &public_key,
+            &format!(
+                "{}:{}:create_order:{}",
+                user_info.user, user_info.nonce, request.order_id
+            ),
+            &signature,
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+            )
+        })?;
+
         let events = orderbook
             .execute_order(&user_info, request.clone())
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
@@ -442,8 +460,8 @@ async fn create_order(
     };
 
     let action_private_input = &CreateOrderPrivateInput {
-        public_key: auth.public_key.expect("Missing public key in headers"),
-        signature: auth.signature.expect("Missing signature in headers"),
+        public_key,
+        signature,
     };
 
     let orderbook_action = PermissionnedOrderbookAction::CreateOrder(request);
@@ -466,6 +484,8 @@ async fn cancel_order(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
+    let public_key = auth.public_key.expect("Missing public key in headers");
+    let signature = auth.signature.expect("Missing signature in headers");
 
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
@@ -474,6 +494,22 @@ async fn cancel_order(
             AppError(
                 StatusCode::BAD_REQUEST,
                 anyhow::anyhow!("Could not find user {user}: {e}"),
+            )
+        })?;
+
+        orderbook::utils::verify_user_signature_authorization(
+            &user_info,
+            &public_key,
+            &format!(
+                "{}:{}:cancel:{}",
+                user_info.user, user_info.nonce, request.order_id
+            ),
+            &signature,
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
             )
         })?;
 
@@ -498,8 +534,8 @@ async fn cancel_order(
     };
 
     let action_private_input = CancelOrderPrivateInput {
-        public_key: auth.public_key.expect("Missing public key in headers"),
-        signature: auth.signature.expect("Missing signature in headers"),
+        public_key,
+        signature,
     };
 
     let orderbook_action = PermissionnedOrderbookAction::Cancel {
@@ -524,6 +560,8 @@ async fn withdraw(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
     let user = auth.identity;
+    let public_key = auth.public_key.expect("Missing public key in headers");
+    let signature = auth.signature.expect("Missing signature in headers");
 
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
@@ -532,6 +570,22 @@ async fn withdraw(
             AppError(
                 StatusCode::BAD_REQUEST,
                 anyhow::anyhow!("Could not find user {user}: {e}"),
+            )
+        })?;
+
+        orderbook::utils::verify_user_signature_authorization(
+            &user_info,
+            &public_key,
+            &format!(
+                "{}:{}:withdraw:{}:{}",
+                user_info.user, user_info.nonce, request.symbol, request.amount
+            ),
+            &signature,
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
             )
         })?;
 
@@ -556,8 +610,8 @@ async fn withdraw(
     };
 
     let action_private_input = WithdrawPrivateInput {
-        public_key: auth.public_key.expect("Missing public key in headers"),
-        signature: auth.signature.expect("Missing signature in headers"),
+        public_key,
+        signature,
     };
 
     let orderbook_action = PermissionnedOrderbookAction::Withdraw {
