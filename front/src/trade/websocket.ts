@@ -1,6 +1,7 @@
 import { reactive } from "vue";
 import type { Fill, Order, ApiTrade, ApiOrder } from "./trade";
 import { transformOrder, transformTrade } from "./api";
+import { WEBSOCKET_URL } from "../config";
 
 export interface OrderbookEntry {
     price: number;
@@ -57,7 +58,7 @@ class WebSocketManager {
         orders: [],
     });
 
-    constructor(url: string = "ws://localhost:3000/ws") {
+    constructor(url: string = WEBSOCKET_URL) {
         this.url = url;
     }
 

@@ -7,6 +7,7 @@ declare global {
         __CONFIG__?: {
             API_BASE_URL?: string;
             BACKEND_API_URL?: string;
+            WEBSOCKET_URL?: string;
         };
     }
 }
@@ -17,3 +18,6 @@ export const API_BASE_URL =
 export const BACKEND_API_URL = ref(
     window.__CONFIG__?.BACKEND_API_URL || import.meta.env.VITE_BACKEND_API_URL || "http://localhost:9002",
 );
+
+export const WEBSOCKET_URL =
+    window.__CONFIG__?.WEBSOCKET_URL || import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:3000/ws";
