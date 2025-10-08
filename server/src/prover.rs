@@ -13,7 +13,7 @@ use orderbook::{
     OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput,
 };
 use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 #[derive(Debug, Clone)]
 pub struct PendingTx {
@@ -238,6 +238,8 @@ impl OrderbookProverModule {
                                     verifier: prover.verifier(),
                                     proof: proof.data,
                                 };
+
+                                info!("Proof took {:?} cycles", proof.metadata.cycles);
 
                                 match node_client.send_tx_proof(tx).await {
                                     Ok(proof_tx_hash) => {
