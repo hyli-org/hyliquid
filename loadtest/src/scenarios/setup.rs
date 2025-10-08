@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use goose::prelude::*;
 use server::services::user_service::Balance;
 use tracing::{debug, info};
@@ -13,8 +15,13 @@ async fn init_user_state(user: &mut GooseUser) -> TransactionResult {
         return Ok(()); // Already initialized
     }
 
+    let config = {
+        let global_config = GLOBAL_CONFIG.lock().unwrap();
+        global_config.clone().unwrap()
+    };
+
     // Create user state
-    let user_state = UserState::new(user.weighted_users_index).unwrap();
+    let user_state = UserState::new(user.weighted_users_index, &config.load.prefix).unwrap();
     info!(
         "Initializing user {} (index {})",
         user_state.auth.identity, user.weighted_users_index
@@ -211,6 +218,7 @@ async fn get_nonce_transaction(user: &mut GooseUser) -> TransactionResult {
             Ok(nonce) => break Ok(nonce),
             Err(e) => {
                 if e.to_string().contains("404") {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
                 break Err(e);
@@ -227,6 +235,8 @@ async fn get_nonce_transaction(user: &mut GooseUser) -> TransactionResult {
 /// Creates the setup scenario with all its transactions
 pub fn setup_scenario(name: &str) -> Scenario {
     scenario!(name)
+        .set_wait_time(Duration::from_millis(20), Duration::from_millis(200))
+        .unwrap()
         .register_transaction(
             transaction!(init_user_state)
                 .set_name("init_user_state")

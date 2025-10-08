@@ -4,12 +4,10 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
-use std::sync::RwLock;
-use tracing::info;
+use tracing::debug;
 
 pub struct UserService {
     pool: PgPool,
-    user_id_map: RwLock<HashMap<String, i64>>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -27,19 +25,12 @@ pub struct UserBalances {
 
 impl UserService {
     pub async fn new(pool: PgPool) -> Self {
-        UserService {
-            pool,
-            user_id_map: RwLock::new(HashMap::new()),
-        }
+        UserService { pool }
     }
 
     /// Return the user_id for a given identity
     /// Store it in memory for faster access
     pub async fn get_user_id(&self, user: &str) -> Result<i64, AppError> {
-        if let Some(user_id) = self.user_id_map.read().unwrap().get(user) {
-            return Ok(*user_id);
-        }
-
         let row = sqlx::query("SELECT user_id, salt, nonce FROM users WHERE identity = $1")
             .bind(user)
             .fetch_one(&self.pool)
@@ -52,11 +43,6 @@ impl UserService {
             })?;
 
         let user_id = row.get::<i64, _>("user_id");
-
-        self.user_id_map
-            .write()
-            .unwrap()
-            .insert(user.to_string(), user_id);
 
         Ok(user_id)
     }
@@ -105,7 +91,7 @@ impl UserService {
 
     pub async fn get_all_users(&self) -> HashMap<String, UserInfo> {
         // Fetch all users from the database and store them in the user_id_map
-        info!("Fetching all users from the database");
+        debug!("Fetching all users from the database");
         // TODO this query might need to be optimized
         let rows = sqlx::query(
             "

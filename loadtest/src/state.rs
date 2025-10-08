@@ -160,8 +160,8 @@ pub struct UserState {
 }
 
 impl UserState {
-    pub fn new(user_id: usize) -> anyhow::Result<Self> {
-        let identity = format!("loadtest_user_{user_id}");
+    pub fn new(user_id: usize, prefix: &str) -> anyhow::Result<Self> {
+        let identity = format!("{}_{}", prefix, user_id);
         let auth = UserAuth::new(&identity)?;
 
         Ok(UserState {
@@ -237,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_user_state() {
-        let mut user = UserState::new(1).unwrap();
+        let mut user = UserState::new(1, "loadtest_user").unwrap();
         assert_eq!(user.auth.identity, "loadtest_user_1");
 
         let nonce1 = user.next_nonce();

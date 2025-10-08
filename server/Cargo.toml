@@ -7,9 +7,9 @@ name = "tx_sender"
 path = "src/bin/tx_sender.rs"
 
 [dependencies]
-orderbook = { workspace = true, features = ["sqlx", "instrumentation"] }
+orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
-client-sdk = { workspace = true, features = ["sp1", "rest", "instrumentation"] }
+client-sdk = { workspace = true, features = ["sp1", "rest"] }
 hyli-modules = { workspace = true }
 hyli-net = { workspace = true }
 # Remove features if you want reproducible builds with docker
@@ -64,3 +64,4 @@ tracing-opentelemetry = "0.29.0"
 
 [features]
 nonreproducible = ["contracts/nonreproducible"]
+instrumentation = []

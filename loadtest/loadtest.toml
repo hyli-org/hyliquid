@@ -18,8 +18,10 @@ qty_scale = 8        # Number of decimal places for quantity
 # Load model: "closed" (fixed number of users) or "open" (constant RPS)
 model = "closed"
 
+prefix = "loadtest_user"
+
 # For closed model: number of virtual users
-users = 50
+users = 5000
 
 # For open model: requests per second target
 rps = 50
@@ -28,8 +30,8 @@ rps = 50
 duration = 120
 
 # Ramp-up configuration
-ramp_users_per_second = 1 # Add N users per second during ramp-up
-ramp_duration = 60         # Ramp-up duration in seconds
+ramp_users_per_second = 10 # Add N users per second during ramp-up
+ramp_duration = 50         # Ramp-up duration in seconds
 
 [maker]
 # Maker (liquidity provider) configuration

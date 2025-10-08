@@ -9,13 +9,15 @@ mod state;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Parser;
-use goose::prelude::*;
+use goose::{config::GooseConfiguration, prelude::*};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use config::{CliArgs, Config, LoadModel};
 use scenarios::{cancellation_scenario, maker_scenario, taker_scenario};
 use state::SharedState;
 use std::sync::Mutex;
+
+use crate::scenarios::setup_scenario;
 
 // Global state for config and shared state to be accessed by user sessions
 static GLOBAL_CONFIG: Mutex<Option<Config>> = Mutex::new(None);
@@ -103,7 +105,7 @@ async fn main() -> Result<()> {
     }
 
     // Build Goose attack
-    let goose_metrics = run_goose_test(config.clone(), shared_state).await?;
+    let goose_metrics = run_goose_test(config.clone(), shared_state, args.prepare).await?;
 
     // Export metrics
     let summary = metrics::export_metrics(&goose_metrics, &config.metrics, start_time)
@@ -122,7 +124,11 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_goose_test(config: Config, _shared_state: SharedState) -> Result<GooseMetrics> {
+async fn run_goose_test(
+    config: Config,
+    _shared_state: SharedState,
+    prepare: bool,
+) -> Result<GooseMetrics> {
     // Determine user count based on load model
     let users = match config.load.model {
         LoadModel::Closed => config.load.users as usize,
@@ -135,7 +141,8 @@ async fn run_goose_test(config: Config, _shared_state: SharedState) -> Result<Go
 
     // Build base Goose configuration with chained calls
     tracing::info!("Building Goose configuration...");
-    let mut goose_builder = GooseAttack::initialize()
+    let configuration = GooseConfiguration::default();
+    let mut goose_builder = GooseAttack::initialize_with_config(configuration)
         .context("Failed to initialize Goose")?
         .set_default(GooseDefault::Host, config.server.base_url.as_str())
         .context("Failed to set host")?
@@ -167,26 +174,32 @@ async fn run_goose_test(config: Config, _shared_state: SharedState) -> Result<Go
     tracing::info!("Registering setup scenario...");
     let mut attack = *goose_builder;
 
-    // Register maker scenario if enabled
-    if config.maker.enabled {
-        tracing::info!("Registering maker scenario...");
-        let maker = maker_scenario().set_weight(config.maker.weight as usize)?;
-        attack = attack.register_scenario(maker);
-    }
+    if prepare {
+        tracing::info!("Registering setup scenario...");
+        let setup = setup_scenario("setup").set_weight(100 as usize)?;
+        attack = attack.register_scenario(setup);
+    } else {
+        // Register maker scenario if enabled
+        if config.maker.enabled {
+            tracing::info!("Registering maker scenario...");
+            let maker = maker_scenario().set_weight(config.maker.weight as usize)?;
+            attack = attack.register_scenario(maker);
+        }
 
-    // Register taker scenario if enabled
-    if config.taker.enabled {
-        tracing::info!("Registering taker scenario...");
-        let taker = taker_scenario().set_weight(config.taker.weight as usize)?;
-        attack = attack.register_scenario(taker);
-    }
+        // Register taker scenario if enabled
+        if config.taker.enabled {
+            tracing::info!("Registering taker scenario...");
+            let taker = taker_scenario().set_weight(config.taker.weight as usize)?;
+            attack = attack.register_scenario(taker);
+        }
 
-    // Register cancellation scenario if enabled
-    if config.cancellation.enabled {
-        tracing::info!("Registering cancellation scenario...");
-        let cancellation =
-            cancellation_scenario().set_weight(config.cancellation.weight as usize)?;
-        attack = attack.register_scenario(cancellation);
+        // Register cancellation scenario if enabled
+        if config.cancellation.enabled {
+            tracing::info!("Registering cancellation scenario...");
+            let cancellation =
+                cancellation_scenario().set_weight(config.cancellation.weight as usize)?;
+            attack = attack.register_scenario(cancellation);
+        }
     }
 
     // Execute the load test

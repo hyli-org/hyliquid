@@ -13,7 +13,7 @@ use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::services::asset_service::AssetService;
 use crate::services::user_service::UserService;
@@ -76,7 +76,7 @@ impl DatabaseModule {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn handle_database_request(&mut self, request: DatabaseRequest) -> Result<()> {
         match request {
             DatabaseRequest::WriteEvents {
@@ -94,7 +94,7 @@ impl DatabaseModule {
         Ok(())
     }
 
-    #[tracing::instrument(skip(self))]
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn write_events(
         &self,
         user: &str,
@@ -174,7 +174,7 @@ impl DatabaseModule {
                         .await
                         .map_err(|e| anyhow::anyhow!("{}", e.1))?;
 
-                    info!(
+                    debug!(
                         "Updating balance for user {} with asset {:?} and amount {}",
                         user, asset, amount
                     );
@@ -225,7 +225,7 @@ impl DatabaseModule {
                         .await
                         .ok_or_else(|| anyhow::anyhow!("Instrument not found: {symbol}"))?;
 
-                    info!(
+                    debug!(
                         "Creating order for user {} with instrument {:?} and order {:?}",
                         user, instrument, order
                     );
@@ -266,7 +266,7 @@ impl DatabaseModule {
                     )?;
                 }
                 OrderbookEvent::OrderCancelled { order_id, pair } => {
-                    info!(
+                    debug!(
                         "Cancelling order for user {} with order id {:?} and pair {:?}",
                         user, order_id, pair
                     );
@@ -304,7 +304,7 @@ impl DatabaseModule {
                     taker_order_id,
                     pair,
                 } => {
-                    info!(
+                    debug!(
                         "Executing order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
@@ -385,7 +385,7 @@ impl DatabaseModule {
                     executed_quantity: _,
                     pair,
                 } => {
-                    info!(
+                    debug!(
                         "Updating order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
@@ -491,7 +491,7 @@ impl DatabaseModule {
                         fetched_user_id.map_err(|e| anyhow::anyhow!("{}", e.1))?
                     };
 
-                    info!("Setting user session keys for user {}", user);
+                    debug!("Setting user session keys for user {}", user);
 
                     log_error!(
                         sqlx::query("INSERT INTO user_session_keys (commit_id, user_id, session_keys) VALUES ($1, $2, $3)")
@@ -504,7 +504,7 @@ impl DatabaseModule {
                     )?;
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
-                    info!("Incrementing nonce for user {}", user);
+                    debug!("Incrementing nonce for user {}", user);
                     log_error!(
                         sqlx::query("UPDATE users SET nonce = $1 WHERE identity = $2")
                             .bind(nonce as i64)
@@ -518,7 +518,7 @@ impl DatabaseModule {
         }
 
         if trigger_notify_trades {
-            info!("Notifying trades");
+            debug!("Notifying trades");
             log_error!(
                 sqlx::query("select pg_notify('trades', 'trades')")
                     .execute(&mut *tx)
@@ -528,7 +528,7 @@ impl DatabaseModule {
         }
 
         if trigger_notify_orders {
-            info!("Notifying orders");
+            debug!("Notifying orders");
             log_error!(
                 sqlx::query("select pg_notify('orders', 'orders')")
                     .execute(&mut *tx)
@@ -538,7 +538,7 @@ impl DatabaseModule {
         }
 
         for symbol in symbol_book_updated {
-            info!("Notifying book for symbol {}", symbol);
+            debug!("Notifying book for symbol {}", symbol);
             log_error!(
                 sqlx::query("select pg_notify('book', $1)")
                     .bind(symbol)

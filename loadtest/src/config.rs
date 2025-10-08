@@ -36,6 +36,7 @@ pub struct InstrumentConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoadConfig {
     pub model: LoadModel,
+    pub prefix: String,
     pub users: u32,
     pub rps: u32,
     pub duration: u64,
@@ -131,6 +132,10 @@ pub struct CliArgs {
     #[arg(long, default_value = "loadtest.toml")]
     pub config: PathBuf,
 
+    /// Prepare the test environment
+    #[arg(long)]
+    pub prepare: bool,
+
     /// Override: Server base URL
     #[arg(long)]
     pub base_url: Option<String>,
@@ -146,6 +151,10 @@ pub struct CliArgs {
     /// Override: Number of virtual users (closed model)
     #[arg(long)]
     pub users: Option<u32>,
+
+    /// Override: Prefix for user identities
+    #[arg(long)]
+    pub prefix: Option<String>,
 
     /// Override: Requests per second (open model)
     #[arg(long)]
@@ -260,6 +269,10 @@ impl Config {
 
         if let Some(users) = args.users {
             config.load.users = users;
+        }
+
+        if let Some(prefix) = &args.prefix {
+            config.load.prefix = prefix.clone();
         }
 
         if let Some(rps) = args.rps {

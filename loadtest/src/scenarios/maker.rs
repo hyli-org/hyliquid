@@ -9,6 +9,7 @@ use crate::GLOBAL_CONFIG;
 use crate::GLOBAL_SHARED_STATE;
 
 /// Transaction: Update mid price with random walk
+#[allow(unused)]
 async fn update_mid_price_transaction(_user: &mut GooseUser) -> TransactionResult {
     let config = {
         let global_config = GLOBAL_CONFIG.lock().unwrap();
@@ -108,7 +109,10 @@ async fn place_bid_orders_transaction(user: &mut GooseUser) -> TransactionResult
         }
 
         // Small delay between orders to avoid overwhelming the server
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        // tokio::time::sleep(tokio::time::Duration::from_millis(
+        //     config.maker.cycle_interval_ms,
+        // ))
+        // .await;
     }
 
     Ok(())
@@ -189,7 +193,10 @@ async fn place_ask_orders_transaction(user: &mut GooseUser) -> TransactionResult
         }
 
         // Small delay between orders
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        // tokio::time::sleep(tokio::time::Duration::from_millis(
+        //     config.maker.cycle_interval_ms,
+        // ))
+        // .await;
     }
 
     Ok(())
@@ -230,33 +237,17 @@ async fn get_user_trades_transaction(user: &mut GooseUser) -> TransactionResult 
 /// Creates the maker scenario with all its transactions
 pub fn maker_scenario() -> Scenario {
     setup_scenario("Maker")
+        // .register_transaction(
+        //     transaction!(update_mid_price_transaction)
+        //         .set_name("update_mid_price")
+        //         .set_sequence(10),
+        // )
         .register_transaction(
-            transaction!(update_mid_price_transaction)
-                .set_name("update_mid_price")
-                .set_sequence(10),
+            transaction!(place_bid_orders_transaction).set_name("place_bid_orders"),
         )
         .register_transaction(
-            transaction!(place_bid_orders_transaction)
-                .set_name("place_bid_orders")
-                .set_weight(10)
-                .unwrap(),
+            transaction!(place_ask_orders_transaction).set_name("place_ask_orders"),
         )
-        .register_transaction(
-            transaction!(place_ask_orders_transaction)
-                .set_name("place_ask_orders")
-                .set_weight(10)
-                .unwrap(),
-        )
-        .register_transaction(
-            transaction!(get_user_orders_transaction)
-                .set_name("get_user_orders")
-                .set_weight(50)
-                .unwrap(),
-        )
-        .register_transaction(
-            transaction!(get_user_trades_transaction)
-                .set_name("get_user_trades")
-                .set_weight(50)
-                .unwrap(),
-        )
+        .register_transaction(transaction!(get_user_orders_transaction).set_name("get_user_orders"))
+        .register_transaction(transaction!(get_user_trades_transaction).set_name("get_user_trades"))
 }

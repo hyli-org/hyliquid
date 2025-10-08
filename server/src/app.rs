@@ -219,7 +219,7 @@ async fn get_nonce(
 }
 
 #[axum::debug_handler]
-#[tracing::instrument(skip(ctx))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_pair(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -328,7 +328,7 @@ async fn create_pair(
     .await
 }
 
-#[tracing::instrument(skip(ctx))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -348,9 +348,20 @@ async fn add_session_key(
             UserInfo::new(user.clone(), salt.to_vec())
         });
 
-        let events = orderbook
-            .add_session_key(user_info.clone(), &public_key)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        let res = orderbook.add_session_key(user_info.clone(), &public_key);
+        let events = match res {
+            Ok(events) => events,
+            Err(e) => {
+                if e.contains("already exists") {
+                    return Err(AppError(StatusCode::NOT_MODIFIED, anyhow::anyhow!(e)));
+                } else {
+                    return Err(AppError(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        anyhow::anyhow!(e),
+                    ));
+                }
+            }
+        };
 
         (user_info, events)
     };
@@ -371,7 +382,7 @@ async fn add_session_key(
     .await
 }
 
-#[tracing::instrument(skip(ctx))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn deposit(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -415,7 +426,7 @@ async fn deposit(
     .await
 }
 
-#[tracing::instrument(skip(ctx))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -476,7 +487,7 @@ async fn create_order(
     .await
 }
 
-#[tracing::instrument(skip(ctx))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn cancel_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -552,7 +563,7 @@ async fn cancel_order(
     .await
 }
 
-#[tracing::instrument(skip(ctx))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn withdraw(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -629,7 +640,10 @@ async fn withdraw(
     .await
 }
 
-#[tracing::instrument(skip(ctx, action_private_input))]
+#[cfg_attr(
+    feature = "instrumentation",
+    tracing::instrument(skip(ctx, action_private_input))
+)]
 async fn process_orderbook_action<T: BorshSerialize>(
     user_info: UserInfo,
     events: Vec<OrderbookEvent>,
@@ -637,8 +651,6 @@ async fn process_orderbook_action<T: BorshSerialize>(
     action_private_input: &T,
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
-    tracing::info!("Orderbook execution results: {:?}", events);
-
     let blob_tx = BlobTransaction::new(
         "orderbook@orderbook",
         vec![
