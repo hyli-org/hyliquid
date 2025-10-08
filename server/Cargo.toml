@@ -11,7 +11,6 @@ orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
 client-sdk = { workspace = true, features = ["sp1", "rest"] }
 hyli-modules = { workspace = true }
-hyli-net = { workspace = true }
 # Remove features if you want reproducible builds with docker
 contracts = { workspace = true, features = ["nonreproducible"] }
 
@@ -31,34 +30,24 @@ axum = { version = "0.8.3", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "2.0"
 tower-http = { version = "0.6.2", features = ["cors"] }
 anyhow = "1.0.93"
 reqwest = { version = "0.12.9", features = ["json"] }
 hex = "0.4.3"
 k256 = "0.13.4"
 sha3 = "0.10.8"
-hmac = "0.12.1"
 
 rand = "0.9.0"
 borsh = "1.5.3"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 clap = "4.5.28"
-utoipa-axum = { version = "0.2.0" }
-utoipa = "5.3.1"
 
 opentelemetry = "0.28"
 opentelemetry-prometheus = { version = "0.28.0" }
 opentelemetry_sdk = "0.28"
 prometheus = { version = "0.13.4" }
 
-
-zip = "=2.3.0"
-tracing-chrome = "0.7.2"
-tracing-perfetto-sdk-layer = "0.12.0"
-tracing-perfetto-sdk-schema = "0.12"
-tracing-appender = "0.2"
 opentelemetry-otlp = { version = "0.28.0", features = ["grpc-tonic", "trace"] }
 tracing-opentelemetry = "0.29.0"
 

@@ -30,8 +30,6 @@ use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, level_filters::LevelFilter};
-use tracing_perfetto_sdk_schema as schema;
-use tracing_perfetto_sdk_schema::trace_config;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -131,23 +129,6 @@ async fn setup_database(config: &Conf, clean_db: bool) -> Result<PgPool> {
     info!("Database migrations completed");
 
     Ok(pool)
-}
-
-pub fn minimal_trace_config() -> schema::TraceConfig {
-    schema::TraceConfig {
-        buffers: vec![trace_config::BufferConfig {
-            size_kb: Some(1024),
-            ..Default::default()
-        }],
-        data_sources: vec![trace_config::DataSource {
-            config: Some(schema::DataSourceConfig {
-                name: Some("rust_tracing".into()),
-                ..Default::default()
-            }),
-            ..Default::default()
-        }],
-        ..Default::default()
-    }
 }
 
 fn init_tracing() {

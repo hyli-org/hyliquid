@@ -5,32 +5,26 @@ FROM oven/bun:latest AS build
 WORKDIR /app
 
 # Copier les fichiers de l'application
-COPY front/package.json front/bun.lock ./
+COPY server-api/package.json server-api/bun.lock ./
 
 # Installer les dépendances
 RUN bun install
 
 # Copier le reste des fichiers de l'application
-COPY front .
+COPY server-api .
 
 # Construire l'application
 RUN bun run build
 
 # Étape de production
-FROM nginx:1.21.5-alpine AS production
+FROM oven/bun:latest AS production
 
 # Copier les fichiers de build depuis l'étape de build
-COPY --from=build /app/dist /usr/share/nginx/html
-COPY --from=build /app/nginx.conf /etc/nginx/conf.d/default.conf
-
-# Copier le script d'entrypoint
-COPY front/docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+COPY --from=build /app/dist .
 
 # Exposer le port 80
 EXPOSE 80
 
 # Utiliser le script d'entrypoint pour générer la config au démarrage
-ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["nginx", "-g", "daemon off;"]
+CMD ["bun", "main.js"]
 
