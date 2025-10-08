@@ -65,18 +65,36 @@ pub fn validate_sla(summary: &MetricsSummary, sla_config: &SlaConfig) -> Result<
     // Report results
     if violations.is_empty() {
         println!("\n✅ SLA VALIDATION PASSED");
-        println!("  ✓ P50 latency: {}ms <= {}ms", summary.latencies.p50_ms, sla_config.p50_max_ms);
-        println!("  ✓ P95 latency: {}ms <= {}ms", summary.latencies.p95_ms, sla_config.p95_max_ms);
-        println!("  ✓ P99 latency: {}ms <= {}ms", summary.latencies.p99_ms, sla_config.p99_max_ms);
-        println!("  ✓ Error rate: {:.2}% <= {:.2}%", summary.error_rate_percent, sla_config.max_error_rate_percent);
-        println!("  ✓ Minimum fills: {} >= {}", create_order_count, sla_config.min_fills);
+        println!(
+            "  ✓ P50 latency: {}ms <= {}ms",
+            summary.latencies.p50_ms, sla_config.p50_max_ms
+        );
+        println!(
+            "  ✓ P95 latency: {}ms <= {}ms",
+            summary.latencies.p95_ms, sla_config.p95_max_ms
+        );
+        println!(
+            "  ✓ P99 latency: {}ms <= {}ms",
+            summary.latencies.p99_ms, sla_config.p99_max_ms
+        );
+        println!(
+            "  ✓ Error rate: {:.2}% <= {:.2}%",
+            summary.error_rate_percent, sla_config.max_error_rate_percent
+        );
+        println!(
+            "  ✓ Minimum fills: {} >= {}",
+            create_order_count, sla_config.min_fills
+        );
         Ok(())
     } else {
         println!("\n❌ SLA VALIDATION FAILED");
         for violation in &violations {
-            println!("  ✗ {}", violation);
+            println!("  ✗ {violation}");
         }
-        bail!("SLA requirements not met: {} violation(s)", violations.len());
+        bail!(
+            "SLA requirements not met: {} violation(s)",
+            violations.len()
+        );
     }
 }
 
@@ -171,4 +189,3 @@ mod tests {
         assert!(validate_sla(&summary, &sla).is_err());
     }
 }
-

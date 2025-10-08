@@ -7,7 +7,7 @@ use sdk::{merkle_utils::BorshableMerkleProof, RunResult};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    orderbook::{ExecutionState, Order, OrderType, Orderbook, OrderbookEvent, PairInfo, TokenPair},
+    orderbook::{ExecutionState, Order, OrderType, Orderbook, OrderbookEvent, Pair, PairInfo},
     smt_values::UserInfo,
 };
 
@@ -132,7 +132,7 @@ impl sdk::ZkContract for Orderbook {
     fn commit(&self) -> sdk::StateCommitment {
         let mut state_to_commit = Orderbook {
             hashed_secret: self.hashed_secret,
-            pairs_info: self.pairs_info.clone(),
+            assets_info: self.assets_info.clone(),
             lane_id: self.lane_id.clone(),
             balances_merkle_roots: self.balances_merkle_roots.clone(),
             users_info_merkle_root: self.users_info_merkle_root,
@@ -168,8 +168,8 @@ impl Orderbook {
 
                 self.add_session_key(user_info, &add_session_key_private_input.new_public_key)
             }
-            PermissionnedOrderbookAction::Deposit { token, amount } => {
-                self.deposit(&token, amount, &user_info)
+            PermissionnedOrderbookAction::Deposit { symbol, amount } => {
+                self.deposit(&symbol, amount, &user_info)
             }
             PermissionnedOrderbookAction::CreateOrder(Order {
                 order_id,
@@ -234,8 +234,8 @@ impl Orderbook {
 
                 self.cancel_order(order_id, &user_info)
             }
-            PermissionnedOrderbookAction::Withdraw { token, amount } => {
-                // TODO: assert there is a transfer blob for that token
+            PermissionnedOrderbookAction::Withdraw { symbol, amount } => {
+                // TODO: assert there is a transfer blob for that symbol
 
                 let withdraw_private_data =
                     borsh::from_slice::<WithdrawPrivateInput>(private_input)
@@ -246,14 +246,14 @@ impl Orderbook {
                     &user_info,
                     &withdraw_private_data.public_key,
                     &format!(
-                        "{}:{}:withdraw:{token}:{amount}",
+                        "{}:{}:withdraw:{symbol}:{amount}",
                         user_info.user, user_info.nonce
                     ),
                     &withdraw_private_data.signature,
                 )
                 .map_err(|err| format!("Failed to verify user signature authorization: {err}"))?;
 
-                self.withdraw(&token, &amount, &user_info)
+                self.withdraw(&symbol, &amount, &user_info)
             }
         }
     }
@@ -317,11 +317,11 @@ pub enum OrderbookAction {
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
 pub enum PermissionnedOrderbookAction {
     AddSessionKey,
-    CreatePair { pair: TokenPair, info: PairInfo },
-    Deposit { token: String, amount: u64 },
+    CreatePair { pair: Pair, info: PairInfo },
+    Deposit { symbol: String, amount: u64 },
     CreateOrder(Order),
     Cancel { order_id: String },
-    Withdraw { token: String, amount: u64 },
+    Withdraw { symbol: String, amount: u64 },
 }
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]

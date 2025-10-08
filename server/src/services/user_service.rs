@@ -14,7 +14,7 @@ pub struct UserService {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Balance {
-    pub token: String,
+    pub symbol: String,
     pub total: i64,
     pub reserved: i64,
     pub available: i64,
@@ -83,7 +83,7 @@ impl UserService {
         let balances = rows
             .iter()
             .map(|row| Balance {
-                token: row.get("symbol"),
+                symbol: row.get("symbol"),
                 total: row.get("total"),
                 reserved: row.get("reserved"),
                 available: row.get("available"),

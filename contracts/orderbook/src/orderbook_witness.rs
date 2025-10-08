@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     order_manager::OrderManager,
-    orderbook::{ExecutionMode, ExecutionState, Order, Orderbook, OrderbookEvent, TokenName},
+    orderbook::{ExecutionMode, ExecutionState, Order, Orderbook, OrderbookEvent, Symbol},
     orderbook_state::ZkVmState,
     smt_values::{Balance, BorshableH256 as H256, UserInfo},
     OrderbookAction, PermissionnedOrderbookAction,
@@ -42,10 +42,10 @@ impl Orderbook {
 
     fn create_balances_witness(
         &self,
-        token: &TokenName,
+        symbol: &Symbol,
         users: &[UserInfo],
     ) -> Result<ZkVmWitness<HashMap<H256, Balance>>, String> {
-        let (balances, proof) = self.get_balances_with_proof(users, token)?;
+        let (balances, proof) = self.get_balances_with_proof(users, symbol)?;
         let mut map = HashMap::new();
         for (user_info, balance) in balances {
             map.insert(user_info.get_key(), balance);
@@ -86,7 +86,7 @@ impl Orderbook {
     fn get_balances_with_proof(
         &self,
         users_info: &[UserInfo],
-        token: &TokenName,
+        symbol: &Symbol,
     ) -> Result<(HashMap<UserInfo, Balance>, BorshableMerkleProof), String> {
         if users_info.is_empty() {
             return Ok((
@@ -98,20 +98,20 @@ impl Orderbook {
             ExecutionState::Full(state) => {
                 let mut balances_map = HashMap::new();
                 for user_info in users_info {
-                    let balance = self.get_balance(user_info, token);
+                    let balance = self.get_balance(user_info, symbol);
                     balances_map.insert(user_info.clone(), balance);
                 }
 
                 let users: Vec<UserInfo> = balances_map.keys().cloned().collect();
                 let tree = state
                     .balances_mt
-                    .get(token)
-                    .ok_or_else(|| format!("No balances tree found for token {token}"))?;
+                    .get(symbol)
+                    .ok_or_else(|| format!("No balances tree found for {symbol}"))?;
                 let proof = BorshableMerkleProof(
                     tree.merkle_proof(users.iter().map(|u| u.get_key().into()).collect::<Vec<_>>())
                         .map_err(|e| {
                             format!(
-                                "Failed to create merkle proof for token {token} and users {:?}: {e}",
+                                "Failed to create merkle proof for {symbol} and users {:?}: {e}",
                                 users_info
                                     .iter()
                                     .map(|u| u.user.clone())
@@ -218,12 +218,12 @@ impl Orderbook {
         match &self.execution_state {
             ExecutionState::Light(_) | ExecutionState::Full(_) => Ok(()),
             ExecutionState::ZkVm(state) => {
-                for (token, witness) in &state.balances {
+                for (symbol, witness) in &state.balances {
                     // Verify that users balance are correct
-                    let token_root = self
+                    let symbol_root = self
                         .balances_merkle_roots
-                        .get(token.as_str())
-                        .ok_or(format!("Token {token} not found in balances merkle roots"))?;
+                        .get(symbol.as_str())
+                        .ok_or(format!("{symbol} not found in balances merkle roots"))?;
 
                     let leaves = witness
                         .value
@@ -247,17 +247,17 @@ impl Orderbook {
                         .0
                         .clone()
                         .verify::<SHA256Hasher>(
-                            &TryInto::<[u8; 32]>::try_into(token_root.as_slice())
+                            &TryInto::<[u8; 32]>::try_into(symbol_root.as_slice())
                                 .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
                                 .into(),
                             leaves,
                         )
                         .map_err(|e| {
-                            format!("Failed to verify balances proof for token {token}: {e}")
+                            format!("Failed to verify balances proof for {symbol}: {e}")
                         })?;
 
                     if !is_valid {
-                        return Err(format!("Invalid balances proof for token {token}"));
+                        return Err(format!("Invalid balances proof for {symbol}"));
                     }
                 }
                 Ok(())
@@ -324,7 +324,7 @@ impl Orderbook {
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
         let mut balances_needed: HashMap<String, HashMap<H256, Balance>> = HashMap::new();
 
-        // Track all users, their balances per token, and order-user mapping for executed/updated orders
+        // Track all users, their balances per symbol, and order-user mapping for executed/updated orders
         for event in events {
             match event {
                 OrderbookEvent::OrderExecuted { order_id, .. }
@@ -353,7 +353,7 @@ impl Orderbook {
                 }
                 OrderbookEvent::BalanceUpdated {
                     user,
-                    token,
+                    symbol,
                     amount,
                 } => {
                     // Get user_info (if available)
@@ -370,7 +370,7 @@ impl Orderbook {
                     users_info_needed.insert(ui.clone());
 
                     balances_needed
-                        .entry(token.clone())
+                        .entry(symbol.clone())
                         .or_default()
                         .insert(ui.get_key(), Balance(*amount));
                 }
@@ -392,15 +392,15 @@ impl Orderbook {
             }
         }
 
-        let mut balances: HashMap<TokenName, ZkVmWitness<HashMap<H256, Balance>>> = HashMap::new();
-        for (token, token_balances) in balances_needed.iter() {
-            let users: Vec<UserInfo> = token_balances
+        let mut balances: HashMap<Symbol, ZkVmWitness<HashMap<H256, Balance>>> = HashMap::new();
+        for (symbol, symbol_balances) in balances_needed.iter() {
+            let users: Vec<UserInfo> = symbol_balances
                 .keys()
                 .filter_map(|key| self.get_user_info_from_key(key).ok())
                 .collect();
 
-            let witness = self.create_balances_witness(token, &users)?;
-            balances.insert(token.clone(), witness);
+            let witness = self.create_balances_witness(symbol, &users)?;
+            balances.insert(symbol.clone(), witness);
         }
 
         let users_info = self.create_users_info_witness(&users_info_needed)?;
@@ -428,7 +428,7 @@ impl Orderbook {
 
         let zk_orderbook = Orderbook {
             hashed_secret: self.hashed_secret,
-            pairs_info: self.pairs_info.clone(),
+            assets_info: self.assets_info.clone(),
             lane_id: self.lane_id.clone(),
             balances_merkle_roots: self.balances_merkle_roots.clone(),
             users_info_merkle_root: self.users_info_merkle_root,

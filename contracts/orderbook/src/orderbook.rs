@@ -14,13 +14,13 @@ use sdk::{ContractName, LaneId, TxContext};
 pub struct Orderbook {
     // Server secret for authentication on permissionned actions
     pub hashed_secret: [u8; 32],
-    // Registered token pairs with asset scales
-    pub pairs_info: BTreeMap<TokenPair, PairInfo>,
+    // Registered assets info from their symbol
+    pub assets_info: BTreeMap<Symbol, AssetInfo>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
 
-    // Balances merkle tree root for each token
-    pub balances_merkle_roots: BTreeMap<TokenName, H256>,
+    // Balances merkle tree root for each symbol
+    pub balances_merkle_roots: BTreeMap<Symbol, H256>,
     // Users info merkle root
     pub users_info_merkle_root: H256,
 
@@ -62,7 +62,7 @@ impl ExecutionState {
     pub fn from_data(
         mode: ExecutionMode,
         users_info: HashMap<String, UserInfo>,
-        balances: HashMap<TokenName, HashMap<H256, Balance>>,
+        balances: HashMap<Symbol, HashMap<H256, Balance>>,
     ) -> Result<Self, String> {
         match mode {
             ExecutionMode::Light => Ok(ExecutionState::Light(LightState {
@@ -81,15 +81,16 @@ impl ExecutionState {
                     .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
 
                 let mut balances_mt = HashMap::new();
-                for (token, token_balances) in balances.iter() {
+                for (symbol, symbol_balances) in balances.iter() {
                     let mut tree = SparseMerkleTree::default();
-                    let leaves = token_balances
+                    let leaves = symbol_balances
                         .iter()
                         .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
                         .collect();
-                    tree.update_all(leaves)
-                        .map_err(|e| format!("Failed to update balances on token {token}: {e}"))?;
-                    balances_mt.insert(token.clone(), tree);
+                    tree.update_all(leaves).map_err(|e| {
+                        format!("Failed to update balances on symbol {symbol}: {e}")
+                    })?;
+                    balances_mt.insert(symbol.clone(), tree);
                 }
 
                 Ok(ExecutionState::Full(FullState {
@@ -112,11 +113,28 @@ impl ExecutionState {
 }
 
 #[derive(
+    Default, BorshSerialize, BorshDeserialize, Serialize, Deserialize, Debug, Clone, PartialEq, Eq,
+)]
+pub struct AssetInfo {
+    pub scale: u64,
+    pub contract_name: ContractName,
+}
+
+impl AssetInfo {
+    pub fn new(scale: u64, contract_name: ContractName) -> Self {
+        AssetInfo {
+            scale,
+            contract_name,
+        }
+    }
+}
+
+#[derive(
     BorshSerialize, BorshDeserialize, Serialize, Deserialize, Default, Debug, Clone, PartialEq,
 )]
 pub struct PairInfo {
-    pub base_scale: u64,
-    pub quote_scale: u64,
+    pub base: AssetInfo,
+    pub quote: AssetInfo,
 }
 
 #[cfg_attr(feature = "sqlx", derive(sqlx::Type))]
@@ -152,18 +170,18 @@ pub struct Order {
     pub order_type: OrderType,
     pub order_side: OrderSide,
     pub price: Option<u64>,
-    pub pair: TokenPair,
+    pub pair: Pair,
     pub quantity: u64,
 }
 
 pub type OrderId = String;
-pub type TokenName = String;
-pub type TokenPair = (TokenName, TokenName);
+pub type Symbol = String;
+pub type Pair = (Symbol, Symbol);
 
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub enum OrderbookEvent {
     PairCreated {
-        pair: TokenPair,
+        pair: Pair,
         info: PairInfo,
     },
     OrderCreated {
@@ -171,23 +189,23 @@ pub enum OrderbookEvent {
     },
     OrderCancelled {
         order_id: OrderId,
-        pair: TokenPair,
+        pair: Pair,
     },
     OrderExecuted {
         order_id: OrderId,
         taker_order_id: OrderId,
-        pair: TokenPair,
+        pair: Pair,
     },
     OrderUpdate {
         order_id: OrderId,
         taker_order_id: OrderId,
         executed_quantity: u64,
         remaining_quantity: u64,
-        pair: TokenPair,
+        pair: Pair,
     },
     BalanceUpdated {
         user: String,
-        token: String,
+        symbol: String,
         amount: u64,
     },
     SessionKeyAdded {
@@ -207,25 +225,20 @@ impl Orderbook {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn create_pair(
         &mut self,
-        pair: &TokenPair,
+        pair: &Pair,
         info: &PairInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        if info.base_scale >= 20 {
-            return Err(format!(
-                "Base scale too large: {}. Maximum is 19",
-                info.base_scale
-            ));
-        }
-        self.pairs_info.insert(pair.clone(), info.clone());
+        self.register_asset(&pair.0, &info.base)?;
+        self.register_asset(&pair.1, &info.quote)?;
 
-        // Initialize a new SparseMerkleTree for the token pair if not already present
-        for token in &[&pair.0, &pair.1] {
-            if !self.balances_merkle_roots.contains_key(*token) {
+        // Initialize a new SparseMerkleTree for the symbol pair if not already present
+        for symbol in &[&pair.0, &pair.1] {
+            if !self.balances_merkle_roots.contains_key(*symbol) {
                 match &mut self.execution_state {
                     ExecutionState::Full(state) => {
                         state
                             .balances_mt
-                            .entry((*token).clone())
+                            .entry((*symbol).clone())
                             .or_insert_with(|| {
                                 SparseMerkleTree::new(
                                     sparse_merkle_tree::H256::zero(),
@@ -234,12 +247,12 @@ impl Orderbook {
                             });
                     }
                     ExecutionState::Light(state) => {
-                        state.balances.entry((*token).clone()).or_default();
+                        state.balances.entry((*symbol).clone()).or_default();
                     }
                     ExecutionState::ZkVm(_) => {}
                 }
                 self.balances_merkle_roots
-                    .insert((*token).clone(), sparse_merkle_tree::H256::zero().into());
+                    .insert((*symbol).clone(), sparse_merkle_tree::H256::zero().into());
             }
         }
 
@@ -247,6 +260,31 @@ impl Orderbook {
             pair: pair.clone(),
             info: info.clone(),
         }])
+    }
+
+    fn register_asset(&mut self, symbol: &Symbol, asset_info: &AssetInfo) -> Result<(), String> {
+        match self.assets_info.get_mut(symbol) {
+            Some(existing) => {
+                if existing.scale != asset_info.scale
+                    || existing.contract_name != asset_info.contract_name
+                {
+                    return Err(format!(
+                        "Symbol {symbol} already registered with different parameters"
+                    ));
+                }
+            }
+            None => {
+                if asset_info.scale >= 20 {
+                    return Err(format!(
+                        "Scale too large for {symbol}: {} while maximum is 20",
+                        asset_info.scale
+                    ));
+                }
+                self.assets_info.insert(symbol.clone(), asset_info.clone());
+            }
+        }
+
+        Ok(())
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -303,22 +341,22 @@ impl Orderbook {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn deposit(
         &mut self,
-        token: &str,
+        symbol: &str,
         amount: u64,
         user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Compute the new balance
-        let balance = self.get_balance(user_info, token);
+        let balance = self.get_balance(user_info, symbol);
         let new_balance = Balance(balance.0.checked_add(amount).ok_or("Balance overflow")?);
 
-        self.update_balances(token, vec![(user_info.get_key(), new_balance.clone())])
+        self.update_balances(symbol, vec![(user_info.get_key(), new_balance.clone())])
             .map_err(|e| e.to_string())?;
 
         let events = match self.execution_state.mode() {
             ExecutionMode::Full | ExecutionMode::Light => {
                 vec![OrderbookEvent::BalanceUpdated {
                     user: user_info.user.clone(),
-                    token: token.to_string(),
+                    symbol: symbol.to_string(),
                     amount: new_balance.0,
                 }]
             }
@@ -331,27 +369,27 @@ impl Orderbook {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn withdraw(
         &mut self,
-        token: &str,
+        symbol: &str,
         amount: &u64,
         user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        let balance = self.get_balance(user_info, token);
+        let balance = self.get_balance(user_info, symbol);
 
         if balance.0 < *amount {
             return Err(format!(
-                "Could not withdraw: Insufficient balance: user {} has {balance:?} {token} tokens, trying to withdraw {amount}", user_info.user
+                "Could not withdraw: Insufficient balance: user {} has {balance:?} {symbol} symbols, trying to withdraw {amount}", user_info.user
             ));
         }
 
-        self.deduct_from_account(token, user_info, *amount)
+        self.deduct_from_account(symbol, user_info, *amount)
             .map_err(|e| e.to_string())?;
 
         let mut events = match self.execution_state.mode() {
             ExecutionMode::Light | ExecutionMode::Full => {
-                let user_balance = self.get_balance(user_info, token);
+                let user_balance = self.get_balance(user_info, symbol);
                 vec![OrderbookEvent::BalanceUpdated {
                     user: user_info.user.clone(),
-                    token: token.to_string(),
+                    symbol: symbol.to_string(),
                     amount: user_balance.0,
                 }]
             }
@@ -377,13 +415,13 @@ impl Orderbook {
             .ok_or(format!("Order {order_id} not found"))?
             .clone();
 
-        let required_token = match &order.order_side {
+        let required_symbol = match &order.order_side {
             OrderSide::Bid => order.pair.1.clone(),
             OrderSide::Ask => order.pair.0.clone(),
         };
 
         // Refund the reserved amount to the user
-        self.fund_account(&required_token, user_info, &Balance(order.quantity))
+        self.fund_account(&required_symbol, user_info, &Balance(order.quantity))
             .map_err(|e| e.to_string())?;
 
         // Cancel order through order manager
@@ -391,11 +429,11 @@ impl Orderbook {
 
         match self.execution_state.mode() {
             ExecutionMode::Light | ExecutionMode::Full => {
-                let user_balance = self.get_balance(user_info, &required_token);
+                let user_balance = self.get_balance(user_info, &required_symbol);
 
                 events.push(OrderbookEvent::BalanceUpdated {
                     user: user_info.user.clone(),
-                    token: required_token.to_string(),
+                    symbol: required_symbol.to_string(),
                     amount: user_balance.0,
                 });
             }
@@ -432,11 +470,11 @@ impl Orderbook {
         let mut events = Vec::new();
 
         // Use OrderManager to handle order logic
-        let base_scale = POW10[self
-            .pairs_info
-            .get(&order.pair)
-            .ok_or(format!("Pair {}/{} not found", order.pair.0, order.pair.1))?
-            .base_scale as usize];
+        let base_asset_info = self
+            .assets_info
+            .get(&order.pair.0)
+            .ok_or(format!("Asset info for {} not found", order.pair.0))?;
+        let base_scale = POW10[base_asset_info.scale as usize];
 
         // Delegate order execution to the manager
         let order_events = self.order_manager.execute_order(user_info_key, &order)?;
@@ -444,34 +482,34 @@ impl Orderbook {
         events.extend(order_events);
 
         // Balance change aggregation system based on events
-        let mut balance_changes: HashMap<TokenName, HashMap<H256, Balance>> = self.get_balances();
-        let mut touched_accounts: HashMap<TokenName, HashSet<H256>> = HashMap::new();
+        let mut balance_changes: HashMap<Symbol, HashMap<H256, Balance>> = self.get_balances();
+        let mut touched_accounts: HashMap<Symbol, HashSet<H256>> = HashMap::new();
 
         // Helper function to record balance changes
         fn record_balance_change(
-            balance_changes: &mut HashMap<TokenName, HashMap<H256, Balance>>,
-            touched_accounts: &mut HashMap<TokenName, HashSet<H256>>,
+            balance_changes: &mut HashMap<Symbol, HashMap<H256, Balance>>,
+            touched_accounts: &mut HashMap<Symbol, HashSet<H256>>,
             user_info_key: &H256,
-            token: &TokenName,
+            symbol: &Symbol,
             amount: i128,
         ) -> Result<(), String> {
-            let token_balances = balance_changes.get_mut(token);
-            let token_balances = match token_balances {
-                Some(tb) => tb,
-                None => return Err(format!("Token {token} not found in balance_changes")),
+            let symbol_balances = balance_changes.get_mut(symbol);
+            let symbol_balances = match symbol_balances {
+                Some(sb) => sb,
+                None => return Err(format!("Symbol {symbol} not found in balance_changes")),
             };
 
-            let balance = token_balances.entry(*user_info_key).or_default();
+            let balance = symbol_balances.entry(*user_info_key).or_default();
 
             let new_value: u64 = ((balance.0 as i128) + amount).try_into().map_err(|e| {
                 format!(
-                    "User with key {} cannot perform token {token} exchange: balance is {}, attempted to add {amount}: {e}", hex::encode(user_info_key.as_slice()), balance.0
+                    "User with key {} cannot perform {symbol} exchange: balance is {}, attempted to add {amount}: {e}", hex::encode(user_info_key.as_slice()), balance.0
                 )
             })?;
 
             *balance = Balance(new_value);
             touched_accounts
-                .entry(token.clone())
+                .entry(symbol.clone())
                 .or_default()
                 .insert(*user_info_key);
             Ok(())
@@ -479,15 +517,15 @@ impl Orderbook {
 
         // Helper function to record transfers between users
         fn record_transfer(
-            balance_changes: &mut HashMap<TokenName, HashMap<H256, Balance>>,
-            touched_accounts: &mut HashMap<TokenName, HashSet<H256>>,
+            balance_changes: &mut HashMap<Symbol, HashMap<H256, Balance>>,
+            touched_accounts: &mut HashMap<Symbol, HashSet<H256>>,
             from: &H256,
             to: &H256,
-            token: &TokenName,
+            symbol: &Symbol,
             amount: i128,
         ) -> Result<(), String> {
-            record_balance_change(balance_changes, touched_accounts, from, token, -amount)?;
-            record_balance_change(balance_changes, touched_accounts, to, token, amount)?;
+            record_balance_change(balance_changes, touched_accounts, from, symbol, -amount)?;
+            record_balance_change(balance_changes, touched_accounts, to, symbol, amount)?;
             Ok(())
         }
 
@@ -498,7 +536,7 @@ impl Orderbook {
                     order: created_order,
                 } => {
                     // Deduct liquidity for created order
-                    let (quantity, token) = match created_order.order_side {
+                    let (quantity, symbol) = match created_order.order_side {
                         OrderSide::Bid => (
                             -((created_order.quantity * created_order.price.unwrap() / base_scale)
                                 as i128),
@@ -513,13 +551,13 @@ impl Orderbook {
                         &mut balance_changes,
                         &mut touched_accounts,
                         user_info_key,
-                        &token,
+                        &symbol,
                         quantity,
                     )?;
                 }
                 OrderbookEvent::OrderExecuted { order_id, pair, .. } => {
-                    let base_token = &pair.0;
-                    let quote_token = &pair.1;
+                    let base_symbol = &pair.0;
+                    let quote_symbol = &pair.1;
 
                     // Special case: the current order has been fully executed.
                     if order_id == &order.order_id {
@@ -533,50 +571,50 @@ impl Orderbook {
                         )
                     })?;
 
-                    // Transfer token logic for executed orders
+                    // Transfer logic for executed orders
                     if let Some(executed_order) = self.order_manager.orders.get(order_id) {
                         match executed_order.order_side {
                             OrderSide::Bid => {
-                                // Executed order owner receives base token deducted to user
+                                // Executed order owner receives base symbol deducted to user
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
                                     executed_order_user_info,
-                                    base_token,
+                                    base_symbol,
                                     executed_order.quantity as i128,
                                 )?;
-                                // User receives quote token
+                                // User receives quote symbol
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    quote_token,
+                                    quote_symbol,
                                     (executed_order.price.unwrap() * executed_order.quantity
                                         / base_scale) as i128,
                                 )?;
                                 touched_accounts
-                                    .entry(quote_token.clone())
+                                    .entry(quote_symbol.clone())
                                     .or_default()
                                     .insert(*executed_order_user_info);
                             }
                             OrderSide::Ask => {
-                                // Executed order owner receives quote token deducted to user
+                                // Executed order owner receives quote symbol deducted to user
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
                                     executed_order_user_info,
-                                    quote_token,
+                                    quote_symbol,
                                     (executed_order.price.unwrap() * executed_order.quantity
                                         / base_scale) as i128,
                                 )?;
-                                // User receives base token
+                                // User receives base symbol
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    base_token,
+                                    base_symbol,
                                     executed_order.quantity as i128,
                                 )?;
                             }
@@ -597,53 +635,53 @@ impl Orderbook {
                             )
                         })?;
 
-                    let base_token = &pair.0;
-                    let quote_token = &pair.1;
+                    let base_symbol = &pair.0;
+                    let quote_symbol = &pair.1;
 
-                    // Transfer token logic for executed orders
+                    // Transfer logic for executed orders
                     if let Some(updated_order) = self.order_manager.orders.get(order_id) {
                         match updated_order.order_side {
                             OrderSide::Bid => {
-                                // Executed order owner receives base token deducted to user
+                                // Executed order owner receives base symbol deducted to user
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
                                     updated_order_user_info,
-                                    base_token,
+                                    base_symbol,
                                     *executed_quantity as i128,
                                 )?;
-                                // User receives quote token
+                                // User receives quote symbol
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    quote_token,
+                                    quote_symbol,
                                     (updated_order.price.unwrap() * executed_quantity / base_scale)
                                         as i128,
                                 )?;
                                 touched_accounts
-                                    .entry(quote_token.clone())
+                                    .entry(quote_symbol.clone())
                                     .or_default()
                                     .insert(*updated_order_user_info);
                             }
                             OrderSide::Ask => {
-                                // Executed order owner receives quote token deducted to user
+                                // Executed order owner receives quote symbol deducted to user
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
                                     updated_order_user_info,
-                                    quote_token,
+                                    quote_symbol,
                                     (updated_order.price.unwrap() * executed_quantity / base_scale)
                                         as i128,
                                 )?;
-                                // User receives base token
+                                // User receives base symbol
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
                                     user_info_key,
-                                    base_token,
+                                    base_symbol,
                                     *executed_quantity as i128,
                                 )?;
                             }
@@ -660,16 +698,16 @@ impl Orderbook {
         self.order_manager.clear_executed_orders(&events);
 
         // Updating balances
-        for (token, user_keys) in touched_accounts {
-            let token_balances = balance_changes
-                .get(&token)
-                .ok_or_else(|| format!("Token {token} not found in balance_changes"))?;
+        for (symbol, user_keys) in touched_accounts {
+            let symbol_balances = balance_changes
+                .get(&symbol)
+                .ok_or_else(|| format!("{symbol} not found in balance_changes"))?;
 
             let mut balances_to_update: Vec<(H256, Balance)> = Vec::new();
             for user_key in user_keys {
-                let amount = token_balances.get(&user_key).ok_or_else(|| {
+                let amount = symbol_balances.get(&user_key).ok_or_else(|| {
                     format!(
-                        "User with key {} not found in balance_changes for token {token}",
+                        "User with key {} not found in balance_changes for {symbol}",
                         hex::encode(user_key.as_slice())
                     )
                 })?;
@@ -678,7 +716,7 @@ impl Orderbook {
                     let user_info = self.get_user_info_from_key(&user_key).unwrap();
                     events.push(OrderbookEvent::BalanceUpdated {
                         user: user_info.user.clone(),
-                        token: token.clone(),
+                        symbol: symbol.clone(),
                         amount: amount.0,
                     });
                 }
@@ -686,7 +724,7 @@ impl Orderbook {
                 balances_to_update.push((user_key, amount.clone()));
             }
 
-            self.update_balances(&token, balances_to_update)?;
+            self.update_balances(&symbol, balances_to_update)?;
         }
 
         events.push(self.increment_nonce_and_save_user_info(user_info)?);
@@ -712,10 +750,10 @@ impl Orderbook {
         lane_id: LaneId,
         mode: ExecutionMode,
         secret: Vec<u8>,
-        pairs_info: BTreeMap<TokenPair, PairInfo>,
+        pairs_info: BTreeMap<Pair, PairInfo>,
         order_manager: OrderManager,
         users_info: HashMap<String, UserInfo>,
-        balances: HashMap<TokenName, HashMap<H256, Balance>>,
+        balances: HashMap<Symbol, HashMap<H256, Balance>>,
     ) -> Result<Self, String> {
         let full_state =
             ExecutionState::from_data(ExecutionMode::Full, users_info.clone(), balances.clone())?;
@@ -734,7 +772,7 @@ impl Orderbook {
             ExecutionState::Full(state) => state
                 .balances_mt
                 .iter()
-                .map(|(token, balances)| (token.clone(), (*balances.root()).into()))
+                .map(|(symbol, balances)| (symbol.clone(), (*balances.root()).into()))
                 .collect(),
             _ => panic!("Business logic error. full_state should be Full"),
         };
@@ -742,7 +780,7 @@ impl Orderbook {
 
         let mut orderbook = Orderbook {
             hashed_secret,
-            pairs_info: BTreeMap::new(),
+            assets_info: BTreeMap::new(),
             lane_id,
             balances_merkle_roots,
             users_info_merkle_root,
@@ -757,42 +795,42 @@ impl Orderbook {
         Ok(orderbook)
     }
 
-    pub fn get_balances(&self) -> HashMap<TokenName, HashMap<H256, Balance>> {
+    pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
         match &self.execution_state {
             ExecutionState::Full(state) => {
                 let mut balances = HashMap::new();
-                for (token, balances_mt) in state.balances_mt.iter() {
-                    let token_store = balances_mt.store();
-                    let token_balances: HashMap<H256, Balance> = token_store
+                for (symbol, balances_mt) in state.balances_mt.iter() {
+                    let balances_store = balances_mt.store();
+                    let symbol_balances: HashMap<H256, Balance> = balances_store
                         .leaves_map()
                         .iter()
                         .map(|(k, v)| ((*k).into(), v.clone()))
                         .collect();
-                    balances.insert(token.clone(), token_balances.clone());
+                    balances.insert(symbol.clone(), symbol_balances.clone());
                 }
                 balances
             }
             ExecutionState::Light(state) => state.balances.clone(),
             ExecutionState::ZkVm(state) => {
-                let mut balances: HashMap<TokenName, HashMap<H256, Balance>> = HashMap::new();
-                for (token, witness) in state.balances.iter() {
-                    balances.insert(token.clone(), witness.value.clone());
+                let mut balances: HashMap<Symbol, HashMap<H256, Balance>> = HashMap::new();
+                for (symbol, witness) in state.balances.iter() {
+                    balances.insert(symbol.clone(), witness.value.clone());
                 }
                 balances
             }
         }
     }
 
-    pub fn get_balance(&self, user: &UserInfo, token: &str) -> Balance {
+    pub fn get_balance(&self, user: &UserInfo, symbol: &str) -> Balance {
         match &self.execution_state {
             ExecutionState::Full(state) => state
                 .balances_mt
-                .get(token)
+                .get(symbol)
                 .and_then(|tree| tree.get(&user.get_key()).ok())
                 .unwrap_or_default(),
             ExecutionState::Light(state) => state
                 .balances
-                .get(token)
+                .get(symbol)
                 .and_then(|balances| balances.get(&user.get_key()).cloned())
                 .unwrap_or_default(),
             ExecutionState::ZkVm(state) => {
@@ -809,7 +847,7 @@ impl Orderbook {
 
                 state
                     .balances
-                    .get(token)
+                    .get(symbol)
                     .and_then(|user_balances| user_balances.value.get(&user_key).cloned())
                     .unwrap_or_default()
             }
@@ -821,9 +859,11 @@ impl Orderbook {
             return true;
         }
 
-        self.pairs_info
-            .keys()
-            .any(|pair| pair.0 == contract_name.0 || pair.1 == contract_name.0)
+        self.assets_info.contains_key(&contract_name.0)
+            || self
+                .assets_info
+                .values()
+                .any(|info| &info.contract_name == contract_name)
     }
 }
 
@@ -880,16 +920,26 @@ impl Orderbook {
             );
         }
 
-        if self.pairs_info != other.pairs_info {
-            let mismatching_pairs = self
-                .pairs_info
-                .iter()
-                .filter(|(pair, info)| other.pairs_info.get(pair) != Some(*info))
-                .collect::<BTreeMap<&TokenPair, &PairInfo>>();
+        if self.assets_info != other.assets_info {
+            let mut mismatches = Vec::new();
 
-            mismatching_pairs.iter().for_each(|(pair, info)| {
-                diff.insert("pairs_info".to_string(), format!("{pair:?}: {info:?}"));
-            });
+            for (symbol, info) in &self.assets_info {
+                match other.assets_info.get(symbol) {
+                    Some(other_info) if other_info == info => {}
+                    Some(other_info) => {
+                        mismatches.push(format!("{symbol}: {info:?} != {other_info:?}"))
+                    }
+                    None => mismatches.push(format!("{symbol}: present only on self: {info:?}")),
+                }
+            }
+
+            for (symbol, info) in &other.assets_info {
+                if !self.assets_info.contains_key(symbol) {
+                    mismatches.push(format!("{symbol}: present only on other: {info:?}"));
+                }
+            }
+
+            diff.insert("symbols_info".to_string(), mismatches.join("; "));
         }
 
         if self.lane_id != other.lane_id {

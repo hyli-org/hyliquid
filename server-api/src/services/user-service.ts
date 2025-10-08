@@ -52,7 +52,7 @@ export class UserService {
     const balanceRows = await this.queries.getUserBalances(userId);
 
     const balances: BalanceResponse[] = balanceRows.map((row) => ({
-      token: row.symbol,
+      symbol: row.symbol,
       total: row.total,
       reserved: row.reserved,
       available: row.available,

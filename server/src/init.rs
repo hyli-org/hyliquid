@@ -4,7 +4,7 @@ use client_sdk::{
     rest_client::{NodeApiClient, NodeApiHttpClient},
 };
 use orderbook::{
-    orderbook::{ExecutionMode, Orderbook, PairInfo, TokenName, TokenPair},
+    orderbook::{AssetInfo, ExecutionMode, Orderbook, Pair, PairInfo, Symbol},
     smt_values::{Balance, BorshableH256, UserInfo},
 };
 use reqwest::StatusCode;
@@ -112,7 +112,7 @@ pub async fn init_orderbook_from_database(
     let instruments = asset_service.get_all_instruments().await;
     let assets = asset_service.get_all_assets().await;
 
-    let mut pairs_info: BTreeMap<TokenPair, PairInfo> = BTreeMap::new();
+    let mut pairs_info: BTreeMap<Pair, PairInfo> = BTreeMap::new();
     for (_, instrument) in instruments.iter() {
         let base_asset_symbol = instrument.symbol.split('/').next().unwrap();
         let quote_asset_symbol = instrument.symbol.split('/').nth(1).unwrap();
@@ -131,23 +131,33 @@ pub async fn init_orderbook_from_database(
             )
         })?;
 
+        let base_info = AssetInfo::new(
+            base_asset.scale as u64,
+            ContractName(base_asset.symbol.clone()),
+        );
+
+        let quote_info = AssetInfo::new(
+            quote_asset.scale as u64,
+            ContractName(quote_asset.symbol.clone()),
+        );
+
         pairs_info.insert(
             (base_asset.symbol.clone(), quote_asset.symbol.clone()),
             PairInfo {
-                base_scale: base_asset.scale as u64,
-                quote_scale: quote_asset.scale as u64,
+                base: base_info,
+                quote: quote_info,
             },
         );
     }
 
     let users_info: HashMap<String, UserInfo> = user_service.get_all_users().await;
-    let mut balances: HashMap<TokenName, HashMap<BorshableH256, Balance>> = HashMap::new();
+    let mut balances: HashMap<Symbol, HashMap<BorshableH256, Balance>> = HashMap::new();
 
     for user in users_info.values() {
         let balance = user_service.get_balances(&user.user).await?;
         for balance in balance.balances {
             balances
-                .entry(balance.token.clone())
+                .entry(balance.symbol.clone())
                 .or_default()
                 .insert(user.get_key(), Balance(balance.total as u64));
         }

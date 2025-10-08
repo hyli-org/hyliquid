@@ -3,18 +3,25 @@ use super::*;
 use std::collections::BTreeMap;
 
 use crate::orderbook::{
-    ExecutionMode, ExecutionState, Order, OrderSide, OrderType, Orderbook, OrderbookEvent,
-    PairInfo, TokenPair,
+    AssetInfo, ExecutionMode, ExecutionState, Order, OrderSide, OrderType, Orderbook,
+    OrderbookEvent, Pair, PairInfo,
 };
 use crate::smt_values::{Balance, UserInfo};
-use sdk::LaneId;
+use sdk::{ContractName, LaneId};
 
 fn test_user(name: &str) -> UserInfo {
     UserInfo::new(name.to_string(), name.as_bytes().to_vec())
 }
 
-fn sample_pair() -> TokenPair {
+fn sample_pair() -> Pair {
     ("ETH".to_string(), "USDC".to_string())
+}
+
+fn make_pair_info(pair: &Pair, base_scale: u64, quote_scale: u64) -> PairInfo {
+    PairInfo {
+        base: AssetInfo::new(base_scale, ContractName(pair.0.clone())),
+        quote: AssetInfo::new(quote_scale, ContractName(pair.1.clone())),
+    }
 }
 
 fn build_orderbook() -> Orderbook {
@@ -74,16 +81,25 @@ fn add_session_key_registers_new_key() {
 fn create_pair_initializes_balances() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
-    let info = PairInfo {
-        base_scale: 3,
-        quote_scale: 2,
-    };
+    let info = make_pair_info(&pair, 3, 2);
 
     let events = orderbook
         .create_pair(&pair, &info)
         .expect("pair creation should succeed");
 
-    assert!(orderbook.pairs_info.contains_key(&pair));
+    let base_symbol_info = orderbook
+        .assets_info
+        .get(&pair.0)
+        .expect("base symbol must be registered");
+    assert_eq!(base_symbol_info.scale, info.base.scale);
+    assert_eq!(base_symbol_info.contract_name, info.base.contract_name);
+
+    let quote_symbol_info = orderbook
+        .assets_info
+        .get(&pair.1)
+        .expect("quote symbol must be registered");
+    assert_eq!(quote_symbol_info.scale, info.quote.scale);
+    assert_eq!(quote_symbol_info.contract_name, info.quote.contract_name);
 
     match &orderbook.execution_state {
         ExecutionState::Full(state) => {
@@ -97,14 +113,46 @@ fn create_pair_initializes_balances() {
         events[0],
         OrderbookEvent::PairCreated {
             pair: ref event_pair,
-            info: PairInfo {
-                base_scale,
-                quote_scale,
-            },
-        } if event_pair == &pair
-            && base_scale == info.base_scale
-            && quote_scale == info.quote_scale
+            info: ref created_info,
+        } if event_pair == &pair && created_info == &info
     ));
+}
+
+#[test]
+fn create_pair_rejects_conflicting_symbol_registration() {
+    let mut orderbook = build_orderbook();
+    let pair = sample_pair();
+    let info = make_pair_info(&pair, 3, 2);
+
+    orderbook
+        .create_pair(&pair, &info)
+        .expect("initial pair creation should succeed");
+
+    let mut conflicting_info = make_pair_info(&pair, 3, 2);
+    conflicting_info.base.contract_name = ContractName("alt-base".to_string());
+
+    let err = orderbook
+        .create_pair(&pair, &conflicting_info)
+        .expect_err("conflicting symbol info must be rejected");
+    assert!(err.contains("already registered"));
+}
+
+#[test]
+fn create_pair_merges_metadata_without_overrides() {
+    let mut orderbook = build_orderbook();
+    let pair = sample_pair();
+
+    let first_info = make_pair_info(&pair, 3, 2);
+
+    orderbook
+        .create_pair(&pair, &first_info)
+        .expect("initial registration should succeed");
+
+    let second_info = make_pair_info(&pair, 3, 2);
+
+    orderbook
+        .create_pair(&pair, &second_info)
+        .expect("metadata merge should succeed");
 }
 
 #[test]
@@ -112,13 +160,7 @@ fn deposit_updates_balance_and_event() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
     orderbook
-        .create_pair(
-            &pair,
-            &PairInfo {
-                base_scale: 3,
-                quote_scale: 2,
-            },
-        )
+        .create_pair(&pair, &make_pair_info(&pair, 3, 2))
         .unwrap();
     let user = test_user("bob");
 
@@ -130,8 +172,8 @@ fn deposit_updates_balance_and_event() {
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
-        OrderbookEvent::BalanceUpdated { ref user, ref token, amount }
-            if user == "bob" && token == &pair.1 && amount == 500
+        OrderbookEvent::BalanceUpdated { ref user, ref symbol, amount }
+            if user == "bob" && symbol == &pair.1 && amount == 500
     ));
 }
 
@@ -140,13 +182,7 @@ fn withdraw_deducts_balance() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
     orderbook
-        .create_pair(
-            &pair,
-            &PairInfo {
-                base_scale: 3,
-                quote_scale: 2,
-            },
-        )
+        .create_pair(&pair, &make_pair_info(&pair, 3, 2))
         .unwrap();
     let user = test_user("carol");
 
@@ -160,8 +196,8 @@ fn withdraw_deducts_balance() {
     assert_eq!(events.len(), 2);
     assert!(matches!(
         events[0],
-        OrderbookEvent::BalanceUpdated { ref user, ref token, amount }
-            if user == "carol" && token == &pair.1 && amount == 600
+        OrderbookEvent::BalanceUpdated { ref user, ref symbol, amount }
+            if user == "carol" && symbol == &pair.1 && amount == 600
     ));
 
     let err = orderbook
@@ -175,13 +211,7 @@ fn cancel_order_refunds_and_removes() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
     orderbook
-        .create_pair(
-            &pair,
-            &PairInfo {
-                base_scale: 3,
-                quote_scale: 2,
-            },
-        )
+        .create_pair(&pair, &make_pair_info(&pair, 3, 2))
         .unwrap();
     let user = test_user("dan");
     let order = make_limit_order("order-1", OrderSide::Bid, 100, 10);

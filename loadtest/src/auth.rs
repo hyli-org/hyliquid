@@ -64,9 +64,9 @@ impl UserAuth {
 
     #[allow(dead_code)]
     /// Create signature for withdraw action
-    /// Format: {identity}:{nonce}:withdraw:{token}:{amount}
-    pub fn sign_withdraw(&self, nonce: u32, token: &str, amount: u64) -> Result<String> {
-        let data = format!("{}:{}:withdraw:{}:{}", self.identity, nonce, token, amount);
+    /// Format: {identity}:{nonce}:withdraw:{symbol}:{amount}
+    pub fn sign_withdraw(&self, nonce: u32, symbol: &str, amount: u64) -> Result<String> {
+        let data = format!("{}:{}:withdraw:{}:{}", self.identity, nonce, symbol, amount);
         self.sign(&data)
     }
 }

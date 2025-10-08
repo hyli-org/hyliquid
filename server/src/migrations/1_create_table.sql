@@ -13,6 +13,8 @@ CREATE TABLE commits (
 -- Tokens (ex: BTC, USDT).
 CREATE TABLE assets (
     asset_id bigserial PRIMARY KEY,
+    -- 'bitcoin', 'tether', ...
+    contract_name text UNIQUE NOT NULL,
     -- 'BTC', 'USDT', ...
     symbol text UNIQUE NOT NULL,
     -- number of decimals: scale=8 for BTC, 6 for USDT, etc.

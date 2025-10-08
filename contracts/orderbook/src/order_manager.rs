@@ -2,16 +2,16 @@ use crate::smt_values::BorshableH256 as H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, TokenPair};
+use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq)]
 pub struct OrderManager {
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,
-    // Buy orders sorted by price (highest first) for each token pair
-    pub buy_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
-    // Sell orders sorted by price (lowest first) for each token pair
-    pub sell_orders: BTreeMap<TokenPair, VecDeque<OrderId>>,
+    // Buy orders sorted by price (highest first) for each symbol pair
+    pub buy_orders: BTreeMap<Pair, VecDeque<OrderId>>,
+    // Sell orders sorted by price (lowest first) for each symbol pair
+    pub sell_orders: BTreeMap<Pair, VecDeque<OrderId>>,
 
     // Mapping of order IDs to their owners
     // This field will not be commited.
@@ -234,8 +234,8 @@ impl OrderManager {
     /// Helper function to compare order maps and generate diff entries
     fn diff_order_maps(
         &self,
-        self_orders: &BTreeMap<TokenPair, VecDeque<OrderId>>,
-        other_orders: &BTreeMap<TokenPair, VecDeque<OrderId>>,
+        self_orders: &BTreeMap<Pair, VecDeque<OrderId>>,
+        other_orders: &BTreeMap<Pair, VecDeque<OrderId>>,
         field_name: &str,
     ) -> BTreeMap<String, String> {
         let mut diff = BTreeMap::new();
