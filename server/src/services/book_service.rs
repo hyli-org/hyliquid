@@ -588,24 +588,30 @@ impl BookService {
             })
             .collect();
 
-        let buy_orders: BTreeMap<(String, String), VecDeque<String>> = rows
+        let buy_orders: BTreeMap<(String, String), BTreeMap<u64, VecDeque<String>>> = rows
             .iter()
             .rev()
             .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Bid)
             .fold(BTreeMap::new(), |mut acc, row| {
                 acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
                     .or_default()
-                    .push_back(row.get("order_id"));
+                    .insert(
+                        row.get::<i64, _>("price") as u64,
+                        VecDeque::from([row.get("order_id")]),
+                    );
                 acc
             });
 
-        let sell_orders: BTreeMap<(String, String), VecDeque<String>> = rows
+        let sell_orders: BTreeMap<(String, String), BTreeMap<u64, VecDeque<String>>> = rows
             .iter()
             .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Ask)
             .fold(BTreeMap::new(), |mut acc, row| {
                 acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
                     .or_default()
-                    .push_back(row.get("order_id"));
+                    .insert(
+                        row.get::<i64, _>("price") as u64,
+                        VecDeque::from([row.get("order_id")]),
+                    );
                 acc
             });
 
