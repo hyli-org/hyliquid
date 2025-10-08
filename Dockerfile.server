@@ -3,7 +3,7 @@ FROM rust:bookworm AS builder
 RUN apt-get update && apt-get -y install curl g++ git libssl-dev pkg-config
 
 RUN if ! /root/.sp1/bin/cargo-prove prove -V 2>/dev/null | grep -q "38f0f14"; then \
-    curl -L https://sp1up.succinct.xyz | bash && /root/.sp1/bin/sp1up -c; \
+    curl -L https://sp1up.succinct.xyz | bash && /root/.sp1/bin/sp1up; \
 fi
 
 WORKDIR /app
@@ -11,10 +11,11 @@ COPY .cargo .cargo
 COPY ./loadtest/ ./loadtest
 COPY ./contracts/ ./contracts
 COPY ./server ./server
+COPY ./elf ./elf
 COPY Cargo.toml . 
 COPY Cargo.lock .
 
-RUN cargo build --release -F nonreproducible --bin server
+RUN cargo build --release -F nonreproducible -F nobuild --bin server
 
 # RUNNER
 FROM rust:latest

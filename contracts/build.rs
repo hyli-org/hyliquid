@@ -1,5 +1,9 @@
 use sp1_helper::{build_program_with_args, BuildArgs};
 
+#[cfg(feature = "nobuild")]
+fn main() {}
+
+#[cfg(not(feature = "nobuild"))]
 fn main() {
     build_program_with_args(
         "./orderbook",
