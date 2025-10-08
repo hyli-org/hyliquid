@@ -68,18 +68,23 @@ impl sdk::ZkContract for Orderbook {
                         panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
                     });
 
-                let user_info = permissionned_private_input.user_info.clone();
-
-                // Assert that used user_info is correct
-                self.has_user_info_key(user_info.get_key())
-                    .unwrap_or_else(|e| panic!("User info provided by server is incorrect: {e}"));
-
                 let hashed_secret = Sha256::digest(&permissionned_private_input.secret)
                     .as_slice()
                     .to_vec();
                 if hashed_secret != self.hashed_secret {
                     panic!("Invalid secret in private input");
                 }
+
+                if let PermissionnedOrderbookAction::Identify = action {
+                    // Identify action does not change the state
+                    return Ok((vec![], ctx, vec![]));
+                }
+
+                let user_info = permissionned_private_input.user_info.clone();
+
+                // Assert that used user_info is correct
+                self.has_user_info_key(user_info.get_key())
+                    .unwrap_or_else(|e| panic!("User info provided by server is incorrect: {e}"));
 
                 // Execute the given action
                 let events = self.execute_permissionned_action(
@@ -155,6 +160,9 @@ impl Orderbook {
         private_input: &[u8],
     ) -> Result<Vec<OrderbookEvent>, String> {
         match action {
+            PermissionnedOrderbookAction::Identify => {
+                Ok(vec![]) // Identify action does not change the state
+            }
             PermissionnedOrderbookAction::CreatePair { pair, info } => {
                 self.create_pair(&pair, &info)
             }
@@ -234,7 +242,7 @@ impl Orderbook {
 
                 self.cancel_order(order_id, &user_info)
             }
-            PermissionnedOrderbookAction::Withdraw { symbol, amount } => {
+            PermissionnedOrderbookAction::Withdraw { symbol, amount, .. } => {
                 // TODO: assert there is a transfer blob for that symbol
 
                 let withdraw_private_data =
@@ -316,12 +324,25 @@ pub enum OrderbookAction {
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
 pub enum PermissionnedOrderbookAction {
+    Identify, // TODO: This is a temporary solution for withdraws. This should be replaced by a proxy contract
     AddSessionKey,
-    CreatePair { pair: Pair, info: PairInfo },
-    Deposit { symbol: String, amount: u64 },
+    CreatePair {
+        pair: Pair,
+        info: PairInfo,
+    },
+    Deposit {
+        symbol: String,
+        amount: u64,
+    },
     CreateOrder(Order),
-    Cancel { order_id: String },
-    Withdraw { symbol: String, amount: u64 },
+    Cancel {
+        order_id: String,
+    },
+    Withdraw {
+        symbol: String,
+        amount: u64,
+        destination_address: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]

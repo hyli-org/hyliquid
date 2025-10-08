@@ -9,7 +9,10 @@ use axum::{
     Router,
 };
 use borsh::BorshSerialize;
-use client_sdk::contract_indexer::AppError;
+use client_sdk::{
+    contract_indexer::AppError,
+    rest_client::{NodeApiClient, NodeApiHttpClient},
+};
 use hyli_modules::{
     bus::{BusClientSender, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
@@ -27,8 +30,8 @@ use orderbook::{
 };
 use reqwest::StatusCode;
 use sdk::{
-    BlobTransaction, ContractName, Hashed, Identity, LaneId, NodeStateEvent, StatefulEvent,
-    StructuredBlob, UnsettledBlobTransaction,
+    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId, NodeStateEvent,
+    StatefulEvent, StructuredBlob, UnsettledBlobTransaction,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
@@ -52,6 +55,13 @@ struct PendingTransfer {
     amount: u128,
 }
 
+#[derive(Debug, Clone)]
+struct PendingWithdraw {
+    destination_address: String,
+    contract_name: ContractName,
+    amount: u64,
+}
+
 pub const ORDERBOOK_ACCOUNT_IDENTITY: &str = "orderbook@orderbook";
 
 pub struct OrderbookModuleCtx {
@@ -59,6 +69,7 @@ pub struct OrderbookModuleCtx {
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
     pub default_state: Orderbook,
+    pub client: Arc<NodeApiHttpClient>,
     pub asset_service: Arc<RwLock<AssetService>>,
 }
 
@@ -93,6 +104,7 @@ impl Module for OrderbookModule {
             orderbook: orderbook.clone(),
             lane_id: ctx.lane_id.clone(),
             asset_service: ctx.asset_service.clone(),
+            client: ctx.client.clone(),
         };
 
         let cors = CorsLayer::new()
@@ -151,8 +163,11 @@ impl OrderbookModule {
 impl OrderbookModule {
     async fn handle_settled_tx(&mut self, tx: &UnsettledBlobTransaction) -> Result<()> {
         let transfers = self.extract_relevant_transfers(&tx.tx).await;
+        let withdraws = self.extract_relevant_withdraws(&tx.tx).await;
 
         let tx_hash = tx.tx_id.1.clone();
+
+        // Handle deposits (transfers to orderbook)
         for transfer in transfers {
             sdk::info!(
                 tx_hash = %tx_hash.0,
@@ -164,6 +179,20 @@ impl OrderbookModule {
             self.execute_deposit(transfer)
                 .await
                 .with_context(|| format!("applying deposit for tx {}", tx_hash.0))?;
+        }
+
+        // Handle withdraws (orderbook withdraw actions)
+        for withdraw in withdraws {
+            sdk::info!(
+                tx_hash = %tx_hash.0,
+                token = %withdraw.contract_name,
+                user = %withdraw.destination_address,
+                amount = withdraw.amount,
+                "Settled withdraw action detected",
+            );
+            self.execute_withdraw_transfer(withdraw)
+                .await
+                .with_context(|| format!("applying withdraw transfer for tx {}", tx_hash.0))?;
         }
 
         Ok(())
@@ -250,6 +279,82 @@ impl OrderbookModule {
 
         Ok(())
     }
+
+    async fn extract_relevant_withdraws(&self, tx: &BlobTransaction) -> Vec<PendingWithdraw> {
+        let asset_service = self.router_ctx.asset_service.read().await;
+
+        let mut withdraws = Vec::new();
+        for blob in tx.blobs.iter() {
+            // Only look at orderbook contract blobs
+            if blob.contract_name != self.router_ctx.orderbook_cn {
+                continue;
+            }
+
+            let Ok(action) = borsh::from_slice::<OrderbookAction>(blob.data.0.as_slice()) else {
+                continue;
+            };
+
+            if let OrderbookAction::PermissionnedOrderbookAction(
+                PermissionnedOrderbookAction::Withdraw {
+                    symbol,
+                    amount,
+                    destination_address,
+                },
+            ) = action
+            {
+                let Some(contract_name) =
+                    asset_service.get_contract_name_from_symbol(&symbol).await
+                else {
+                    continue;
+                };
+                withdraws.push(PendingWithdraw {
+                    destination_address,
+                    contract_name,
+                    amount,
+                });
+            }
+        }
+
+        withdraws
+    }
+
+    async fn execute_withdraw_transfer(&self, withdraw: PendingWithdraw) -> Result<()> {
+        let PendingWithdraw {
+            destination_address,
+            contract_name,
+            amount,
+        } = withdraw;
+
+        let orderbook_id_action = PermissionnedOrderbookAction::Identify;
+
+        let transfer_blob = SmtTokenAction::Transfer {
+            sender: Identity(ORDERBOOK_ACCOUNT_IDENTITY.to_string()),
+            recipient: Identity(destination_address.to_string()),
+            amount: amount as u128,
+        }
+        .as_blob(contract_name, None, None);
+
+        let blob_tx = BlobTransaction::new(
+            ORDERBOOK_ACCOUNT_IDENTITY,
+            vec![
+                OrderbookAction::PermissionnedOrderbookAction(orderbook_id_action.clone())
+                    .as_blob(self.router_ctx.orderbook_cn.clone()),
+                transfer_blob,
+            ],
+        );
+
+        let tx_hash = self.router_ctx.client.send_tx_blob(blob_tx).await?;
+
+        let mut bus = self.bus.clone();
+        bus.send(OrderbookProverRequest::TxToProve {
+            events: vec![],
+            user_info: UserInfo::default(),
+            action_private_input: vec![],
+            orderbook_action: orderbook_id_action,
+            tx_hash: tx_hash.clone(),
+        })?;
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
@@ -261,6 +366,7 @@ struct RouterCtx {
     pub orderbook: Arc<Mutex<Orderbook>>,
     pub lane_id: LaneId,
     pub asset_service: Arc<RwLock<AssetService>>,
+    pub client: Arc<NodeApiHttpClient>,
 }
 
 // --------------------------------------------------------
@@ -766,6 +872,7 @@ async fn withdraw(
     let orderbook_action = PermissionnedOrderbookAction::Withdraw {
         symbol: request.symbol.clone(),
         amount: request.amount,
+        destination_address: user_info.user.clone(), // TODO make it available from request
     };
 
     process_orderbook_action(

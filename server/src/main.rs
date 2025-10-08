@@ -289,6 +289,7 @@ async fn main() -> Result<()> {
         lane_id: validator_lane_id.clone(),
         default_state: light_state.clone(),
         asset_service: asset_service.clone(),
+        client: node_client.clone(),
     });
 
     let database_ctx = Arc::new(DatabaseModuleCtx {
