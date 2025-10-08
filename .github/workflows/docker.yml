@@ -3,7 +3,6 @@ name: Push to Artifact Registry
 on:
   push:
     branches:
-      - "main"
       - "releases/**"
     tags:
       - "*"
