@@ -161,7 +161,7 @@ pub struct UserState {
 
 impl UserState {
     pub fn new(user_id: usize, prefix: &str) -> anyhow::Result<Self> {
-        let identity = format!("{}_{}", prefix, user_id);
+        let identity = format!("{prefix}_{user_id}");
         let auth = UserAuth::new(&identity)?;
 
         Ok(UserState {

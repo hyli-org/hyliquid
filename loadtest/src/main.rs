@@ -176,7 +176,7 @@ async fn run_goose_test(
 
     if prepare {
         tracing::info!("Registering setup scenario...");
-        let setup = setup_scenario("setup").set_weight(100 as usize)?;
+        let setup = setup_scenario("setup").set_weight(100_usize)?;
         attack = attack.register_scenario(setup);
     } else {
         // Register maker scenario if enabled

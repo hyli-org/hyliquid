@@ -506,15 +506,12 @@ fn perf_insert_order_sequential() {
 
     // Test d'insertion séquentielle (meilleur cas - ordres déjà triés)
     println!("\n=== Performance Test: insert_order (Sequential) ===");
-    println!(
-        "Inserting {} bid orders in ascending price order",
-        num_orders
-    );
+    println!("Inserting {num_orders} bid orders in ascending price order");
 
     let start = Instant::now();
     for i in 0..num_orders {
         let order = make_limit_order(
-            &format!("bid-{}", i),
+            &format!("bid-{i}"),
             OrderSide::Bid,
             100 + i as u64, // Prix croissant
             10,
@@ -525,7 +522,7 @@ fn perf_insert_order_sequential() {
     }
     let duration = start.elapsed();
 
-    println!("Total time: {:?}", duration);
+    println!("Total time: {duration:?}");
     println!("Average time per insertion: {:?}", duration / num_orders);
     println!(
         "Orders per second: {:.0}",
@@ -550,15 +547,12 @@ fn perf_insert_order_reverse() {
 
     // Test d'insertion en ordre inverse (pire cas - insertion toujours en tête)
     println!("\n=== Performance Test: insert_order (Reverse) ===");
-    println!(
-        "Inserting {} bid orders in descending price order",
-        num_orders
-    );
+    println!("Inserting {num_orders} bid orders in descending price order");
 
     let start = Instant::now();
     for i in 0..num_orders {
         let order = make_limit_order(
-            &format!("bid-{}", i),
+            &format!("bid-{i}"),
             OrderSide::Bid,
             100_000 - i as u64, // Prix décroissant
             10,
@@ -569,7 +563,7 @@ fn perf_insert_order_reverse() {
     }
     let duration = start.elapsed();
 
-    println!("Total time: {:?}", duration);
+    println!("Total time: {duration:?}");
     println!("Average time per insertion: {:?}", duration / num_orders);
     println!(
         "Orders per second: {:.0}",
@@ -594,7 +588,7 @@ fn perf_insert_order_random() {
 
     // Test d'insertion aléatoire (cas moyen)
     println!("\n=== Performance Test: insert_order (Random) ===");
-    println!("Inserting {} bid orders with random prices", num_orders);
+    println!("Inserting {num_orders} bid orders with random prices");
 
     // Génération de prix pseudo-aléatoires (déterministe pour la reproductibilité)
     let mut prices = Vec::new();
@@ -606,14 +600,14 @@ fn perf_insert_order_random() {
 
     let start = Instant::now();
     for (i, price) in prices.iter().enumerate() {
-        let order = make_limit_order(&format!("bid-{}", i), OrderSide::Bid, *price, 10);
+        let order = make_limit_order(&format!("bid-{i}"), OrderSide::Bid, *price, 10);
         manager
             .insert_order(&order, &user.get_key())
             .expect("insertion should succeed");
     }
     let duration = start.elapsed();
 
-    println!("Total time: {:?}", duration);
+    println!("Total time: {duration:?}");
     println!("Average time per insertion: {:?}", duration / num_orders);
     println!(
         "Orders per second: {:.0}",
@@ -638,16 +632,13 @@ fn perf_insert_order_mixed_sides() {
 
     // Test d'insertion avec les deux côtés du carnet
     println!("\n=== Performance Test: insert_order (Mixed Sides) ===");
-    println!(
-        "Inserting {} bid orders and {} ask orders",
-        num_orders_per_side, num_orders_per_side
-    );
+    println!("Inserting {num_orders_per_side} bid orders and {num_orders_per_side} ask orders");
 
     let start = Instant::now();
 
     // Insertion de bids
     for i in 0..num_orders_per_side {
-        let order = make_limit_order(&format!("bid-{}", i), OrderSide::Bid, 50_000 - i as u64, 10);
+        let order = make_limit_order(&format!("bid-{i}"), OrderSide::Bid, 50_000 - i as u64, 10);
         manager
             .insert_order(&order, &user.get_key())
             .expect("insertion should succeed");
@@ -655,7 +646,7 @@ fn perf_insert_order_mixed_sides() {
 
     // Insertion d'asks
     for i in 0..num_orders_per_side {
-        let order = make_limit_order(&format!("ask-{}", i), OrderSide::Ask, 60_000 + i as u64, 10);
+        let order = make_limit_order(&format!("ask-{i}"), OrderSide::Ask, 60_000 + i as u64, 10);
         manager
             .insert_order(&order, &user.get_key())
             .expect("insertion should succeed");
@@ -664,7 +655,7 @@ fn perf_insert_order_mixed_sides() {
     let duration = start.elapsed();
     let total_orders = num_orders_per_side * 2;
 
-    println!("Total time: {:?}", duration);
+    println!("Total time: {duration:?}");
     println!("Average time per insertion: {:?}", duration / total_orders);
     println!(
         "Orders per second: {:.0}",
