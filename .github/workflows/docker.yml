@@ -6,7 +6,20 @@ on:
       - "releases/**"
     tags:
       - "*"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      build_server:
+        description: "Build server image"
+        type: boolean
+        default: true
+      build_ui:
+        description: "Build ui image"
+        type: boolean
+        default: true
+      build_api:
+        description: "Build api image"
+        type: boolean
+        default: true
 
 env:
   IMAGE_NAME: "hyliquid"
@@ -33,9 +46,19 @@ jobs:
 
     steps:
       - name: Checkout
+        if: |
+          github.event_name == 'push' ||
+          (matrix.suffix == 'server' && inputs.build_server) ||
+          (matrix.suffix == 'ui' && inputs.build_ui) ||
+          (matrix.suffix == 'api' && inputs.build_api)
         uses: actions/checkout@v2
 
       - name: Docker meta
+        if: |
+          github.event_name == 'push' ||
+          (matrix.suffix == 'server' && inputs.build_server) ||
+          (matrix.suffix == 'ui' && inputs.build_ui) ||
+          (matrix.suffix == 'api' && inputs.build_api)
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -51,6 +74,11 @@ jobs:
             type=ref,event=pr
             type=raw,value=latest,enable={{is_default_branch}}
       - name: Docker Auth (Google Artifact Registry)
+        if: |
+          github.event_name == 'push' ||
+          (matrix.suffix == 'server' && inputs.build_server) ||
+          (matrix.suffix == 'ui' && inputs.build_ui) ||
+          (matrix.suffix == 'api' && inputs.build_api)
         id: docker-auth
         uses: "docker/login-action@v3"
         with:
@@ -59,6 +87,11 @@ jobs:
           registry: "${{ env.AR_REPO_LOCATION }}-docker.pkg.dev"
 
       - name: Login to GitHub Container Registry
+        if: |
+          github.event_name == 'push' ||
+          (matrix.suffix == 'server' && inputs.build_server) ||
+          (matrix.suffix == 'ui' && inputs.build_ui) ||
+          (matrix.suffix == 'api' && inputs.build_api)
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -66,6 +99,11 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push
+        if: |
+          github.event_name == 'push' ||
+          (matrix.suffix == 'server' && inputs.build_server) ||
+          (matrix.suffix == 'ui' && inputs.build_ui) ||
+          (matrix.suffix == 'api' && inputs.build_api)
         uses: docker/build-push-action@v6
         with:
           push: true
