@@ -10,7 +10,8 @@ window.__CONFIG__ = {
   WEBSOCKET_URL: "${WEBSOCKET_URL:-ws://localhost:3000/ws}",
   NODE_BASE_URL: "${NODE_BASE_URL:-http://localhost:4321}",
   WALLET_SERVER_BASE_URL: "${WALLET_SERVER_BASE_URL:-http://localhost:4000}",
-  WALLET_WEBSOCKET_URL: "${WALLET_WEBSOCKET_URL:-ws://localhost:8081}"
+  WALLET_WEBSOCKET_URL: "${WALLET_WEBSOCKET_URL:-ws://localhost:8081}",
+  GOOGLE_CLIENT_ID: "${GOOGLE_CLIENT_ID:-}",
 };
 EOF
 
@@ -21,6 +22,7 @@ echo "  WEBSOCKET_URL: ${WEBSOCKET_URL:-ws://localhost:3000/ws}"
 echo "  NODE_BASE_URL: ${NODE_BASE_URL:-http://localhost:4321}"
 echo "  WALLET_SERVER_BASE_URL: ${WALLET_SERVER_BASE_URL:-http://localhost:4000}"
 echo "  WALLET_WEBSOCKET_URL: ${WALLET_WEBSOCKET_URL:-ws://localhost:8081}"
+echo "  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}"
 
 # Execute the main container command (nginx)
 exec "$@"
