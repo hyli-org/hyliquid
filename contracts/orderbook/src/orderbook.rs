@@ -236,15 +236,7 @@ impl Orderbook {
             if !self.balances_merkle_roots.contains_key(*symbol) {
                 match &mut self.execution_state {
                     ExecutionState::Full(state) => {
-                        state
-                            .balances_mt
-                            .entry((*symbol).clone())
-                            .or_insert_with(|| {
-                                SparseMerkleTree::new(
-                                    sparse_merkle_tree::H256::zero(),
-                                    Default::default(),
-                                )
-                            });
+                        state.balances_mt.entry((*symbol).clone()).or_default();
                     }
                     ExecutionState::Light(state) => {
                         state.balances.entry((*symbol).clone()).or_default();

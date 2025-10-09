@@ -164,10 +164,7 @@ impl Orderbook {
                     .insert(symbol.to_string(), (*new_root).into());
             }
             ExecutionState::Light(state) => {
-                let symbol_entry = state
-                    .balances
-                    .get_mut(symbol)
-                    .ok_or_else(|| format!("{symbol} is not found in allowed symbols"))?;
+                let symbol_entry = state.balances.entry(symbol.to_string()).or_default();
                 for (user_info_key, balance) in balances_to_update {
                     symbol_entry.insert(user_info_key, balance);
                 }
