@@ -8,14 +8,15 @@ WITH ins AS (
   SELECT instrument_id, tick_size FROM instruments WHERE symbol=p_instrument_symbol
 ),
 base AS (
-  SELECT o.side, o.price, o.qty_remaining AS qty,
+  SELECT o.side, o.price,
+		 sum(o.qty_remaining) as qty,
          (SELECT tick_size FROM ins) AS tick,
          (SELECT tick_size FROM ins) * p_group_ticks AS width
   FROM orders o, ins
   WHERE o.instrument_id = ins.instrument_id
     AND o.status IN ('open','partially_filled')
     AND o.price IS NOT NULL
-  GROUP BY o.side, o.price, o.qty_remaining
+  GROUP BY o.side, o.price
 ),
 buck AS (
   SELECT side,
@@ -49,6 +50,7 @@ FROM limited
 WHERE rn <= p_levels
 ORDER BY side, -price;
 $$;
+
 
 CREATE INDEX IF NOT EXISTS idx_orders_active_instr_status_price
 ON public.orders (instrument_id, status, price)
