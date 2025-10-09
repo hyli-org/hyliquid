@@ -7,7 +7,7 @@
         "@tailwindcss/vite": "^4.1.13",
         "add": "^2.0.6",
         "hyli-noir": "^0.3.0",
-        "hyli-wallet-vue": "^0.1.3",
+        "hyli-wallet-vue": "^0.1.4",
         "tailwindcss": "^4.1.13",
         "uuid": "^13.0.0",
         "vite-plugin-node-polyfills": "^0.24.0",
@@ -358,7 +358,7 @@
 
     "hyli-wallet": ["hyli-wallet@0.5.4", "", { "dependencies": { "@noble/hashes": "^2.0.1", "@types/crypto-js": "^4.2.2", "@types/elliptic": "^6.4.18", "@types/react-router-dom": "^5.3.3", "elliptic": "^6.6.1", "hyli": "^0.4.1", "js-sha3": "^0.9.3" }, "peerDependencies": { "hyli-noir": "^0.3.0", "react": "^19.1.1", "react-dom": "^19.1.1", "react-router-dom": "^7.9.3" } }, "sha512-tPe8FtLZBk94WUAOJUPnzdBLMdpZ6PkoIoxsAVh8TuqD7KqGw86dG6kL9VqWCggMGvHW5DZ+gSEqtW5nT0tt+g=="],
 
-    "hyli-wallet-vue": ["hyli-wallet-vue@0.1.3", "", { "dependencies": { "hyli-wallet": "^0.5.4" }, "peerDependencies": { "vue": "^3.5.22" } }, "sha512-NEp6XiN+fFE2720UodYOYez2tuqohzUacI6tLj2AIgqPbyYuymmUHML4FHlBsXkJsgrthPSiNA3v98JHiTacXQ=="],
+    "hyli-wallet-vue": ["hyli-wallet-vue@0.1.4", "", { "dependencies": { "hyli-wallet": "^0.5.4" }, "peerDependencies": { "vue": "^3.5.22" } }, "sha512-gmTTU4sfO7aYVE0MpE82pW/jMqqNzfuAHybr3KladsvLPE5PmwrukAsPjmLHmdl3/fXu4so/jCYWk47N5meRow=="],
 
     "idb-keyval": ["idb-keyval@6.2.2", "", {}, "sha512-yjD9nARJ/jb1g+CvD0tlhUHOrJ9Sy0P8T9MF3YaLlHnSRpwPfpTX0XIvpmw3gAJUmEu3FiICLBDPXVwyEvrleg=="],
 
