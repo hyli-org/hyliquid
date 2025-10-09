@@ -96,7 +96,10 @@ impl ExecutionState {
                 Ok(ExecutionState::Full(FullState {
                     users_info_mt,
                     balances_mt,
-                    users_info,
+                    light: LightState {
+                        balances,
+                        users_info: HashMap::new(),
+                    },
                 }))
             }
             ExecutionMode::ZkVm => Ok(ExecutionState::ZkVm(ZkVmState::default())),
@@ -303,6 +306,7 @@ impl Orderbook {
         let mut events = match &mut self.execution_state {
             ExecutionState::Full(state) => {
                 state
+                    .light
                     .users_info
                     .insert(user_info.user.clone(), user_info.clone());
 
@@ -881,6 +885,7 @@ impl Orderbook {
         match &self.execution_state {
             ExecutionState::Full(state) => {
                 let user_info = state
+                    .light
                     .users_info
                     .get(user)
                     .ok_or_else(|| format!("User info for '{user}' not found"))?;

@@ -23,7 +23,7 @@ pub struct FullState {
     pub users_info_mt: SparseMerkleTree<SHA256Hasher, UserInfo, DefaultStore<UserInfo>>,
     pub balances_mt:
         HashMap<Symbol, SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>>,
-    pub users_info: HashMap<String, UserInfo>,
+    pub light: LightState,
 }
 
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
@@ -98,6 +98,7 @@ impl Orderbook {
                     .update(user_info.get_key().into(), user_info.clone())
                     .map_err(|e| format!("Failed to update user info in SMT: {e}"))?;
                 state
+                    .light
                     .users_info
                     .entry(user_info.user.clone())
                     .or_insert_with(|| user_info.clone());
@@ -233,7 +234,10 @@ impl Clone for FullState {
         Self {
             users_info_mt,
             balances_mt,
-            users_info: self.users_info.clone(),
+            light: LightState {
+                users_info: self.light.users_info.clone(),
+                balances: self.light.balances.clone(),
+            },
         }
     }
 }
