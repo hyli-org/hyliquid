@@ -2,11 +2,10 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use sparse_merkle_tree::SparseMerkleTree;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::order_manager::OrderManager;
-use crate::orderbook_state::{FullState, LightState, ZkVmState};
+use crate::orderbook_state::{FullState, LightState, ZkVmState, SMT};
 use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
 use sdk::{ContractName, LaneId, TxContext};
 
@@ -70,7 +69,7 @@ impl ExecutionState {
                 balances,
             })),
             ExecutionMode::Full => {
-                let mut users_info_mt = SparseMerkleTree::default();
+                let mut users_info_mt = SMT::zero();
 
                 let leaves = users_info
                     .values()
@@ -82,7 +81,7 @@ impl ExecutionState {
 
                 let mut balances_mt = HashMap::new();
                 for (symbol, symbol_balances) in balances.iter() {
-                    let mut tree = SparseMerkleTree::default();
+                    let mut tree = SMT::zero();
                     let leaves = symbol_balances
                         .iter()
                         .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
@@ -242,12 +241,7 @@ impl Orderbook {
                         state
                             .balances_mt
                             .entry((*symbol).clone())
-                            .or_insert_with(|| {
-                                SparseMerkleTree::new(
-                                    sparse_merkle_tree::H256::zero(),
-                                    Default::default(),
-                                )
-                            });
+                            .or_insert_with(|| SMT::zero());
                     }
                     ExecutionState::Light(state) => {
                         state.balances.entry((*symbol).clone()).or_default();
@@ -801,19 +795,7 @@ impl Orderbook {
 
     pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
         match &self.execution_state {
-            ExecutionState::Full(state) => {
-                let mut balances = HashMap::new();
-                for (symbol, balances_mt) in state.balances_mt.iter() {
-                    let balances_store = balances_mt.store();
-                    let symbol_balances: HashMap<H256, Balance> = balances_store
-                        .leaves_map()
-                        .iter()
-                        .map(|(k, v)| ((*k).into(), v.clone()))
-                        .collect();
-                    balances.insert(symbol.clone(), symbol_balances.clone());
-                }
-                balances
-            }
+            ExecutionState::Full(state) => state.light.balances.clone(),
             ExecutionState::Light(state) => state.balances.clone(),
             ExecutionState::ZkVm(state) => {
                 let mut balances: HashMap<Symbol, HashMap<H256, Balance>> = HashMap::new();
@@ -828,9 +810,10 @@ impl Orderbook {
     pub fn get_balance(&self, user: &UserInfo, symbol: &str) -> Balance {
         match &self.execution_state {
             ExecutionState::Full(state) => state
-                .balances_mt
+                .light
+                .balances
                 .get(symbol)
-                .and_then(|tree| tree.get(&user.get_key()).ok())
+                .and_then(|tree| tree.get(&user.get_key()).cloned())
                 .unwrap_or_default(),
             ExecutionState::Light(state) => state
                 .balances
@@ -883,20 +866,12 @@ impl Orderbook {
 
     pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
         match &self.execution_state {
-            ExecutionState::Full(state) => {
-                let user_info = state
-                    .light
-                    .users_info
-                    .get(user)
-                    .ok_or_else(|| format!("User info for '{user}' not found"))?;
-                let key = user_info.get_key();
-                state.users_info_mt.get(&key).map_err(|e| {
-                    format!(
-                        "Failed to get user info for user '{user}' with key {:?}: {e}",
-                        hex::encode(key.as_slice())
-                    )
-                })
-            }
+            ExecutionState::Full(state) => state
+                .light
+                .users_info
+                .get(user)
+                .cloned()
+                .ok_or_else(|| format!("User info for '{user}' not found")),
             ExecutionState::Light(state) => state
                 .users_info
                 .get(user)

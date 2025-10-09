@@ -1,5 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
+use sdk::{
+    merkle_utils::{BorshableMerkleProof, SHA256Hasher},
+    tracing::debug,
+};
 use sparse_merkle_tree::traits::Value;
 use sparse_merkle_tree::MerkleProof;
 use std::collections::{HashMap, HashSet};
@@ -133,13 +136,18 @@ impl Orderbook {
 
     pub fn get_user_info_from_key(&self, key: &H256) -> Result<UserInfo, String> {
         match &self.execution_state {
-            ExecutionState::Full(state) => state.users_info_mt.get(key).map_err(|e| {
-                format!(
-                    "No user info found for key {:?}: {}",
-                    hex::encode(key.as_slice()),
-                    e
-                )
-            }),
+            ExecutionState::Full(state) => state
+                .light
+                .users_info
+                .iter()
+                .find(|(_, info)| info.get_key() == *key)
+                .map(|(_, info)| info.clone())
+                .ok_or_else(|| {
+                    format!(
+                        "No user info found for key {:?}",
+                        hex::encode(key.as_slice())
+                    )
+                }),
             ExecutionState::Light(state) => state
                 .users_info
                 .iter()
@@ -198,14 +206,22 @@ impl Orderbook {
                         &TryInto::<[u8; 32]>::try_into(self.users_info_merkle_root.as_slice())
                             .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
                             .into(),
-                        leaves,
+                        leaves.clone(),
                     )
                     .map_err(|e| format!("Failed to verify users_info proof: {e}"))?;
 
                 if !is_valid {
+                    let derived_root = state
+                        .users_info
+                        .proof
+                        .0
+                        .clone()
+                        .compute_root::<SHA256Hasher>(leaves)
+                        .map_err(|e| format!("Failed to compute users_info proof root: {e}"))?;
                     return Err(format!(
-                        "Invalid users_info proof; root is {}, value: {:?}",
+                        "Invalid users_info proof; root is {} instead of {}, value: {:?}",
                         hex::encode(self.users_info_merkle_root.as_slice()),
+                        hex::encode(derived_root.as_slice()),
                         state.users_info.value
                     ));
                 }
