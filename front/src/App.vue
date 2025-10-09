@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { HyliWallet, setWalletConfig, useWallet } from "hyli-wallet-vue";
 import { useApi } from "./api_call";
-import { BACKEND_API_URL, NODE_BASE_URL, WALLET_SERVER_BASE_URL, WALLET_WEBSOCKET_URL } from "./config";
+import { BACKEND_API_URL, NODE_BASE_URL, WALLET_SERVER_BASE_URL, WALLET_WEBSOCKET_URL, GOOGLE_CLIENT_ID } from "./config";
 import { assetsState, instrumentsState } from "./trade/trade";
 
 setWalletConfig({
@@ -9,6 +9,14 @@ setWalletConfig({
         nodeBaseUrl: NODE_BASE_URL,
         walletServerBaseUrl: WALLET_SERVER_BASE_URL,
         applicationWsUrl: WALLET_WEBSOCKET_URL,
+        providers: {
+            password: {
+                enabled: true,
+            },
+            google: GOOGLE_CLIENT_ID ? {
+                clientId: GOOGLE_CLIENT_ID,
+            } : undefined,
+        },
     },
     forceSessionKey: true,
 });

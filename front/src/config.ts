@@ -11,6 +11,7 @@ declare global {
             NODE_BASE_URL?: string;
             WALLET_SERVER_BASE_URL?: string;
             WALLET_WEBSOCKET_URL?: string;
+            GOOGLE_CLIENT_ID?: string;
         };
     }
 }
@@ -33,3 +34,6 @@ export const BACKEND_API_URL = ref(
 
 export const WEBSOCKET_URL =
     window.__CONFIG__?.WEBSOCKET_URL || import.meta.env.VITE_WEBSOCKET_URL || "ws://localhost:3000/ws";
+
+export const GOOGLE_CLIENT_ID =
+    window.__CONFIG__?.GOOGLE_CLIENT_ID || import.meta.env.VITE_GOOGLE_CLIENT_ID || undefined;
