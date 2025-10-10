@@ -22,6 +22,11 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Cache cargo build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
       - name: Run cargo fmt
         run: cargo fmt --all -- --check
 
