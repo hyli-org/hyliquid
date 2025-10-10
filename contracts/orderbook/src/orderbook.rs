@@ -548,8 +548,8 @@ impl Orderbook {
 
             if !found_valid_transfer {
                 return Err(format!(
-                    "No valid escape transfer blob found for symbol {symbol} with amount {} for user {}", 
-                    balance.0, 
+                    "No valid escape transfer blob found for symbol {symbol} with amount {} for user {}",
+                    balance.0,
                     user_info.user
                 ));
             }
