@@ -517,16 +517,14 @@ impl Orderbook {
 
             // Ensure there is a transfer blob for this token with the correct amount
             let mut found_valid_transfer = false;
-            
+
             let Some(asset_info) = self.assets_info.get(&symbol) else {
                 return Err(format!("Asset info for symbol {symbol} not found"));
             };
 
             for (_, blob) in calldata.blobs.iter() {
                 if blob.contract_name == asset_info.contract_name {
-
-                    let Ok(structured) =
-                        StructuredBlob::<SmtTokenAction>::try_from(blob.clone())
+                    let Ok(structured) = StructuredBlob::<SmtTokenAction>::try_from(blob.clone())
                     else {
                         continue;
                     };
@@ -547,7 +545,6 @@ impl Orderbook {
                     }
                 }
             }
-        
 
             if !found_valid_transfer {
                 return Err(format!(
