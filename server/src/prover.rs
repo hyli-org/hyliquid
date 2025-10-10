@@ -8,14 +8,12 @@ use hyli_modules::{
     modules::Module,
 };
 use orderbook::{
-    orderbook::{Orderbook, OrderbookEvent},
+    orderbook::{Orderbook, OrderbookEvent, ORDERBOOK_ACCOUNT_IDENTITY},
     smt_values::UserInfo,
     OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput,
 };
 use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
 use tracing::{debug, error, info};
-
-use crate::app::ORDERBOOK_ACCOUNT_IDENTITY;
 
 #[derive(Debug, Clone)]
 pub struct PendingTx {

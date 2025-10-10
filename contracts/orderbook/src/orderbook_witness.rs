@@ -446,6 +446,7 @@ impl Orderbook {
             hashed_secret: self.hashed_secret,
             assets_info: self.assets_info.clone(),
             lane_id: self.lane_id.clone(),
+            last_block_number: self.last_block_number,
             balances_merkle_roots: self.balances_merkle_roots.clone(),
             users_info_merkle_root: self.users_info_merkle_root,
             order_manager,

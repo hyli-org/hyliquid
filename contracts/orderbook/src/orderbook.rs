@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::BorshableMerkleProof;
+use hyli_smt_token::SmtTokenAction;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -7,7 +7,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::order_manager::OrderManager;
 use crate::orderbook_state::{FullState, LightState, ZkVmState, SMT};
 use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
-use sdk::{ContractName, LaneId, TxContext};
+use sdk::{BlockHeight, ContractName, LaneId, StructuredBlob};
 
 #[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
 pub struct Orderbook {
@@ -17,6 +17,8 @@ pub struct Orderbook {
     pub assets_info: BTreeMap<Symbol, AssetInfo>,
     // Validator public key of the lane this orderbook is running on
     pub lane_id: LaneId,
+    // Last block number with an action processed
+    pub last_block_number: BlockHeight,
 
     // Balances merkle tree root for each symbol
     pub balances_merkle_roots: BTreeMap<Symbol, H256>,
@@ -29,6 +31,8 @@ pub struct Orderbook {
     /// These fields are not committed on-chain
     pub execution_state: ExecutionState,
 }
+
+pub const ORDERBOOK_ACCOUNT_IDENTITY: &str = "orderbook@orderbook";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExecutionMode {
@@ -441,14 +445,119 @@ impl Orderbook {
 
     pub fn escape(
         &mut self,
-        _tx_ctx: &TxContext,
-        _user_info: &UserInfo,
-        _user_info_proof: &BorshableMerkleProof,
+        calldata: &sdk::Calldata,
+        user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Logic to allow user to escape with their funds
-        // This could involve transferring all their balances to a safe contract or address
-        // For now, we just return an empty event list
-        Ok(vec![])
+        let Some(tx_ctx) = &calldata.tx_ctx else {
+            return Err("Escape needs transaction context".to_string());
+        };
+
+        // TODO: make this configurable
+        if tx_ctx.block_height <= self.last_block_number + 5_000 {
+            return Err(format!(
+                "Escape can't be performed. Please wait {} blocks",
+                5_000 - (tx_ctx.block_height.0 - self.last_block_number.0)
+            ));
+        }
+
+        let mut events = Vec::new();
+
+        // Keep track of user's balance for each token
+        let mut user_balances = self.get_user_balances(&user_info.get_key());
+
+        // Find and cancel all orders that belong to this user and cancel them
+        let user_orders = self
+            .order_manager
+            .orders_owner
+            .iter()
+            .filter_map(|(order_id, owner_key)| {
+                if owner_key == &user_info.get_key() {
+                    self.order_manager.orders.get(order_id)
+                } else {
+                    None
+                }
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        for order in user_orders {
+            // Cancel order
+            events.extend(self.order_manager.cancel_order(&order.order_id)?);
+            let required_symbol = match &order.order_side {
+                OrderSide::Bid => order.pair.1.clone(),
+                OrderSide::Ask => order.pair.0.clone(),
+            };
+            // Virtually refund user
+            let user_balance = user_balances.entry(required_symbol).or_default();
+            *user_balance = Balance(user_balance.0 + order.quantity);
+        }
+
+        // Update all balances in the SMT
+        for (symbol, balance) in user_balances {
+            // Remove all balance from user
+            self.update_balances(&symbol, vec![(user_info.get_key(), Balance(0))])
+                .map_err(|e| e.to_string())?;
+
+            match self.execution_state.mode() {
+                ExecutionMode::Light | ExecutionMode::Full => {
+                    events.push(OrderbookEvent::BalanceUpdated {
+                        user: user_info.user.clone(),
+                        symbol: symbol.to_string(),
+                        amount: 0,
+                    });
+                }
+                ExecutionMode::ZkVm => {}
+            }
+
+            // Skip verification for zero balances
+            if balance.0 == 0 {
+                continue;
+            }
+
+            // Ensure there is a transfer blob for this token with the correct amount
+            let mut found_valid_transfer = false;
+            
+            let Some(asset_info) = self.assets_info.get(&symbol) else {
+                return Err(format!("Asset info for symbol {symbol} not found"));
+            };
+
+            for (_, blob) in calldata.blobs.iter() {
+                if blob.contract_name == asset_info.contract_name {
+
+                    let Ok(structured) =
+                        StructuredBlob::<SmtTokenAction>::try_from(blob.clone())
+                    else {
+                        continue;
+                    };
+
+                    if let SmtTokenAction::Transfer {
+                        sender,
+                        recipient,
+                        amount,
+                    } = structured.data.parameters
+                    {
+                        if sender.0 == ORDERBOOK_ACCOUNT_IDENTITY
+                            && recipient.0 == user_info.user
+                            && amount == balance.0 as u128
+                        {
+                            found_valid_transfer = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        
+
+            if !found_valid_transfer {
+                return Err(format!(
+                    "No valid escape transfer blob found for symbol {symbol} with amount {} for user {}", 
+                    balance.0, 
+                    user_info.user
+                ));
+            }
+        }
+        Ok(events)
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -738,9 +847,11 @@ impl Orderbook {
             OrderManager::default(),
             HashMap::new(),
             HashMap::new(),
+            BlockHeight(0),
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn from_data(
         lane_id: LaneId,
         mode: ExecutionMode,
@@ -749,6 +860,7 @@ impl Orderbook {
         order_manager: OrderManager,
         users_info: HashMap<String, UserInfo>,
         balances: HashMap<Symbol, HashMap<H256, Balance>>,
+        last_block_number: BlockHeight,
     ) -> Result<Self, String> {
         let full_state =
             ExecutionState::from_data(ExecutionMode::Full, users_info.clone(), balances.clone())?;
@@ -781,6 +893,7 @@ impl Orderbook {
             users_info_merkle_root,
             order_manager,
             execution_state,
+            last_block_number,
         };
 
         for (pair, info) in pairs_info {
@@ -788,6 +901,16 @@ impl Orderbook {
         }
 
         Ok(orderbook)
+    }
+
+    pub fn get_user_balances(&self, user_key: &H256) -> HashMap<Symbol, Balance> {
+        let mut user_balances = HashMap::new();
+        for (symbol, balances) in self.get_balances() {
+            if let Some(balance) = balances.get(user_key) {
+                user_balances.insert(symbol, balance.clone());
+            }
+        }
+        user_balances
     }
 
     pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
