@@ -155,8 +155,7 @@ impl Orderbook {
                 state
                     .light
                     .users_info
-                    .entry(user_info.user.clone())
-                    .or_insert_with(|| user_info.clone());
+                    .insert(user_info.user.clone(), user_info.clone());
                 self.users_info_merkle_root = (*new_root).into();
             }
             ExecutionState::Light(state) => {
