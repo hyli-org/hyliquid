@@ -23,7 +23,9 @@ use hyli_modules::{
 };
 use hyli_smt_token::SmtTokenAction;
 use orderbook::{
-    orderbook::{AssetInfo, Order, Orderbook, OrderbookEvent, Pair, PairInfo},
+    orderbook::{
+        AssetInfo, Order, Orderbook, OrderbookEvent, Pair, PairInfo, ORDERBOOK_ACCOUNT_IDENTITY,
+    },
     smt_values::UserInfo,
     AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, WithdrawPrivateInput,
@@ -61,8 +63,6 @@ struct PendingWithdraw {
     contract_name: ContractName,
     amount: u64,
 }
-
-pub const ORDERBOOK_ACCOUNT_IDENTITY: &str = "orderbook@orderbook";
 
 pub struct OrderbookModuleCtx {
     pub api: Arc<BuildApiContextInner>,

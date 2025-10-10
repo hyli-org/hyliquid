@@ -12,6 +12,7 @@ test = false
 [dependencies]
 anyhow = "1.0.96"
 sdk = { workspace = true, features = ["tracing", "smt"] }
+hyli-smt-token = { workspace = true }
 serde = { version = "1.0", default-features = false, features = [
   "derive",
   "alloc",

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::{Deserialize, Serialize};
 
-use sdk::{merkle_utils::BorshableMerkleProof, RunResult};
+use sdk::RunResult;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -93,6 +93,8 @@ impl sdk::ZkContract for Orderbook {
                     &permissionned_private_input.private_input,
                 )?;
 
+                self.last_block_number = tx_ctx.block_height;
+
                 let res = borsh::to_vec(&events)
                     .map_err(|e| format!("Failed to encode OrderbookEvents: {e}"))?;
 
@@ -108,7 +110,6 @@ impl sdk::ZkContract for Orderbook {
                             });
 
                         let user_info = escape_private_input.user_info.clone();
-                        let user_info_proof = escape_private_input.user_info_proof.clone();
 
                         // Assert that used user_info is correct
                         self.has_user_info_key(user_info.get_key())
@@ -119,7 +120,7 @@ impl sdk::ZkContract for Orderbook {
                         if user_key != std::convert::Into::<[u8; 32]>::into(user_info.get_key()) {
                             panic!("User info does not correspond with user_key used")
                         }
-                        self.escape(tx_ctx, &user_info, &user_info_proof)?
+                        self.escape(calldata, &user_info)?
                     }
                 };
 
@@ -139,6 +140,7 @@ impl sdk::ZkContract for Orderbook {
             hashed_secret: self.hashed_secret,
             assets_info: self.assets_info.clone(),
             lane_id: self.lane_id.clone(),
+            last_block_number: self.last_block_number,
             balances_merkle_roots: self.balances_merkle_roots.clone(),
             users_info_merkle_root: self.users_info_merkle_root,
             order_manager: self.order_manager.clone(),
@@ -312,7 +314,6 @@ pub struct WithdrawPrivateInput {
 pub struct EscapePrivateInput {
     // Used to assert and increment user's nonce
     pub user_info: UserInfo,
-    pub user_info_proof: BorshableMerkleProof,
 }
 
 /// Enum representing possible calls to the contract functions.

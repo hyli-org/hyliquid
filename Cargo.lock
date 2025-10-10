@@ -4872,6 +4872,7 @@ dependencies = [
  "clap",
  "hex",
  "hyli-contract-sdk",
+ "hyli-smt-token",
  "k256",
  "orderbook",
  "serde",
