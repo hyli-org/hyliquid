@@ -382,7 +382,7 @@ impl DatabaseModule {
                     order_id,
                     taker_order_id,
                     remaining_quantity,
-                    executed_quantity: _,
+                    executed_quantity,
                     pair,
                 } => {
                     debug!(
@@ -445,7 +445,7 @@ impl DatabaseModule {
                                 SELECT * FROM orders WHERE order_id = $2
                             )
                             INSERT INTO trade_events (commit_id, maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
-                            SELECT $1, $2, $3, $4, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $5
+                            SELECT $1, $2, $3, $4, maker_order.price, $5, get_other_side(maker_order.side), maker_order.user_id, $6
                             FROM maker_order
                             "
                         )
@@ -453,6 +453,7 @@ impl DatabaseModule {
                         .bind(order_id.clone())
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
+                        .bind(executed_quantity as i64)
                         .bind(user_id)
                         .execute(&mut *tx)
                         .await,
