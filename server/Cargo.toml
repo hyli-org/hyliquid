@@ -11,6 +11,8 @@ orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
 client-sdk = { workspace = true, features = ["sp1", "rest"] }
 hyli-modules = { workspace = true }
+hyli-net = { workspace = true }
+hyli-smt-token = { workspace = true }
 # Remove features if you want reproducible builds with docker
 contracts = { workspace = true, features = ["nonreproducible"] }
 

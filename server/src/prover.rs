@@ -15,6 +15,8 @@ use orderbook::{
 use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
 use tracing::{debug, error, info};
 
+use crate::app::ORDERBOOK_ACCOUNT_IDENTITY;
+
 #[derive(Debug, Clone)]
 pub struct PendingTx {
     pub commitment_metadata: Vec<u8>,
@@ -142,7 +144,7 @@ impl OrderbookProverModule {
                 let private_input = borsh::to_vec(&permissioned_private_input)?;
 
                 let calldata = Calldata {
-                    identity: "orderbook@orderbook".into(),
+                    identity: ORDERBOOK_ACCOUNT_IDENTITY.into(),
                     tx_hash: tx_hash.clone(),
                     blobs: vec![OrderbookAction::PermissionnedOrderbookAction(
                         orderbook_action.clone(),

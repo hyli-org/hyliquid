@@ -166,7 +166,7 @@ impl Orderbook {
                     .users_info
                     .entry(user_info.user.clone())
                     .or_insert_with(|| user_info.clone());
-                self.users_info_merkle_root = sparse_merkle_tree::H256::zero().into();
+                self.users_info_merkle_root = H256::zero();
             }
             ExecutionState::ZkVm(state) => {
                 let users_info_proof = &state.users_info.proof;
@@ -228,10 +228,7 @@ impl Orderbook {
                 }
             }
             ExecutionState::Light(state) => {
-                let symbol_entry = state
-                    .balances
-                    .get_mut(symbol)
-                    .ok_or_else(|| format!("{symbol} is not found in allowed symbols"))?;
+                let symbol_entry = state.balances.entry(symbol.to_string()).or_default();
                 for (user_info_key, balance) in balances_to_update {
                     symbol_entry.insert(user_info_key, balance);
                 }
