@@ -163,7 +163,7 @@ export class DatabaseCallbacks {
           }
           const payload = {
             trade_id: row.trade_id,
-            instrument_id: row.instrument_id,
+            instrument_id: parseInt(row.instrument_id, 10),
             price: parseInt(row.price, 10),
             qty: parseInt(row.qty, 10),
             trade_time: row.trade_time,
@@ -207,10 +207,10 @@ export class DatabaseCallbacks {
             if (!payloads.has(user.identity)) {
               payloads.set(user.identity, []);
             }
-            const payload = {
+            const payload: Order = {
               order_id: row.order_id,
-              instrument_id: row.instrument_id,
-              user_id: row.user_id,
+              instrument_id: parseInt(row.instrument_id, 10),
+              user_id: parseInt(row.user_id, 10),
               side: row.side,
               type: row.type,
               price: parseInt(row.price, 10),
