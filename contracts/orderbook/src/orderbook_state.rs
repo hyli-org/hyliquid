@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::marker::PhantomData;
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::SHA256Hasher;
@@ -18,12 +19,66 @@ pub struct LightState {
     pub balances: HashMap<Symbol, HashMap<H256, Balance>>,
 }
 
+#[derive(Debug, Default)]
+pub(crate) struct SMT<T: Value + Clone>(
+    SparseMerkleTree<SHA256Hasher, H256, DefaultStore<H256>>,
+    PhantomData<T>,
+);
+
+impl<T> SMT<T>
+where
+    T: Value + Clone,
+{
+    pub fn zero() -> Self {
+        SMT(
+            SparseMerkleTree::new(sparse_merkle_tree::H256::zero(), Default::default()),
+            PhantomData,
+        )
+    }
+
+    pub fn from_store(root: H256, store: DefaultStore<H256>) -> Self {
+        SMT(SparseMerkleTree::new(root.into(), store), PhantomData)
+    }
+
+    pub fn update(&mut self, key: H256, value: T) -> sparse_merkle_tree::error::Result<H256> {
+        self.0
+            .update(key.into(), H256(value.to_h256()))
+            .map(|r| H256(r.clone()))
+    }
+
+    pub fn update_all(
+        &mut self,
+        leaves: Vec<(H256, T)>,
+    ) -> sparse_merkle_tree::error::Result<H256> {
+        let h256_leaves = leaves
+            .into_iter()
+            .map(|(k, v)| (k.into(), H256(v.to_h256())))
+            .collect();
+        self.0.update_all(h256_leaves).map(|r| H256(r.clone()))
+    }
+
+    pub fn root(&self) -> H256 {
+        H256(*self.0.root())
+    }
+
+    pub fn store(&self) -> &DefaultStore<H256> {
+        self.0.store()
+    }
+
+    pub fn merkle_proof(
+        &self,
+        keys: Vec<H256>,
+    ) -> sparse_merkle_tree::error::Result<sparse_merkle_tree::merkle_proof::MerkleProof> {
+        self.0
+            .merkle_proof(keys.into_iter().map(Into::into).collect())
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct FullState {
-    pub users_info_mt: SparseMerkleTree<SHA256Hasher, UserInfo, DefaultStore<UserInfo>>,
-    pub balances_mt:
-        HashMap<Symbol, SparseMerkleTree<SHA256Hasher, Balance, DefaultStore<Balance>>>,
-    pub users_info: HashMap<String, UserInfo>,
+    pub(crate) users_info_mt: SMT<UserInfo>,
+    pub(crate) balances_mt: HashMap<String, SMT<Balance>>,
+    pub light: LightState,
 }
 
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
@@ -98,9 +153,9 @@ impl Orderbook {
                     .update(user_info.get_key().into(), user_info.clone())
                     .map_err(|e| format!("Failed to update user info in SMT: {e}"))?;
                 state
+                    .light
                     .users_info
-                    .entry(user_info.user.clone())
-                    .or_insert_with(|| user_info.clone());
+                    .insert(user_info.user.clone(), user_info.clone());
                 self.users_info_merkle_root = (*new_root).into();
             }
             ExecutionState::Light(state) => {
@@ -111,7 +166,7 @@ impl Orderbook {
                     .users_info
                     .entry(user_info.user.clone())
                     .or_insert_with(|| user_info.clone());
-                self.users_info_merkle_root = sparse_merkle_tree::H256::zero().into();
+                self.users_info_merkle_root = H256::zero();
             }
             ExecutionState::ZkVm(state) => {
                 let users_info_proof = &state.users_info.proof;
@@ -150,18 +205,27 @@ impl Orderbook {
                 let tree = state
                     .balances_mt
                     .entry(symbol.to_string())
-                    .or_insert_with(|| {
-                        SparseMerkleTree::new(sparse_merkle_tree::H256::zero(), Default::default())
-                    });
+                    .or_insert_with(|| SMT::zero());
                 let leaves = balances_to_update
                     .iter()
                     .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
                     .collect();
+
                 let new_root = tree
                     .update_all(leaves)
                     .map_err(|e| format!("Failed to update balances on {symbol}: {e}"))?;
+
                 self.balances_merkle_roots
                     .insert(symbol.to_string(), (*new_root).into());
+
+                let symbol_entry = state
+                    .light
+                    .balances
+                    .entry(symbol.to_string())
+                    .or_insert_with(|| HashMap::new());
+                for (user_info_key, balance) in balances_to_update {
+                    symbol_entry.insert(user_info_key, balance);
+                }
             }
             ExecutionState::Light(state) => {
                 let symbol_entry = state.balances.entry(symbol.to_string()).or_default();
@@ -217,20 +281,23 @@ impl Clone for FullState {
     fn clone(&self) -> Self {
         let user_info_root = *self.users_info_mt.root();
         let user_info_store = self.users_info_mt.store().clone();
-        let users_info_mt = SparseMerkleTree::new(user_info_root, user_info_store);
+        let users_info_mt = SMT::from_store(user_info_root.into(), user_info_store);
 
         let mut balances_mt = HashMap::new();
         for (symbol, tree) in &self.balances_mt {
             let root = *tree.root();
             let store = tree.store().clone();
-            let new_tree = SparseMerkleTree::new(root, store);
+            let new_tree = SMT::from_store(root.into(), store);
             balances_mt.insert(symbol.clone(), new_tree);
         }
 
         Self {
             users_info_mt,
             balances_mt,
-            users_info: self.users_info.clone(),
+            light: LightState {
+                users_info: self.light.users_info.clone(),
+                balances: self.light.balances.clone(),
+            },
         }
     }
 }

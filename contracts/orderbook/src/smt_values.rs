@@ -97,6 +97,16 @@ impl Value for UserInfo {
 #[derive(Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BorshableH256(pub H256);
 
+impl Value for BorshableH256 {
+    fn to_h256(&self) -> H256 {
+        self.0
+    }
+
+    fn zero() -> Self {
+        BorshableH256(H256::zero())
+    }
+}
+
 impl std::hash::Hash for BorshableH256 {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         // BorshableH256 is already a hash, we directly use the first 8 bytes
