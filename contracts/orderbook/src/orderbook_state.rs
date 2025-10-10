@@ -20,6 +20,7 @@ pub struct LightState {
 }
 
 #[derive(Debug, Default)]
+#[allow(clippy::upper_case_acronyms)]
 pub(crate) struct SMT<T: Value + Clone>(
     SparseMerkleTree<SHA256Hasher, H256, DefaultStore<H256>>,
     PhantomData<T>,
@@ -43,7 +44,7 @@ where
     pub fn update(&mut self, key: H256, value: T) -> sparse_merkle_tree::error::Result<H256> {
         self.0
             .update(key.into(), H256(value.to_h256()))
-            .map(|r| H256(r.clone()))
+            .map(|r| H256(*r))
     }
 
     pub fn update_all(
@@ -54,7 +55,7 @@ where
             .into_iter()
             .map(|(k, v)| (k.into(), H256(v.to_h256())))
             .collect();
-        self.0.update_all(h256_leaves).map(|r| H256(r.clone()))
+        self.0.update_all(h256_leaves).map(|r| H256(*r))
     }
 
     pub fn root(&self) -> H256 {
@@ -150,7 +151,7 @@ impl Orderbook {
             ExecutionState::Full(state) => {
                 let new_root = state
                     .users_info_mt
-                    .update(user_info.get_key().into(), user_info.clone())
+                    .update(user_info.get_key(), user_info.clone())
                     .map_err(|e| format!("Failed to update user info in SMT: {e}"))?;
                 state
                     .light
@@ -202,13 +203,10 @@ impl Orderbook {
     ) -> Result<(), String> {
         match &mut self.execution_state {
             ExecutionState::Full(state) => {
-                let tree = state
-                    .balances_mt
-                    .entry(symbol.to_string())
-                    .or_insert_with(|| SMT::zero());
+                let tree = state.balances_mt.entry(symbol.to_string()).or_default();
                 let leaves = balances_to_update
                     .iter()
-                    .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
+                    .map(|(user_info_key, balance)| ((*user_info_key), balance.clone()))
                     .collect();
 
                 let new_root = tree
@@ -218,11 +216,7 @@ impl Orderbook {
                 self.balances_merkle_roots
                     .insert(symbol.to_string(), (*new_root).into());
 
-                let symbol_entry = state
-                    .light
-                    .balances
-                    .entry(symbol.to_string())
-                    .or_insert_with(|| HashMap::new());
+                let symbol_entry = state.light.balances.entry(symbol.to_string()).or_default();
                 for (user_info_key, balance) in balances_to_update {
                     symbol_entry.insert(user_info_key, balance);
                 }

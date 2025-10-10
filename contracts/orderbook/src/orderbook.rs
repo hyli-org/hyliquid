@@ -77,7 +77,7 @@ impl ExecutionState {
 
                 let leaves = users_info
                     .values()
-                    .map(|user_info| (user_info.get_key().into(), user_info.clone()))
+                    .map(|user_info| (user_info.get_key(), user_info.clone()))
                     .collect();
                 users_info_mt
                     .update_all(leaves)
@@ -88,7 +88,7 @@ impl ExecutionState {
                     let mut tree = SMT::zero();
                     let leaves = symbol_balances
                         .iter()
-                        .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
+                        .map(|(user_info_key, balance)| ((*user_info_key), balance.clone()))
                         .collect();
                     tree.update_all(leaves).map_err(|e| {
                         format!("Failed to update balances on symbol {symbol}: {e}")

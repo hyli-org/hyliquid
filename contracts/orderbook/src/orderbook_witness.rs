@@ -1,8 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::{
-    merkle_utils::{BorshableMerkleProof, SHA256Hasher},
-    tracing::debug,
-};
+use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sparse_merkle_tree::traits::Value;
 use sparse_merkle_tree::MerkleProof;
 use std::collections::{HashMap, HashSet};
@@ -67,12 +64,7 @@ impl Orderbook {
             ExecutionState::Full(state) => Ok(BorshableMerkleProof(
                 state
                     .users_info_mt
-                    .merkle_proof(
-                        users_info
-                            .iter()
-                            .map(|u| u.get_key().into())
-                            .collect::<Vec<_>>(),
-                    )
+                    .merkle_proof(users_info.iter().map(|u| u.get_key()).collect::<Vec<_>>())
                     .map_err(|e| {
                         format!("Failed to create merkle proof for users {users_info:?}: {e}")
                     })?,
@@ -111,7 +103,7 @@ impl Orderbook {
                     .get(symbol)
                     .ok_or_else(|| format!("No balances tree found for {symbol}"))?;
                 let proof = BorshableMerkleProof(
-                    tree.merkle_proof(users.iter().map(|u| u.get_key().into()).collect::<Vec<_>>())
+                    tree.merkle_proof(users.iter().map(|u| u.get_key()).collect::<Vec<_>>())
                         .map_err(|e| {
                             format!(
                                 "Failed to create merkle proof for {symbol} and users {:?}: {e}",
