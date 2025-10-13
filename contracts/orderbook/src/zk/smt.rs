@@ -1,12 +1,10 @@
-use borsh::{BorshDeserialize, BorshSerialize};
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
-use sparse_merkle_tree::{traits::Value, H256};
+use std::marker::PhantomData;
 
-#[derive(
-    Debug, Default, Clone, PartialEq, BorshDeserialize, BorshSerialize, Serialize, Deserialize,
-)]
-pub struct Balance(pub u64);
+use sdk::merkle_utils::SHA256Hasher;
+use sha2::{Digest, Sha256};
+use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkleTree, H256};
+
+use crate::model::{Balance, UserInfo};
 
 impl Value for Balance {
     fn to_h256(&self) -> H256 {
@@ -25,16 +23,6 @@ impl Value for Balance {
     fn zero() -> Self {
         Balance(0)
     }
-}
-
-#[derive(
-    BorshSerialize, BorshDeserialize, Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd,
-)]
-pub struct UserInfo {
-    pub user: String,
-    pub salt: Vec<u8>,
-    pub nonce: u32,
-    pub session_keys: Vec<Vec<u8>>,
 }
 
 impl std::hash::Hash for UserInfo {
@@ -190,5 +178,66 @@ impl From<H256> for BorshableH256 {
 impl From<BorshableH256> for H256 {
     fn from(h: BorshableH256) -> Self {
         h.0
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SMT<T: Value + Clone>(
+    SparseMerkleTree<SHA256Hasher, H256, DefaultStore<H256>>,
+    PhantomData<T>,
+);
+
+impl<T> SMT<T>
+where
+    T: Value + Clone,
+{
+    pub fn zero() -> Self {
+        SMT(
+            SparseMerkleTree::new(sparse_merkle_tree::H256::zero(), Default::default()),
+            PhantomData,
+        )
+    }
+
+    pub fn from_store(root: BorshableH256, store: DefaultStore<H256>) -> Self {
+        SMT(SparseMerkleTree::new(root.into(), store), PhantomData)
+    }
+
+    pub fn update(
+        &mut self,
+        key: BorshableH256,
+        value: T,
+    ) -> sparse_merkle_tree::error::Result<BorshableH256> {
+        self.0
+            .update(key.into(), value.to_h256())
+            .map(|r| BorshableH256(r.clone()))
+    }
+
+    pub fn update_all(
+        &mut self,
+        leaves: Vec<(BorshableH256, T)>,
+    ) -> sparse_merkle_tree::error::Result<BorshableH256> {
+        let h256_leaves = leaves
+            .into_iter()
+            .map(|(k, v)| (k.into(), v.to_h256()))
+            .collect();
+        self.0
+            .update_all(h256_leaves)
+            .map(|r| BorshableH256(r.clone()))
+    }
+
+    pub fn root(&self) -> BorshableH256 {
+        BorshableH256(*self.0.root())
+    }
+
+    pub fn store(&self) -> &DefaultStore<H256> {
+        self.0.store()
+    }
+
+    pub fn merkle_proof(
+        &self,
+        keys: Vec<H256>,
+    ) -> sparse_merkle_tree::error::Result<sparse_merkle_tree::merkle_proof::MerkleProof> {
+        self.0
+            .merkle_proof(keys.into_iter().map(Into::into).collect())
     }
 }

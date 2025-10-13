@@ -1,6 +1,6 @@
 #![no_main]
 
-use orderbook::orderbook::Orderbook;
+use orderbook::zk::ZkVmState;
 use sdk::{
     guest::{execute, GuestEnv, SP1Env},
     Calldata,
@@ -12,6 +12,6 @@ fn main() {
     let env = SP1Env {};
     let (commitment_metadata, calldata): (Vec<u8>, Vec<Calldata>) = env.read();
 
-    let output = execute::<Orderbook>(&commitment_metadata, &calldata);
+    let output = execute::<ZkVmState>(&commitment_metadata, &calldata);
     env.commit(output);
 }

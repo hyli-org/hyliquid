@@ -1,117 +1,21 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use crate::order_manager::OrderManager;
-use crate::orderbook_state::{FullState, LightState, ZkVmState, SMT};
-use crate::smt_values::{Balance, BorshableH256 as H256, UserInfo};
-use sdk::{ContractName, LaneId, TxContext};
+use crate::{
+    order_manager::OrderManager,
+    transaction::{OrderbookAction, PermissionnedOrderbookAction},
+};
+use sdk::{merkle_utils::BorshableMerkleProof, ContractName, TxContext};
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone)]
-pub struct Orderbook {
-    // Server secret for authentication on permissionned actions
-    pub hashed_secret: [u8; 32],
-    // Registered assets info from their symbol
-    pub assets_info: BTreeMap<Symbol, AssetInfo>,
-    // Validator public key of the lane this orderbook is running on
-    pub lane_id: LaneId,
+use crate::zk::H256;
 
-    // Balances merkle tree root for each symbol
-    pub balances_merkle_roots: BTreeMap<Symbol, H256>,
-    // Users info merkle root
-    pub users_info_merkle_root: H256,
-
-    // Order manager handling all orders
+#[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
+pub struct ExecuteState {
+    pub assets_info: HashMap<Symbol, AssetInfo>, // symbol -> (decimals, precision)
+    pub users_info: HashMap<String, UserInfo>,
+    pub balances: HashMap<Symbol, HashMap<H256, Balance>>,
     pub order_manager: OrderManager,
-
-    /// These fields are not committed on-chain
-    pub execution_state: ExecutionState,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExecutionMode {
-    Light,
-    Full,
-    ZkVm,
-}
-
-#[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
-pub enum ExecutionState {
-    Light(LightState),
-    Full(FullState),
-    ZkVm(ZkVmState),
-}
-
-impl Default for ExecutionState {
-    fn default() -> Self {
-        ExecutionState::ZkVm(ZkVmState::default())
-    }
-}
-
-impl ExecutionState {
-    pub fn new(mode: ExecutionMode) -> Self {
-        match mode {
-            ExecutionMode::Light => ExecutionState::Light(LightState::default()),
-            ExecutionMode::Full => ExecutionState::Full(FullState::default()),
-            ExecutionMode::ZkVm => ExecutionState::ZkVm(ZkVmState::default()),
-        }
-    }
-    pub fn from_data(
-        mode: ExecutionMode,
-        users_info: HashMap<String, UserInfo>,
-        balances: HashMap<Symbol, HashMap<H256, Balance>>,
-    ) -> Result<Self, String> {
-        match mode {
-            ExecutionMode::Light => Ok(ExecutionState::Light(LightState {
-                users_info,
-                balances,
-            })),
-            ExecutionMode::Full => {
-                let mut users_info_mt = SMT::zero();
-
-                let leaves = users_info
-                    .values()
-                    .map(|user_info| (user_info.get_key().into(), user_info.clone()))
-                    .collect();
-                users_info_mt
-                    .update_all(leaves)
-                    .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
-
-                let mut balances_mt = HashMap::new();
-                for (symbol, symbol_balances) in balances.iter() {
-                    let mut tree = SMT::zero();
-                    let leaves = symbol_balances
-                        .iter()
-                        .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.clone()))
-                        .collect();
-                    tree.update_all(leaves).map_err(|e| {
-                        format!("Failed to update balances on symbol {symbol}: {e}")
-                    })?;
-                    balances_mt.insert(symbol.clone(), tree);
-                }
-
-                Ok(ExecutionState::Full(FullState {
-                    users_info_mt,
-                    balances_mt,
-                    light: LightState {
-                        balances,
-                        users_info: HashMap::new(),
-                    },
-                }))
-            }
-            ExecutionMode::ZkVm => Ok(ExecutionState::ZkVm(ZkVmState::default())),
-        }
-    }
-
-    pub fn mode(&self) -> ExecutionMode {
-        match self {
-            ExecutionState::Light(_) => ExecutionMode::Light,
-            ExecutionState::Full(_) => ExecutionMode::Full,
-            ExecutionState::ZkVm(_) => ExecutionMode::ZkVm,
-        }
-    }
 }
 
 #[derive(
@@ -223,7 +127,7 @@ pub enum OrderbookEvent {
 }
 
 /// impl of functions for actions execution
-impl Orderbook {
+impl ExecuteState {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn create_pair(
         &mut self,
@@ -233,21 +137,8 @@ impl Orderbook {
         self.register_asset(&pair.0, &info.base)?;
         self.register_asset(&pair.1, &info.quote)?;
 
-        // Initialize a new SparseMerkleTree for the symbol pair if not already present
         for symbol in &[&pair.0, &pair.1] {
-            if !self.balances_merkle_roots.contains_key(*symbol) {
-                match &mut self.execution_state {
-                    ExecutionState::Full(state) => {
-                        state.balances_mt.entry((*symbol).clone()).or_default();
-                    }
-                    ExecutionState::Light(state) => {
-                        state.balances.entry((*symbol).clone()).or_default();
-                    }
-                    ExecutionState::ZkVm(_) => {}
-                }
-                self.balances_merkle_roots
-                    .insert((*symbol).clone(), sparse_merkle_tree::H256::zero().into());
-            }
+            self.balances.entry((*symbol).clone()).or_default();
         }
 
         Ok(vec![OrderbookEvent::PairCreated {
@@ -256,6 +147,7 @@ impl Orderbook {
         }])
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn register_asset(&mut self, symbol: &Symbol, asset_info: &AssetInfo) -> Result<(), String> {
         match self.assets_info.get_mut(symbol) {
             Some(existing) => {
@@ -294,40 +186,19 @@ impl Orderbook {
         // Add the session key to the user's list of session keys
         user_info.session_keys.push(pubkey.clone());
 
-        let mut events = match &mut self.execution_state {
-            ExecutionState::Full(state) => {
-                state
-                    .light
-                    .users_info
-                    .insert(user_info.user.clone(), user_info.clone());
+        self.users_info
+            .insert(user_info.user.clone(), user_info.clone());
 
-                vec![OrderbookEvent::SessionKeyAdded {
-                    user: user_info.user.to_string(),
-                    salt: user_info.salt.clone(),
-                    nonce: user_info.nonce,
-                    session_keys: user_info.session_keys.clone(),
-                }]
-            }
-            ExecutionState::Light(state) => {
-                // Insert or update the user_info entry
-                state
-                    .users_info
-                    .insert(user_info.user.clone(), user_info.clone());
+        let mut events = vec![OrderbookEvent::SessionKeyAdded {
+            user: user_info.user.to_string(),
+            salt: user_info.salt.clone(),
+            nonce: user_info.nonce,
+            session_keys: user_info.session_keys.clone(),
+        }];
 
-                vec![OrderbookEvent::SessionKeyAdded {
-                    user: user_info.user.to_string(),
-                    salt: user_info.salt.clone(),
-                    nonce: user_info.nonce,
-                    session_keys: user_info.session_keys.clone(),
-                }]
-            }
-            ExecutionState::ZkVm(_) => vec![],
-        };
         if user_info.nonce == 0 {
-            // We incremente nonce to be able to add it to the SMT
+            // We incremente nonce
             events.push(self.increment_nonce_and_save_user_info(&user_info)?);
-        } else {
-            self.update_user_info_merkle_root(&user_info)?;
         }
 
         Ok(events)
@@ -347,18 +218,11 @@ impl Orderbook {
         self.update_balances(symbol, vec![(user_info.get_key(), new_balance.clone())])
             .map_err(|e| e.to_string())?;
 
-        let events = match self.execution_state.mode() {
-            ExecutionMode::Full | ExecutionMode::Light => {
-                vec![OrderbookEvent::BalanceUpdated {
-                    user: user_info.user.clone(),
-                    symbol: symbol.to_string(),
-                    amount: new_balance.0,
-                }]
-            }
-            ExecutionMode::ZkVm => vec![],
-        };
-
-        Ok(events)
+        Ok(vec![OrderbookEvent::BalanceUpdated {
+            user: user_info.user.clone(),
+            symbol: symbol.to_string(),
+            amount: new_balance.0,
+        }])
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -379,22 +243,16 @@ impl Orderbook {
         self.deduct_from_account(symbol, user_info, *amount)
             .map_err(|e| e.to_string())?;
 
-        let mut events = match self.execution_state.mode() {
-            ExecutionMode::Light | ExecutionMode::Full => {
-                let user_balance = self.get_balance(user_info, symbol);
-                vec![OrderbookEvent::BalanceUpdated {
-                    user: user_info.user.clone(),
-                    symbol: symbol.to_string(),
-                    amount: user_balance.0,
-                }]
-            }
-            ExecutionMode::ZkVm => vec![],
-        };
+        let user_balance = self.get_balance(user_info, symbol);
 
-        // Increment user's nonce
-        events.push(self.increment_nonce_and_save_user_info(user_info)?);
-
-        Ok(events)
+        Ok(vec![
+            OrderbookEvent::BalanceUpdated {
+                user: user_info.user.clone(),
+                symbol: symbol.to_string(),
+                amount: user_balance.0,
+            },
+            self.increment_nonce_and_save_user_info(user_info)?,
+        ])
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -422,18 +280,14 @@ impl Orderbook {
         // Cancel order through order manager
         let mut events = self.order_manager.cancel_order(&order_id)?;
 
-        match self.execution_state.mode() {
-            ExecutionMode::Light | ExecutionMode::Full => {
-                let user_balance = self.get_balance(user_info, &required_symbol);
+        let user_balance = self.get_balance(user_info, &required_symbol);
 
-                events.push(OrderbookEvent::BalanceUpdated {
-                    user: user_info.user.clone(),
-                    symbol: required_symbol.to_string(),
-                    amount: user_balance.0,
-                });
-            }
-            ExecutionMode::ZkVm => {}
-        }
+        events.push(OrderbookEvent::BalanceUpdated {
+            user: user_info.user.clone(),
+            symbol: required_symbol.to_string(),
+            amount: user_balance.0,
+        });
+
         events.push(self.increment_nonce_and_save_user_info(user_info)?);
 
         Ok(events)
@@ -452,7 +306,217 @@ impl Orderbook {
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn execute_order(
+    pub fn get_user_info_from_key(&self, key: &H256) -> Result<UserInfo, String> {
+        self.users_info
+            .iter()
+            .find(|(_, info)| info.get_key() == *key)
+            .map(|(_, info)| info.clone())
+            .ok_or_else(|| {
+                format!(
+                    "No user info found for key {:?}",
+                    hex::encode(key.as_slice())
+                )
+            })
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn has_user_info_key(&self, user_info_key: H256) -> Result<bool, String> {
+        Ok(self
+            .users_info
+            .values()
+            .any(|user_info| user_info.get_key() == user_info_key))
+    }
+
+    // pub fn init(lane_id: LaneId, secret: Vec<u8>) -> Result<Self, String> {
+    //     Self::from_data(
+    //         lane_id,
+    //         secret,
+    //         BTreeMap::new(),
+    //         OrderManager::default(),
+    //         HashMap::new(),
+    //         HashMap::new(),
+    //     )
+    // }
+
+    // pub fn from_data(
+    //     lane_id: LaneId,
+    //     mode: ExecutionMode,
+    //     secret: Vec<u8>,
+    //     pairs_info: BTreeMap<Pair, PairInfo>,
+    //     order_manager: OrderManager,
+    //     users_info: HashMap<String, UserInfo>,
+    //     balances: HashMap<Symbol, HashMap<H256, Balance>>,
+    // ) -> Result<Self, String> {
+    //     let full_state =
+    //         ExecutionState::from_data(ExecutionMode::Full, users_info.clone(), balances.clone())?;
+
+    //     let execution_state = if mode == ExecutionMode::Full {
+    //         full_state.clone()
+    //     } else {
+    //         ExecutionState::from_data(mode, users_info, balances)?
+    //     };
+
+    //     let users_info_merkle_root = match &full_state {
+    //         ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
+    //         _ => panic!("Business logic error. full_state should be Full"),
+    //     };
+    //     let balances_merkle_roots = match &full_state {
+    //         ExecutionState::Full(state) => state
+    //             .balances_mt
+    //             .iter()
+    //             .map(|(symbol, balances)| (symbol.clone(), (*balances.root()).into()))
+    //             .collect(),
+    //         _ => panic!("Business logic error. full_state should be Full"),
+    //     };
+    //     let hashed_secret = Sha256::digest(&secret).into();
+
+    //     let mut orderbook = Orderbook {
+    //         hashed_secret,
+    //         assets_info: BTreeMap::new(),
+    //         lane_id,
+    //         balances_merkle_roots,
+    //         users_info_merkle_root,
+    //         order_manager,
+    //         execution_state,
+    //     };
+
+    //     for (pair, info) in pairs_info {
+    //         orderbook.create_pair(&pair, &info)?;
+    //     }
+
+    //     Ok(orderbook)
+    // }
+
+    pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
+        self.balances.clone()
+    }
+
+    pub fn get_balance(&self, user: &UserInfo, symbol: &str) -> Balance {
+        self.balances
+            .get(symbol)
+            .and_then(|balances| balances.get(&user.get_key()).cloned())
+            .unwrap_or_default()
+    }
+
+    pub fn get_orders(&self) -> BTreeMap<String, Order> {
+        self.order_manager.orders.clone()
+    }
+
+    pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {
+        self.order_manager.orders_owner.get(order_id)
+    }
+
+    pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
+        self.users_info
+            .get(user)
+            .cloned()
+            .ok_or_else(|| format!("User info not found for user '{user}'"))
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn fund_account(
+        &mut self,
+        symbol: &str,
+        user_info: &UserInfo,
+        amount: &Balance,
+    ) -> Result<(), String> {
+        let current_balance = self.get_balance(user_info, symbol);
+
+        self.update_balances(
+            symbol,
+            vec![(user_info.get_key(), Balance(current_balance.0 + amount.0))],
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn deduct_from_account(
+        &mut self,
+        symbol: &str,
+        user_info: &UserInfo,
+        amount: u64,
+    ) -> Result<(), String> {
+        let current_balance = self.get_balance(user_info, symbol);
+
+        if current_balance.0 < amount {
+            return Err(format!(
+                "Insufficient balance: user {} has {} {}, trying to remove {}",
+                user_info.user, current_balance.0, symbol, amount
+            ));
+        }
+
+        self.update_balances(
+            symbol,
+            vec![(user_info.get_key(), Balance(current_balance.0 - amount))],
+        )
+        .map_err(|e| e.to_string())
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn increment_nonce_and_save_user_info(
+        &mut self,
+        user_info: &UserInfo,
+    ) -> Result<OrderbookEvent, String> {
+        let mut updated_user_info = user_info.clone();
+        updated_user_info.nonce = updated_user_info
+            .nonce
+            .checked_add(1)
+            .ok_or("Nonce overflow")?;
+        Ok(OrderbookEvent::NonceIncremented {
+            user: user_info.user.clone(),
+            nonce: updated_user_info.nonce,
+        })
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn update_balances(
+        &mut self,
+        symbol: &str,
+        balances_to_update: Vec<(H256, Balance)>,
+    ) -> Result<(), String> {
+        self.balances
+            .entry(symbol.to_string())
+            .or_default()
+            .extend(balances_to_update);
+
+        Ok(())
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn verify_orders_owners(&self, action: &OrderbookAction) -> Result<(), String> {
+        for (order_id, user_info_key) in &self.order_manager.orders_owner {
+            // Verify that the order exists
+            if !self.order_manager.orders.contains_key(order_id)
+                // If the action is creating this order, it's expected to not find it in orders
+                && !matches!(
+                    action,
+                    OrderbookAction::PermissionnedOrderbookAction(
+                        PermissionnedOrderbookAction::CreateOrder(Order {
+                            order_id: create_order_id,
+                            ..
+                        })
+                    ) if create_order_id == order_id
+                )
+            {
+                return Err(format!("Order with id {order_id} does not exist"));
+            }
+            // Verify that user info exists
+            if !self.has_user_info_key(*user_info_key).map_err(|e| {
+                format!(
+                    "Failed to get user info for key {}: {e}",
+                    hex::encode(user_info_key)
+                )
+            })? {
+                return Err(format!(
+                    "Missing user info for user {}",
+                    hex::encode(user_info_key)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn execute_order(
         &mut self,
         user_info: &UserInfo,
         order: Order,
@@ -707,14 +771,12 @@ impl Orderbook {
                     )
                 })?;
 
-                if !matches!(self.execution_state.mode(), ExecutionMode::ZkVm) {
-                    let user_info = self.get_user_info_from_key(&user_key).unwrap();
-                    events.push(OrderbookEvent::BalanceUpdated {
-                        user: user_info.user.clone(),
-                        symbol: symbol.clone(),
-                        amount: amount.0,
-                    });
-                }
+                let user_info = self.get_user_info_from_key(&user_key).unwrap();
+                events.push(OrderbookEvent::BalanceUpdated {
+                    user: user_info.user.clone(),
+                    symbol: symbol.clone(),
+                    amount: amount.0,
+                });
 
                 balances_to_update.push((user_key, amount.clone()));
             }
@@ -726,246 +788,106 @@ impl Orderbook {
 
         Ok(events)
     }
-}
 
-impl Orderbook {
-    pub fn init(lane_id: LaneId, mode: ExecutionMode, secret: Vec<u8>) -> Result<Self, String> {
-        Self::from_data(
-            lane_id,
-            mode,
-            secret,
-            BTreeMap::new(),
-            OrderManager::default(),
-            HashMap::new(),
-            HashMap::new(),
-        )
-    }
-
-    pub fn from_data(
-        lane_id: LaneId,
-        mode: ExecutionMode,
-        secret: Vec<u8>,
-        pairs_info: BTreeMap<Pair, PairInfo>,
-        order_manager: OrderManager,
-        users_info: HashMap<String, UserInfo>,
-        balances: HashMap<Symbol, HashMap<H256, Balance>>,
-    ) -> Result<Self, String> {
-        let full_state =
-            ExecutionState::from_data(ExecutionMode::Full, users_info.clone(), balances.clone())?;
-
-        let execution_state = if mode == ExecutionMode::Full {
-            full_state.clone()
-        } else {
-            ExecutionState::from_data(mode, users_info, balances)?
-        };
-
-        let users_info_merkle_root = match &full_state {
-            ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
-            _ => panic!("Business logic error. full_state should be Full"),
-        };
-        let balances_merkle_roots = match &full_state {
-            ExecutionState::Full(state) => state
-                .balances_mt
-                .iter()
-                .map(|(symbol, balances)| (symbol.clone(), (*balances.root()).into()))
-                .collect(),
-            _ => panic!("Business logic error. full_state should be Full"),
-        };
-        let hashed_secret = Sha256::digest(&secret).into();
-
-        let mut orderbook = Orderbook {
-            hashed_secret,
-            assets_info: BTreeMap::new(),
-            lane_id,
-            balances_merkle_roots,
-            users_info_merkle_root,
-            order_manager,
-            execution_state,
-        };
-
-        for (pair, info) in pairs_info {
-            orderbook.create_pair(&pair, &info)?;
-        }
-
-        Ok(orderbook)
-    }
-
-    pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
-        match &self.execution_state {
-            ExecutionState::Full(state) => state.light.balances.clone(),
-            ExecutionState::Light(state) => state.balances.clone(),
-            ExecutionState::ZkVm(state) => {
-                let mut balances: HashMap<Symbol, HashMap<H256, Balance>> = HashMap::new();
-                for (symbol, witness) in state.balances.iter() {
-                    balances.insert(symbol.clone(), witness.value.clone());
-                }
-                balances
-            }
-        }
-    }
-
-    pub fn get_balance(&self, user: &UserInfo, symbol: &str) -> Balance {
-        match &self.execution_state {
-            ExecutionState::Full(state) => state
-                .light
-                .balances
-                .get(symbol)
-                .and_then(|tree| tree.get(&user.get_key()).cloned())
-                .unwrap_or_default(),
-            ExecutionState::Light(state) => state
-                .balances
-                .get(symbol)
-                .and_then(|balances| balances.get(&user.get_key()).cloned())
-                .unwrap_or_default(),
-            ExecutionState::ZkVm(state) => {
-                let user_key = match state
-                    .users_info
-                    .value
-                    .iter()
-                    .find(|user_info| user_info.user == user.user)
-                    .map(|ui| ui.get_key())
-                {
-                    Some(key) => key,
-                    None => return Balance(0),
-                };
-
-                state
-                    .balances
-                    .get(symbol)
-                    .and_then(|user_balances| user_balances.value.get(&user_key).cloned())
-                    .unwrap_or_default()
-            }
-        }
-    }
-
-    pub fn is_blob_whitelisted(&self, contract_name: &ContractName) -> bool {
-        if contract_name.0 == "orderbook" {
-            return true;
-        }
-
-        self.assets_info.contains_key(&contract_name.0)
-            || self
-                .assets_info
-                .values()
-                .any(|info| &info.contract_name == contract_name)
-    }
-}
-
-/// Implementation of functions that are only used by the server.
-impl Orderbook {
-    pub fn get_orders(&self) -> BTreeMap<String, Order> {
-        self.order_manager.orders.clone()
-    }
-
-    pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {
-        self.order_manager.orders_owner.get(order_id)
-    }
-
-    pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
-        match &self.execution_state {
-            ExecutionState::Full(state) => state
-                .light
-                .users_info
-                .get(user)
-                .cloned()
-                .ok_or_else(|| format!("User info for '{user}' not found")),
-            ExecutionState::Light(state) => state
-                .users_info
-                .get(user)
-                .cloned()
-                .ok_or_else(|| format!("User info not found for user '{user}'")),
-            ExecutionState::ZkVm(_) => {
-                Err("User info lookup is not available in ZkVm execution mode".to_string())
-            }
-        }
-    }
-}
-
-impl Orderbook {
     // Detects differences between two orderbooks
     // It is used to detect differences between on-chain and db orderbooks
-    pub fn diff(&self, other: &Orderbook) -> BTreeMap<String, String> {
-        let mut diff = BTreeMap::new();
-        if self.hashed_secret != other.hashed_secret {
-            diff.insert(
-                "hashed_secret".to_string(),
-                format!(
-                    "{} != {}",
-                    hex::encode(self.hashed_secret.as_slice()),
-                    hex::encode(other.hashed_secret.as_slice())
-                ),
-            );
-        }
+    // pub fn diff(&self, other: &LightState) -> BTreeMap<String, String> {
+    //     let mut diff = BTreeMap::new();
+    //     if self.hashed_secret != other.hashed_secret {
+    //         diff.insert(
+    //             "hashed_secret".to_string(),
+    //             format!(
+    //                 "{} != {}",
+    //                 hex::encode(self.hashed_secret.as_slice()),
+    //                 hex::encode(other.hashed_secret.as_slice())
+    //             ),
+    //         );
+    //     }
 
-        if self.assets_info != other.assets_info {
-            let mut mismatches = Vec::new();
+    //     if self.assets_info != other.assets_info {
+    //         let mut mismatches = Vec::new();
 
-            for (symbol, info) in &self.assets_info {
-                match other.assets_info.get(symbol) {
-                    Some(other_info) if other_info == info => {}
-                    Some(other_info) => {
-                        mismatches.push(format!("{symbol}: {info:?} != {other_info:?}"))
-                    }
-                    None => mismatches.push(format!("{symbol}: present only on self: {info:?}")),
-                }
-            }
+    //         for (symbol, info) in &self.assets_info {
+    //             match other.assets_info.get(symbol) {
+    //                 Some(other_info) if other_info == info => {}
+    //                 Some(other_info) => {
+    //                     mismatches.push(format!("{symbol}: {info:?} != {other_info:?}"))
+    //                 }
+    //                 None => mismatches.push(format!("{symbol}: present only on self: {info:?}")),
+    //             }
+    //         }
 
-            for (symbol, info) in &other.assets_info {
-                if !self.assets_info.contains_key(symbol) {
-                    mismatches.push(format!("{symbol}: present only on other: {info:?}"));
-                }
-            }
+    //         for (symbol, info) in &other.assets_info {
+    //             if !self.assets_info.contains_key(symbol) {
+    //                 mismatches.push(format!("{symbol}: present only on other: {info:?}"));
+    //             }
+    //         }
 
-            diff.insert("symbols_info".to_string(), mismatches.join("; "));
-        }
+    //         diff.insert("symbols_info".to_string(), mismatches.join("; "));
+    //     }
 
-        if self.lane_id != other.lane_id {
-            diff.insert(
-                "lane_id".to_string(),
-                format!(
-                    "{} != {}",
-                    hex::encode(&self.lane_id.0 .0),
-                    hex::encode(&other.lane_id.0 .0)
-                ),
-            );
-        }
+    //     if self.lane_id != other.lane_id {
+    //         diff.insert(
+    //             "lane_id".to_string(),
+    //             format!(
+    //                 "{} != {}",
+    //                 hex::encode(&self.lane_id.0 .0),
+    //                 hex::encode(&other.lane_id.0 .0)
+    //             ),
+    //         );
+    //     }
 
-        if self.balances_merkle_roots != other.balances_merkle_roots {
-            diff.insert(
-                "balances_merkle_roots".to_string(),
-                format!(
-                    "{:?} != {:?}",
-                    self.balances_merkle_roots, other.balances_merkle_roots
-                ),
-            );
-        }
+    //     if self.balances_merkle_roots != other.balances_merkle_roots {
+    //         diff.insert(
+    //             "balances_merkle_roots".to_string(),
+    //             format!(
+    //                 "{:?} != {:?}",
+    //                 self.balances_merkle_roots, other.balances_merkle_roots
+    //             ),
+    //         );
+    //     }
 
-        if self.users_info_merkle_root != other.users_info_merkle_root {
-            diff.insert(
-                "users_info_merkle_root".to_string(),
-                format!(
-                    "{} != {}",
-                    hex::encode(self.users_info_merkle_root.as_slice()),
-                    hex::encode(other.users_info_merkle_root.as_slice())
-                ),
-            );
-        }
+    //     if self.users_info_merkle_root != other.users_info_merkle_root {
+    //         diff.insert(
+    //             "users_info_merkle_root".to_string(),
+    //             format!(
+    //                 "{} != {}",
+    //                 hex::encode(self.users_info_merkle_root.as_slice()),
+    //                 hex::encode(other.users_info_merkle_root.as_slice())
+    //             ),
+    //         );
+    //     }
 
-        if self.order_manager != other.order_manager {
-            diff.extend(self.order_manager.diff(&other.order_manager));
-        }
-        if self.execution_state.mode() != other.execution_state.mode() {
-            diff.insert(
-                "execution_state".to_string(),
-                format!(
-                    "{:?} != {:?}",
-                    self.execution_state.mode(),
-                    other.execution_state.mode()
-                ),
-            );
-        }
-        diff
-    }
+    //     if self.order_manager != other.order_manager {
+    //         diff.extend(self.order_manager.diff(&other.order_manager));
+    //     }
+    //     if self.execution_state.mode() != other.execution_state.mode() {
+    //         diff.insert(
+    //             "execution_state".to_string(),
+    //             format!(
+    //                 "{:?} != {:?}",
+    //                 self.execution_state.mode(),
+    //                 other.execution_state.mode()
+    //             ),
+    //         );
+    //     }
+    //     diff
+    // }
+}
+
+#[derive(
+    Debug, Default, Clone, PartialEq, BorshDeserialize, BorshSerialize, Serialize, Deserialize,
+)]
+pub struct Balance(pub u64);
+
+#[derive(
+    BorshSerialize, BorshDeserialize, Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd,
+)]
+pub struct UserInfo {
+    pub user: String,
+    pub salt: Vec<u8>,
+    pub nonce: u32,
+    pub session_keys: Vec<Vec<u8>>,
 }
 
 // To avoid recomputing powers of 10

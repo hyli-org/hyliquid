@@ -1,8 +1,7 @@
-use crate::smt_values::BorshableH256 as H256;
+use crate::model::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
+use crate::zk::H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::{BTreeMap, VecDeque};
-
-use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
 
 trait OrderList {
     fn pop_best(&mut self, side: &OrderSide) -> Option<(u64, VecDeque<OrderId>)>;

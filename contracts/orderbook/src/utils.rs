@@ -4,7 +4,7 @@ use k256::{
 };
 use sha3::{Digest, Sha3_256};
 
-use crate::smt_values::UserInfo;
+use crate::model::UserInfo;
 
 /// Verifies that the signature provided in private_input was made with the private key
 /// of the specified user by validating:
