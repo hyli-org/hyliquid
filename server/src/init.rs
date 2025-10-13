@@ -184,6 +184,9 @@ pub async fn init_orderbook_from_database(
             .sum::<usize>(),
     );
 
+    // TODO: load properly the value
+    let last_block_height = sdk::BlockHeight(0);
+
     let light_orderbook = Orderbook::from_data(
         lane_id.clone(),
         ExecutionMode::Light,
@@ -192,6 +195,7 @@ pub async fn init_orderbook_from_database(
         order_manager.clone(),
         users_info.clone(),
         balances.clone(),
+        last_block_height,
     )
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
     let full_orderbook = Orderbook::from_data(
@@ -202,6 +206,7 @@ pub async fn init_orderbook_from_database(
         order_manager,
         users_info,
         balances,
+        last_block_height,
     )
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 

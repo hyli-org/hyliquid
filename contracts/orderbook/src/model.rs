@@ -6,7 +6,7 @@ use crate::{
     order_manager::OrderManager,
     transaction::{OrderbookAction, PermissionnedOrderbookAction},
 };
-use sdk::{merkle_utils::BorshableMerkleProof, ContractName, TxContext};
+use sdk::ContractName;
 
 use crate::zk::H256;
 
@@ -291,18 +291,6 @@ impl ExecuteState {
         events.push(self.increment_nonce_and_save_user_info(user_info)?);
 
         Ok(events)
-    }
-
-    pub fn escape(
-        &mut self,
-        _tx_ctx: &TxContext,
-        _user_info: &UserInfo,
-        _user_info_proof: &BorshableMerkleProof,
-    ) -> Result<Vec<OrderbookEvent>, String> {
-        // Logic to allow user to escape with their funds
-        // This could involve transferring all their balances to a safe contract or address
-        // For now, we just return an empty event list
-        Ok(vec![])
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -789,6 +777,29 @@ impl ExecuteState {
         Ok(events)
     }
 
+    pub fn get_user_balances(&self, user_key: &H256) -> HashMap<Symbol, Balance> {
+        let mut user_balances = HashMap::new();
+        for (symbol, balances) in self.get_balances() {
+            if let Some(balance) = balances.get(user_key) {
+                user_balances.insert(symbol, balance.clone());
+            }
+        }
+        user_balances
+    }
+
+    pub fn is_blob_whitelisted(&self, contract_name: &ContractName) -> bool {
+        if contract_name.0 == "orderbook" {
+            return true;
+        }
+
+        self.assets_info.contains_key(&contract_name.0)
+            || self
+                .assets_info
+                .values()
+                .any(|info| &info.contract_name == contract_name)
+    }
+
+    // Implementation of functions that are only used by the server.
     // Detects differences between two orderbooks
     // It is used to detect differences between on-chain and db orderbooks
     // pub fn diff(&self, other: &LightState) -> BTreeMap<String, String> {

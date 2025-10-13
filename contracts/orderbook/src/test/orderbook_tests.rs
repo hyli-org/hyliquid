@@ -3,7 +3,8 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::orderbook::{
-    AssetInfo, ExecutionMode, Order, OrderSide, OrderType, Orderbook, Pair, PairInfo,
+    AssetInfo, ExecutionMode, Order, OrderSide, OrderType, Orderbook, OrderbookEvent, Pair,
+    PairInfo, ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use crate::smt_values::UserInfo;
 use crate::{
@@ -12,8 +13,8 @@ use crate::{
 };
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
-use sdk::{guest, LaneId};
-use sdk::{tracing, ZkContract};
+use sdk::{guest, BlockHeight, LaneId};
+use sdk::{tracing, ContractAction, ZkContract};
 use sdk::{BlobIndex, Calldata, ContractName, Identity, TxContext, TxHash};
 use sha3::{Digest, Sha3_256};
 
@@ -51,7 +52,7 @@ fn test_user(name: &str) -> UserInfo {
 
 fn get_ctx() -> (ContractName, Identity, TxContext, LaneId, Vec<u8>) {
     let cn: ContractName = ContractName("orderbook".to_owned());
-    let id: Identity = Identity::from("orderbook@orderbook");
+    let id: Identity = Identity::from(ORDERBOOK_ACCOUNT_IDENTITY);
     let lane_id = LaneId::default();
     let tx_ctx: TxContext = TxContext {
         lane_id: lane_id.clone(),
@@ -746,4 +747,145 @@ fn test_complex_multi_user_orderbook() {
     assert!(sell_orders.is_empty(), "all sell orders should be filled");
     let buy_orders = light.order_manager.buy_orders.get(&pair).unwrap().clone();
     assert!(buy_orders.is_empty(), "all buy orders should be filled");
+}
+
+#[test_log::test]
+fn test_escape_cancels_orders_and_resets_balances() {
+    let (_, _, _, lane_id, secret) = get_ctx();
+
+    let mut light = Orderbook::init(lane_id.clone(), ExecutionMode::Light, secret.clone()).unwrap();
+    let mut full = Orderbook::init(lane_id.clone(), ExecutionMode::Full, secret.clone()).unwrap();
+
+    let pair: Pair = ("HYLLAR".to_string(), "ORANJ".to_string());
+    let pair_info = PairInfo {
+        base: AssetInfo::new(0, ContractName(pair.0.clone())),
+        quote: AssetInfo::new(0, ContractName(pair.1.clone())),
+    };
+
+    let users = ["alice"];
+    let signers = vec![TestSigner::new(1)];
+    let user = users[0];
+
+    add_session_key(&mut light, &mut full, &users, &signers, user);
+
+    run_action(
+        &mut light,
+        &mut full,
+        user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: pair_info,
+        },
+        Vec::new(),
+    );
+
+    deposit(&mut light, &mut full, user, &pair.0, 150);
+    deposit(&mut light, &mut full, user, &pair.1, 200);
+
+    let order_specs = [
+        ("escape-ask-1", 10, Some(10)),
+        ("escape-ask-2", 20, Some(12)),
+        ("escape-ask-3", 30, Some(14)),
+    ];
+
+    for (order_id, quantity, price) in order_specs {
+        submit_signed_order(
+            &mut light,
+            &mut full,
+            &users,
+            &signers,
+            user,
+            Order {
+                order_id: order_id.to_string(),
+                order_type: OrderType::Limit,
+                order_side: OrderSide::Ask,
+                price,
+                pair: pair.clone(),
+                quantity,
+            },
+        );
+    }
+
+    assert_eq!(light.order_manager.orders.len(), 3);
+    assert_eq!(full.order_manager.orders.len(), 3);
+
+    let light_user_info = light.get_user_info(user).expect("light user info");
+    let full_user_info = full.get_user_info(user).expect("full user info");
+
+    // Get user balances before escape to create proper transfer blobs
+    let light_base_balance = light.get_balance(&light_user_info, &pair.0);
+    let light_quote_balance = light.get_balance(&light_user_info, &pair.1);
+
+    // Create transfer blobs for each asset with non-zero balance
+    use hyli_smt_token::SmtTokenAction;
+    use sdk::{BlobIndex, TxHash};
+
+    let mut blobs = Vec::new();
+
+    // Add transfer blob for base asset if balance > 0
+    if light_base_balance.0 > 0 {
+        let transfer_blob = SmtTokenAction::Transfer {
+            sender: Identity(ORDERBOOK_ACCOUNT_IDENTITY.to_string()),
+            recipient: Identity(user.to_string()),
+            amount: 150, // Deposited amount
+        }
+        .as_blob(ContractName(pair.0.clone()), None, None);
+        blobs.push(transfer_blob);
+    }
+
+    // Add transfer blob for quote asset if balance > 0
+    if light_quote_balance.0 > 0 {
+        let transfer_blob = SmtTokenAction::Transfer {
+            sender: Identity(ORDERBOOK_ACCOUNT_IDENTITY.to_string()),
+            recipient: Identity(user.to_string()),
+            amount: 200, // Deposited amount
+        }
+        .as_blob(ContractName(pair.1.clone()), None, None);
+        blobs.push(transfer_blob);
+    }
+
+    let escape_ctx = TxContext {
+        lane_id,
+        block_height: BlockHeight(full.last_block_number.0 + 5_001),
+        ..Default::default()
+    };
+
+    let calldata = sdk::Calldata {
+        identity: Identity(ORDERBOOK_ACCOUNT_IDENTITY.to_string()),
+        tx_blob_count: blobs.len(),
+        blobs: blobs.into(),
+        index: BlobIndex(0),
+        tx_hash: TxHash::from("escape-test-tx"),
+        tx_ctx: Some(escape_ctx),
+        private_input: Vec::new(),
+    };
+
+    let events_light = light
+        .escape(&calldata, &light_user_info)
+        .expect("light escape should succeed");
+    let events_full = full
+        .escape(&calldata, &full_user_info)
+        .expect("full escape should succeed");
+
+    let cancelled_events_light = events_light
+        .iter()
+        .filter(|event| matches!(event, OrderbookEvent::OrderCancelled { .. }))
+        .count();
+    let cancelled_events_full = events_full
+        .iter()
+        .filter(|event| matches!(event, OrderbookEvent::OrderCancelled { .. }))
+        .count();
+
+    assert_eq!(cancelled_events_light, 3);
+    assert_eq!(cancelled_events_full, 3);
+
+    assert!(light.order_manager.orders.is_empty());
+    assert!(full.order_manager.orders.is_empty());
+    assert!(light.order_manager.orders_owner.is_empty());
+    assert!(full.order_manager.orders_owner.is_empty());
+
+    assert_eq!(light.get_balance(&light_user_info, &pair.0).0, 0);
+    assert_eq!(light.get_balance(&light_user_info, &pair.1).0, 0);
+    assert_eq!(full.get_balance(&full_user_info, &pair.0).0, 0);
+    assert_eq!(full.get_balance(&full_user_info, &pair.1).0, 0);
 }

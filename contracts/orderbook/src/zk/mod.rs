@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::BorshableMerkleProof;
-use sdk::LaneId;
+use sdk::{BlockHeight, LaneId};
 use sparse_merkle_tree::MerkleProof;
 
 use crate::model::{AssetInfo, Balance, ExecuteState, Symbol, UserInfo};
@@ -38,6 +38,7 @@ pub struct FullState {
     pub state: ExecuteState,
     pub hashed_secret: H256,
     pub lane_id: LaneId,
+    pub last_block_number: BlockHeight,
 }
 
 // Committed state
@@ -49,6 +50,7 @@ pub struct OnChainState {
     pub orders: OrderManager,
     pub hashed_secret: H256,
     pub lane_id: LaneId,
+    pub last_block_number: BlockHeight,
 }
 
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
