@@ -1,4 +1,4 @@
-use std::{sync::Arc, vec};
+use std::{sync::Arc, time::Duration, vec};
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
@@ -32,12 +32,13 @@ use orderbook::{
 };
 use reqwest::StatusCode;
 use sdk::{
-    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId, NodeStateEvent,
-    StatefulEvent, StructuredBlob, UnsettledBlobTransaction,
+    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId, MempoolStatusEvent,
+    NodeStateEvent, StatefulEvent, StructuredBlob, UnsettledBlobTransaction,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use tracing::info;
 
 use crate::{
     database::DatabaseRequest, prover::OrderbookProverRequest,
@@ -80,12 +81,21 @@ pub struct OrderbookWsInMessage();
 module_bus_client! {
 #[derive(Debug)]
 pub struct OrderbookModuleBusClient {
+    sender(OrderbookProverRequest),
+    sender(DatabaseRequest),
+    // receiver(WsInMessage<OrderbookWsInMessage>),
+    receiver(NodeStateEvent),
+}
+}
+
+module_bus_client! {
+#[derive(Debug)]
+struct RouterBusClient {
     sender(WsTopicMessage<OrderbookEvent>),
     sender(WsTopicMessage<String>),
     sender(OrderbookProverRequest),
     sender(DatabaseRequest),
-    receiver(WsInMessage<OrderbookWsInMessage>),
-    receiver(NodeStateEvent),
+    // No receiver here ! Because RouterBus is cloned
 }
 }
 
@@ -95,12 +105,13 @@ impl Module for OrderbookModule {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let orderbook = Arc::new(Mutex::new(ctx.default_state.clone()));
 
+        let router_bus = RouterBusClient::new_from_bus(bus.new_handle()).await;
         let bus = OrderbookModuleBusClient::new_from_bus(bus.new_handle()).await;
 
         let router_ctx = RouterCtx {
             orderbook_cn: ctx.orderbook_cn.clone(),
             default_state: ctx.default_state.clone(),
-            bus: bus.clone(),
+            bus: router_bus.clone(),
             orderbook: orderbook.clone(),
             lane_id: ctx.lane_id.clone(),
             asset_service: ctx.asset_service.clone(),
@@ -137,6 +148,7 @@ impl Module for OrderbookModule {
             on_self self,
 
             listen<NodeStateEvent> event => {
+                // info!("[OrderbookModule] Received NodeStateEvent: {:?}", event);
                 _ = log_error!(self.handle_node_state_event(event).await, "handle node state event")
             }
         };
@@ -360,7 +372,7 @@ impl OrderbookModule {
 #[derive(Clone)]
 #[allow(dead_code)]
 struct RouterCtx {
-    pub bus: OrderbookModuleBusClient,
+    pub bus: RouterBusClient,
     pub orderbook_cn: ContractName,
     pub default_state: Orderbook,
     pub orderbook: Arc<Mutex<Orderbook>>,
