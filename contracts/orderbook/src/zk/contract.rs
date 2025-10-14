@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use sdk::{merkle_utils::SHA256Hasher, ContractName, RunResult};
 use sha2::Sha256;
@@ -127,6 +127,8 @@ impl sdk::ZkContract for ZkVmState {
                 res
             }
         };
+
+        self.update_roots_from_updated_state(&state)?;
 
         Ok((res, ctx, vec![]))
     }
@@ -277,5 +279,68 @@ impl ZkVmState {
                 .assets
                 .values()
                 .any(|info| &info.contract_name == contract_name)
+    }
+
+    pub fn update_roots_from_updated_state(&mut self, state: &ExecuteState) -> Result<(), String> {
+        let user_leaves: Vec<(_, _)> = self
+            .users_info
+            .value
+            .iter()
+            .filter_map(|user| state.users_info.get(&user.user))
+            .map(|user| (user.get_key().0, user.to_h256()))
+            .collect();
+
+        let new_users_root = if user_leaves.is_empty() {
+            sparse_merkle_tree::H256::zero()
+        } else {
+            self.users_info
+                .proof
+                .0
+                .clone()
+                .compute_root::<SHA256Hasher>(user_leaves)
+                .map_err(|e| format!("Failed to compute new users_info root: {e}"))?
+        };
+
+        self.onchain_state.users_info_root = H256(new_users_root);
+
+        for (symbol, witness) in self.balances.iter_mut() {
+            let state_balances = state.balances.get(symbol).cloned().unwrap_or_default();
+
+            let mut leaves = Vec::new();
+            let mut updated_balances = HashMap::new();
+
+            for (user_key, _) in witness.value.iter() {
+                let balance = state_balances
+                    .get(user_key)
+                    .cloned()
+                    .unwrap_or_default();
+                updated_balances.insert(*user_key, balance.clone());
+                leaves.push(((*user_key).into(), balance.to_h256()));
+            }
+
+            witness.value = updated_balances;
+
+            let new_root = if leaves.is_empty() {
+                sparse_merkle_tree::H256::zero()
+            } else {
+                witness
+                    .proof
+                    .0
+                    .clone()
+                    .compute_root::<SHA256Hasher>(leaves)
+                    .map_err(|e| {
+                        format!("Failed to compute new balances root for {symbol}: {e}")
+                    })?
+            };
+
+            self.onchain_state
+                .balances_roots
+                .insert(symbol.clone(), H256(new_root));
+        }
+
+        self.onchain_state.assets = state.assets_info.clone();
+        self.onchain_state.orders = state.order_manager.clone();
+
+        Ok(())
     }
 }

@@ -87,7 +87,7 @@ fn run_action(
         .expect("derive metadata");
 
     let events_full = full
-        .execute_permissionned_action(user_info.clone(), action.clone(), &private_payload)
+        .execute_and_update_roots(&user_info, &action, &private_payload)
         .expect("full execution");
 
     tracing::debug!("full events: {:?}\n\n\n", events_full);
@@ -184,12 +184,12 @@ fn assert_stage<'a>(
         let expected_quote: u64 = expected_entry.quote.try_into().expect("quote >= 0");
 
         let light_user = light.get_user_info(user).expect("light user info");
-        let full_user = full.get_user_info(user).expect("full user info");
+        let full_user = full.state.get_user_info(user).expect("full user info");
 
         let light_base = light.get_balance(&light_user, base_symbol);
-        let full_base = full.get_balance(&full_user, base_symbol);
+        let full_base = full.state.get_balance(&full_user, base_symbol);
         let light_quote = light.get_balance(&light_user, quote_symbol);
-        let full_quote = full.get_balance(&full_user, quote_symbol);
+        let full_quote = full.state.get_balance(&full_user, quote_symbol);
 
         assert_eq!(
                 light_base.0, expected_base,
@@ -227,7 +227,10 @@ fn submit_signed_order<'a>(
     order: Order,
 ) {
     let signer = signer_for(users, signers, user);
-    let user_info = full.get_user_info(user).expect("user info for signature");
+    let user_info = full
+        .state
+        .get_user_info(user)
+        .expect("user info for signature");
     let order_id = order.order_id.clone();
     let msg = format!("{}:{}:create_order:{}", user, user_info.nonce, order_id);
     let signature = signer.sign(&msg);
@@ -820,10 +823,10 @@ fn test_escape_cancels_orders_and_resets_balances() {
     }
 
     assert_eq!(light.order_manager.orders.len(), 3);
-    assert_eq!(full.order_manager.orders.len(), 3);
+    assert_eq!(full.state.order_manager.orders.len(), 3);
 
     let light_user_info = light.get_user_info(user).expect("light user info");
-    let full_user_info = full.get_user_info(user).expect("full user info");
+    let full_user_info = full.state.get_user_info(user).expect("full user info");
 
     // Get user balances before escape to create proper transfer blobs
     let light_base_balance = light.get_balance(&light_user_info, &pair.0);
@@ -879,6 +882,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
         .escape(&onchain_state, &calldata, &light_user_info)
         .expect("light escape should succeed");
     let events_full = full
+        .state
         .escape(&onchain_state, &calldata, &full_user_info)
         .expect("full escape should succeed");
 
@@ -895,12 +899,12 @@ fn test_escape_cancels_orders_and_resets_balances() {
     assert_eq!(cancelled_events_full, 3);
 
     assert!(light.order_manager.orders.is_empty());
-    assert!(full.order_manager.orders.is_empty());
+    assert!(full.state.order_manager.orders.is_empty());
     assert!(light.order_manager.orders_owner.is_empty());
-    assert!(full.order_manager.orders_owner.is_empty());
+    assert!(full.state.order_manager.orders_owner.is_empty());
 
     assert_eq!(light.get_balance(&light_user_info, &pair.0).0, 0);
     assert_eq!(light.get_balance(&light_user_info, &pair.1).0, 0);
-    assert_eq!(full.get_balance(&full_user_info, &pair.0).0, 0);
-    assert_eq!(full.get_balance(&full_user_info, &pair.1).0, 0);
+    assert_eq!(full.state.get_balance(&full_user_info, &pair.0).0, 0);
+    assert_eq!(full.state.get_balance(&full_user_info, &pair.1).0, 0);
 }

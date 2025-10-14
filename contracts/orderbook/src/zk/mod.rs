@@ -8,8 +8,11 @@ use sha2::Sha256;
 use sha3::Digest;
 use sparse_merkle_tree::MerkleProof;
 
-use crate::model::{AssetInfo, Balance, ExecuteState, Symbol, UserInfo};
+use crate::model::{
+    AssetInfo, Balance, ExecuteState, OrderId, OrderbookEvent, Pair, PairInfo, Symbol, UserInfo,
+};
 use crate::order_manager::OrderManager;
+use crate::transaction::PermissionnedOrderbookAction;
 
 pub use smt::BorshableH256 as H256;
 pub use smt::SMT;
@@ -108,27 +111,14 @@ impl FullState {
     }
 
     pub fn commit(&self) -> StateCommitment {
+        let mut state_to_commit = self.derive_onchain_state();
+        state_to_commit.orders.orders_owner = BTreeMap::new();
         StateCommitment(
-            borsh::to_vec(&self.derive_onchain_state())
+            borsh::to_vec(&state_to_commit)
                 .expect("Could not encode onchain state into state commitment"),
         )
     }
 }
-
-impl Deref for FullState {
-    type Target = ExecuteState;
-
-    fn deref(&self) -> &Self::Target {
-        &self.state
-    }
-}
-
-impl DerefMut for FullState {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.state
-    }
-}
-
 // Committed state
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize, Eq, PartialEq)]
 pub struct OnChainState {

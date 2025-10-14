@@ -6,11 +6,64 @@ use crate::{
     model::{Balance, Order, OrderbookEvent, Symbol, UserInfo},
     order_manager::OrderManager,
     transaction::PermissionnedOrderbookAction,
-    zk::{smt::BorshableH256 as H256, FullState, OnChainState, ZkVmState, ZkVmWitness},
+    zk::{smt::BorshableH256 as H256, FullState, OnChainState, ZkVmState, ZkVmWitness, SMT},
 };
 
 /// impl of functions for zkvm state generation and verification
 impl FullState {
+    fn resolve_user_from_state(&self, fallback: &UserInfo, user: &str) -> Result<UserInfo, String> {
+        match self.state.get_user_info(user) {
+            Ok(ui) => Ok(ui),
+            Err(_) if fallback.user == user => Ok(fallback.clone()),
+            Err(e) => Err(e),
+        }
+    }
+
+    pub fn collect_user_and_balance_updates(
+        &self,
+        base_user: &UserInfo,
+        events: &[OrderbookEvent],
+    ) -> Result<(HashSet<UserInfo>, HashMap<Symbol, Vec<(H256, Balance)>>), String> {
+        let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
+        let base = self.resolve_user_from_state(base_user, &base_user.user)?;
+        users_info_needed.insert(base);
+
+        let mut balances_needed: HashMap<Symbol, Vec<(H256, Balance)>> = HashMap::new();
+
+        for event in events {
+            match event {
+                OrderbookEvent::BalanceUpdated {
+                    user,
+                    symbol,
+                    amount,
+                } => {
+                    let ui = self.resolve_user_from_state(base_user, user)?;
+                    users_info_needed.insert(ui.clone());
+                    balances_needed
+                        .entry(symbol.clone())
+                        .or_insert_with(|| Default::default())
+                        .push((ui.get_key(), Balance(*amount)));
+                }
+                OrderbookEvent::SessionKeyAdded { user, .. }
+                | OrderbookEvent::NonceIncremented { user, .. } => {
+                    let ui = self.resolve_user_from_state(base_user, user)?;
+                    users_info_needed.insert(ui);
+                }
+                OrderbookEvent::PairCreated { pair, .. } => {
+                    balances_needed
+                        .entry(pair.0.clone())
+                        .or_insert_with(Vec::new);
+                    balances_needed
+                        .entry(pair.1.clone())
+                        .or_insert_with(Vec::new);
+                }
+                _ => {}
+            }
+        }
+
+        Ok((users_info_needed, balances_needed))
+    }
+
     fn create_users_info_witness(
         &self,
         users: &HashSet<UserInfo>,
@@ -71,7 +124,7 @@ impl FullState {
         }
         let mut balances_map = HashMap::new();
         for user_info in users_info {
-            let balance = self.get_balance(user_info, symbol);
+            let balance = self.state.get_balance(user_info, symbol);
             balances_map.insert(user_info.clone(), balance);
         }
 
@@ -110,13 +163,13 @@ impl FullState {
         String,
     > {
         // Atm, we copy everything (will be merklized in a future version)
-        let mut zkvm_order_manager = self.order_manager.clone();
+        let mut zkvm_order_manager = self.state.order_manager.clone();
 
         // We clear orders_owner and re-populate it based on events with only needed values
         zkvm_order_manager.orders_owner.clear();
 
-        let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
-        let mut balances_needed: HashMap<String, HashMap<H256, Balance>> = HashMap::new();
+        let (users_info_needed, balances_needed) =
+            self.collect_user_and_balance_updates(user_info, events)?;
 
         // Track all users, their balances per symbol, and order-user mapping for executed/updated orders
         for event in events {
@@ -124,7 +177,7 @@ impl FullState {
                 OrderbookEvent::OrderExecuted { order_id, .. }
                 | OrderbookEvent::OrderUpdate { order_id, .. }
                 | OrderbookEvent::OrderCancelled { order_id, .. } => {
-                    if let Some(order_owner) = self.order_manager.orders_owner.get(order_id) {
+                    if let Some(order_owner) = self.state.order_manager.orders_owner.get(order_id) {
                         zkvm_order_manager
                             .orders_owner
                             .insert(order_id.clone(), *order_owner);
@@ -145,52 +198,17 @@ impl FullState {
                         ));
                     }
                 }
-                OrderbookEvent::BalanceUpdated {
-                    user,
-                    symbol,
-                    amount,
-                } => {
-                    // Get user_info (if available)
-                    let ui = match self.get_user_info(user) {
-                        Ok(ui) => ui,
-                        Err(_) => {
-                            if user_info.user == *user {
-                                user_info.clone()
-                            } else {
-                                return Err(format!("User info not found for user '{user}'"));
-                            }
-                        }
-                    };
-                    users_info_needed.insert(ui.clone());
-
-                    balances_needed
-                        .entry(symbol.clone())
-                        .or_default()
-                        .insert(ui.get_key(), Balance(*amount));
-                }
-                OrderbookEvent::SessionKeyAdded { user, .. } => {
-                    // Get user_info (if available)
-                    let ui = match self.get_user_info(user) {
-                        Ok(ui) => ui,
-                        Err(_) => {
-                            if user_info.user == *user {
-                                user_info.clone()
-                            } else {
-                                return Err(format!("User info not found for user '{user}'"));
-                            }
-                        }
-                    };
-                    users_info_needed.insert(ui);
-                }
+                OrderbookEvent::BalanceUpdated { .. } => {}
+                OrderbookEvent::SessionKeyAdded { .. } => {}
                 _ => {}
             }
         }
 
         let mut balances: HashMap<Symbol, ZkVmWitness<HashMap<H256, Balance>>> = HashMap::new();
-        for (symbol, symbol_balances) in balances_needed.iter() {
-            let users: Vec<UserInfo> = symbol_balances
-                .keys()
-                .filter_map(|key| self.get_user_info_from_key(key).ok())
+        for (symbol, user_keys) in balances_needed.iter() {
+            let users: Vec<UserInfo> = user_keys
+                .iter()
+                .filter_map(|(user_key, _balance)| self.state.get_user_info_from_key(user_key).ok())
                 .collect();
 
             let witness = self.create_balances_witness(symbol, &users)?;
@@ -210,14 +228,22 @@ impl FullState {
     ) -> Result<Vec<u8>, String> {
         let (users_info, balances, order_manager) = self.for_zkvm(user_info, events, action)?;
 
+        let mut balances_roots = self.balance_roots();
+        for event in events {
+            if let OrderbookEvent::PairCreated { pair, .. } = event {
+                balances_roots
+                    .entry(pair.0.clone())
+                    .or_insert_with(H256::default);
+                balances_roots
+                    .entry(pair.1.clone())
+                    .or_insert_with(H256::default);
+            }
+        }
+
         let onchain_state = OnChainState {
             users_info_root: self.users_info_mt.root(),
-            balances_roots: self
-                .balances_mt
-                .iter()
-                .map(|(symbol, tree)| (symbol.clone(), tree.root()))
-                .collect(),
-            assets: self.assets_info.clone(),
+            balances_roots,
+            assets: self.state.assets_info.clone(),
             hashed_secret: self.hashed_secret.clone(),
             orders: order_manager,
             lane_id: self.lane_id.clone(),
@@ -232,5 +258,50 @@ impl FullState {
 
         borsh::to_vec(&zkvm_state)
             .map_err(|e| format!("Failed to serialize ZkVm orderbook metadata: {e}"))
+    }
+
+    pub fn execute_and_update_roots(
+        &mut self,
+        user_info: &UserInfo,
+        action: &PermissionnedOrderbookAction,
+        private_input: &[u8],
+    ) -> Result<Vec<OrderbookEvent>, String> {
+        let events = self.state.execute_permissionned_action(
+            user_info.clone(),
+            action.clone(),
+            private_input,
+        )?;
+
+        let (users_to_update, mut balances_to_update) =
+            self.collect_user_and_balance_updates(user_info, &events)?;
+
+        // Update users_info SMT
+        self.users_info_mt
+            .update_all(
+                users_to_update
+                    .into_iter()
+                    .map(|u| (u.get_key(), u))
+                    .collect(),
+            )
+            .map_err(|_| format!("Updating users info mt"))?;
+
+        // Update balances SMTs
+        for (symbol, user_keys) in balances_to_update.drain() {
+            self.balances_mt
+                .entry(symbol.clone())
+                .or_insert_with(SMT::zero)
+                .update_all(user_keys)
+                .map_err(|_| format!("Updating balances info mt"))?;
+        }
+
+        // Ensure every tracked asset has a corresponding balances SMT even if
+        // the action did not emit explicit balance updates (e.g. pair creation).
+        for symbol in self.state.balances.keys() {
+            self.balances_mt
+                .entry(symbol.clone())
+                .or_insert_with(SMT::zero);
+        }
+
+        Ok(events)
     }
 }
