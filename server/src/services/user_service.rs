@@ -1,5 +1,5 @@
 use client_sdk::contract_indexer::AppError;
-use orderbook::smt_values::UserInfo;
+use orderbook::model::UserInfo;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};

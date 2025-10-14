@@ -48,7 +48,7 @@ pub struct PairInfo {
     feature = "sqlx",
     sqlx(type_name = "order_side", rename_all = "lowercase")
 )]
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderSide {
     Bid, // Buy
@@ -70,7 +70,7 @@ pub enum OrderType {
     StopMarket,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
 pub struct Order {
     pub order_id: OrderId,
     pub order_type: OrderType,
@@ -315,65 +315,25 @@ impl ExecuteState {
             .any(|user_info| user_info.get_key() == user_info_key))
     }
 
-    // pub fn init(lane_id: LaneId, secret: Vec<u8>) -> Result<Self, String> {
-    //     Self::from_data(
-    //         lane_id,
-    //         secret,
-    //         BTreeMap::new(),
-    //         OrderManager::default(),
-    //         HashMap::new(),
-    //         HashMap::new(),
-    //     )
-    // }
+    pub fn from_data(
+        pairs_info: BTreeMap<Pair, PairInfo>,
+        order_manager: OrderManager,
+        users_info: HashMap<String, UserInfo>,
+        balances: HashMap<Symbol, HashMap<H256, Balance>>,
+    ) -> Result<Self, String> {
+        let mut orderbook = ExecuteState {
+            assets_info: HashMap::new(),
+            users_info,
+            balances,
+            order_manager,
+        };
 
-    // pub fn from_data(
-    //     lane_id: LaneId,
-    //     mode: ExecutionMode,
-    //     secret: Vec<u8>,
-    //     pairs_info: BTreeMap<Pair, PairInfo>,
-    //     order_manager: OrderManager,
-    //     users_info: HashMap<String, UserInfo>,
-    //     balances: HashMap<Symbol, HashMap<H256, Balance>>,
-    // ) -> Result<Self, String> {
-    //     let full_state =
-    //         ExecutionState::from_data(ExecutionMode::Full, users_info.clone(), balances.clone())?;
+        for (pair, info) in pairs_info {
+            orderbook.create_pair(&pair, &info)?;
+        }
 
-    //     let execution_state = if mode == ExecutionMode::Full {
-    //         full_state.clone()
-    //     } else {
-    //         ExecutionState::from_data(mode, users_info, balances)?
-    //     };
-
-    //     let users_info_merkle_root = match &full_state {
-    //         ExecutionState::Full(state) => (*state.users_info_mt.root()).into(),
-    //         _ => panic!("Business logic error. full_state should be Full"),
-    //     };
-    //     let balances_merkle_roots = match &full_state {
-    //         ExecutionState::Full(state) => state
-    //             .balances_mt
-    //             .iter()
-    //             .map(|(symbol, balances)| (symbol.clone(), (*balances.root()).into()))
-    //             .collect(),
-    //         _ => panic!("Business logic error. full_state should be Full"),
-    //     };
-    //     let hashed_secret = Sha256::digest(&secret).into();
-
-    //     let mut orderbook = Orderbook {
-    //         hashed_secret,
-    //         assets_info: BTreeMap::new(),
-    //         lane_id,
-    //         balances_merkle_roots,
-    //         users_info_merkle_root,
-    //         order_manager,
-    //         execution_state,
-    //     };
-
-    //     for (pair, info) in pairs_info {
-    //         orderbook.create_pair(&pair, &info)?;
-    //     }
-
-    //     Ok(orderbook)
-    // }
+        Ok(orderbook)
+    }
 
     pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
         self.balances.clone()
@@ -504,7 +464,7 @@ impl ExecuteState {
         Ok(())
     }
 
-    pub(crate) fn execute_order(
+    pub fn execute_order(
         &mut self,
         user_info: &UserInfo,
         order: Order,
@@ -798,92 +758,6 @@ impl ExecuteState {
                 .values()
                 .any(|info| &info.contract_name == contract_name)
     }
-
-    // Implementation of functions that are only used by the server.
-    // Detects differences between two orderbooks
-    // It is used to detect differences between on-chain and db orderbooks
-    // pub fn diff(&self, other: &LightState) -> BTreeMap<String, String> {
-    //     let mut diff = BTreeMap::new();
-    //     if self.hashed_secret != other.hashed_secret {
-    //         diff.insert(
-    //             "hashed_secret".to_string(),
-    //             format!(
-    //                 "{} != {}",
-    //                 hex::encode(self.hashed_secret.as_slice()),
-    //                 hex::encode(other.hashed_secret.as_slice())
-    //             ),
-    //         );
-    //     }
-
-    //     if self.assets_info != other.assets_info {
-    //         let mut mismatches = Vec::new();
-
-    //         for (symbol, info) in &self.assets_info {
-    //             match other.assets_info.get(symbol) {
-    //                 Some(other_info) if other_info == info => {}
-    //                 Some(other_info) => {
-    //                     mismatches.push(format!("{symbol}: {info:?} != {other_info:?}"))
-    //                 }
-    //                 None => mismatches.push(format!("{symbol}: present only on self: {info:?}")),
-    //             }
-    //         }
-
-    //         for (symbol, info) in &other.assets_info {
-    //             if !self.assets_info.contains_key(symbol) {
-    //                 mismatches.push(format!("{symbol}: present only on other: {info:?}"));
-    //             }
-    //         }
-
-    //         diff.insert("symbols_info".to_string(), mismatches.join("; "));
-    //     }
-
-    //     if self.lane_id != other.lane_id {
-    //         diff.insert(
-    //             "lane_id".to_string(),
-    //             format!(
-    //                 "{} != {}",
-    //                 hex::encode(&self.lane_id.0 .0),
-    //                 hex::encode(&other.lane_id.0 .0)
-    //             ),
-    //         );
-    //     }
-
-    //     if self.balances_merkle_roots != other.balances_merkle_roots {
-    //         diff.insert(
-    //             "balances_merkle_roots".to_string(),
-    //             format!(
-    //                 "{:?} != {:?}",
-    //                 self.balances_merkle_roots, other.balances_merkle_roots
-    //             ),
-    //         );
-    //     }
-
-    //     if self.users_info_merkle_root != other.users_info_merkle_root {
-    //         diff.insert(
-    //             "users_info_merkle_root".to_string(),
-    //             format!(
-    //                 "{} != {}",
-    //                 hex::encode(self.users_info_merkle_root.as_slice()),
-    //                 hex::encode(other.users_info_merkle_root.as_slice())
-    //             ),
-    //         );
-    //     }
-
-    //     if self.order_manager != other.order_manager {
-    //         diff.extend(self.order_manager.diff(&other.order_manager));
-    //     }
-    //     if self.execution_state.mode() != other.execution_state.mode() {
-    //         diff.insert(
-    //             "execution_state".to_string(),
-    //             format!(
-    //                 "{:?} != {:?}",
-    //                 self.execution_state.mode(),
-    //                 other.execution_state.mode()
-    //             ),
-    //         );
-    //     }
-    //     diff
-    // }
 }
 
 #[derive(

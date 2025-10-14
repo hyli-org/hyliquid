@@ -70,7 +70,7 @@ impl sdk::ZkContract for ZkVmState {
                     });
 
                 let hashed_secret = Sha256::digest(&permissionned_private_input.secret);
-                if hashed_secret.as_slice() != onchain_state.hashed_secret.0.as_slice() {
+                if hashed_secret.as_slice() != onchain_state.hashed_secret.as_slice() {
                     panic!("Invalid secret in private input");
                 }
 

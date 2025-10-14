@@ -16,7 +16,7 @@ impl OrderList for BTreeMap<u64, VecDeque<OrderId>> {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct OrderManager {
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,

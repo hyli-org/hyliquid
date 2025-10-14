@@ -1,9 +1,8 @@
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use client_sdk::contract_indexer::AppError;
+use orderbook::model::{Order, OrderSide, UserInfo};
 use orderbook::order_manager::OrderManager;
-use orderbook::orderbook::{Order, OrderSide};
-use orderbook::smt_values::UserInfo;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
 
