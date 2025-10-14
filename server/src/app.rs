@@ -16,10 +16,7 @@ use client_sdk::{
 use hyli_modules::{
     bus::{BusClientSender, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
-    modules::{
-        websocket::WsTopicMessage,
-        BuildApiContextInner, Module,
-    },
+    modules::{websocket::WsTopicMessage, BuildApiContextInner, Module},
 };
 use hyli_smt_token::SmtTokenAction;
 use orderbook::{
@@ -32,8 +29,8 @@ use orderbook::{
 };
 use reqwest::StatusCode;
 use sdk::{
-    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId,
-    NodeStateEvent, StatefulEvent, StructuredBlob, UnsettledBlobTransaction,
+    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId, NodeStateEvent,
+    StatefulEvent, StructuredBlob, UnsettledBlobTransaction,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
