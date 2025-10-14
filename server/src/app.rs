@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration, vec};
+use std::{sync::Arc, vec};
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
@@ -17,7 +17,7 @@ use hyli_modules::{
     bus::{BusClientSender, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
     modules::{
-        websocket::{WsInMessage, WsTopicMessage},
+        websocket::WsTopicMessage,
         BuildApiContextInner, Module,
     },
 };
@@ -32,13 +32,12 @@ use orderbook::{
 };
 use reqwest::StatusCode;
 use sdk::{
-    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId, MempoolStatusEvent,
+    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId,
     NodeStateEvent, StatefulEvent, StructuredBlob, UnsettledBlobTransaction,
 };
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::info;
 
 use crate::{
     database::DatabaseRequest, prover::OrderbookProverRequest,
