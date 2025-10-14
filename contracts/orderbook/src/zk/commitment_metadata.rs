@@ -1,14 +1,12 @@
-use hyli_smt_token::SmtTokenAction;
-use sdk::{merkle_utils::BorshableMerkleProof, StructuredBlob};
+use sdk::merkle_utils::BorshableMerkleProof;
 use sparse_merkle_tree::MerkleProof;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    model::{Balance, Order, OrderSide, OrderbookEvent, Symbol, UserInfo},
+    model::{Balance, Order, OrderbookEvent, Symbol, UserInfo},
     order_manager::OrderManager,
     transaction::PermissionnedOrderbookAction,
     zk::{smt::BorshableH256 as H256, FullState, OnChainState, ZkVmState, ZkVmWitness},
-    ORDERBOOK_ACCOUNT_IDENTITY,
 };
 
 /// impl of functions for zkvm state generation and verification

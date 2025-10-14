@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::BorshableMerkleProof;
-use sdk::{BlockHeight, LaneId};
+use sdk::{BlockHeight, LaneId, StateCommitment};
 use sha2::Sha256;
 use sha3::Digest;
 use sparse_merkle_tree::MerkleProof;
@@ -75,7 +75,7 @@ impl FullState {
 
         let hashed_secret = *Sha256::digest(secret)
             .first_chunk::<32>()
-            .ok_or("blabla".to_string())?;
+            .ok_or("hashing secret failed".to_string())?;
 
         Ok(FullState {
             users_info_mt,
@@ -104,6 +104,13 @@ impl FullState {
             lane_id: self.lane_id.clone(),
             last_block_number: self.last_block_number.clone(),
         }
+    }
+
+    pub fn commit(&self) -> StateCommitment {
+        StateCommitment(
+            borsh::to_vec(&self.derive_onchain_state())
+                .expect("Could not encode onchain state into state commitment"),
+        )
     }
 }
 

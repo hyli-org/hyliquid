@@ -15,9 +15,9 @@ use hyli_modules::{
         BuildApiContextInner, ModulesHandler,
     },
 };
-use orderbook::orderbook::OrderbookEvent;
+use orderbook::model::OrderbookEvent;
 use prometheus::Registry;
-use sdk::{api::NodeInfo, info, Calldata, ZkContract};
+use sdk::{api::NodeInfo, info, Calldata};
 use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
@@ -262,7 +262,7 @@ async fn main() -> Result<()> {
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
         program_id: <SP1Prover as ClientSdkProver<Calldata>>::program_id(&prover).0,
-        initial_state: light_state.commit(),
+        initial_state: full_state.commit(),
     }];
 
     match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {
