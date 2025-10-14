@@ -2,12 +2,14 @@ use super::*;
 
 use std::collections::BTreeMap;
 
-use crate::orderbook::{
-    AssetInfo, ExecutionMode, ExecutionState, Order, OrderSide, OrderType, Orderbook,
-    OrderbookEvent, Pair, PairInfo,
+use crate::{
+    model::{
+        AssetInfo, Balance, ExecuteState, Order, OrderSide, OrderType, OrderbookEvent, Pair,
+        PairInfo, UserInfo,
+    },
+    zk::FullState,
 };
-use crate::smt_values::{Balance, UserInfo};
-use sdk::{ContractName, LaneId};
+use sdk::{BlockHeight, ContractName, LaneId};
 
 fn test_user(name: &str) -> UserInfo {
     UserInfo::new(name.to_string(), name.as_bytes().to_vec())
@@ -24,8 +26,15 @@ fn make_pair_info(pair: &Pair, base_scale: u64, quote_scale: u64) -> PairInfo {
     }
 }
 
-fn build_orderbook() -> Orderbook {
-    Orderbook::init(LaneId::default(), ExecutionMode::Full, b"secret".to_vec()).unwrap()
+fn build_orderbook() -> FullState {
+    let light = ExecuteState::default();
+    FullState::from_data(
+        &light,
+        b"secret".to_vec(),
+        LaneId::default(),
+        BlockHeight(0),
+    )
+    .expect("Failed to create FullState in test")
 }
 
 fn make_limit_order(id: &str, side: OrderSide, price: u64, quantity: u64) -> Order {
@@ -101,13 +110,9 @@ fn create_pair_initializes_balances() {
     assert_eq!(quote_symbol_info.scale, info.quote.scale);
     assert_eq!(quote_symbol_info.contract_name, info.quote.contract_name);
 
-    match &orderbook.execution_state {
-        ExecutionState::Full(state) => {
-            assert!(state.balances_mt.contains_key(&pair.0));
-            assert!(state.balances_mt.contains_key(&pair.1));
-        }
-        _ => panic!("Orderbook should be in full execution mode for this test"),
-    }
+    assert!(orderbook.balances_mt.contains_key(&pair.0));
+    assert!(orderbook.balances_mt.contains_key(&pair.1));
+
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],

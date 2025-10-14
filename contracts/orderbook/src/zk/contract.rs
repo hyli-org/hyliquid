@@ -1,19 +1,17 @@
 use std::collections::BTreeMap;
 
-use hyli_smt_token::SmtTokenAction;
-use sdk::{merkle_utils::SHA256Hasher, ContractName, RunResult, StructuredBlob};
+use sdk::{merkle_utils::SHA256Hasher, ContractName, RunResult};
 use sha2::Sha256;
 use sha3::Digest;
 use sparse_merkle_tree::{traits::Value, MerkleProof};
 
 use crate::{
-    model::{Balance, ExecuteState, OrderSide, OrderbookEvent, UserInfo},
+    model::ExecuteState,
     transaction::{
         EscapePrivateInput, OrderbookAction, PermissionlessOrderbookAction,
         PermissionnedOrderbookAction, PermissionnedPrivateInput,
     },
     zk::{smt::BorshableH256 as H256, OnChainState, ZkVmState},
-    ORDERBOOK_ACCOUNT_IDENTITY,
 };
 
 impl sdk::FullStateRevert for ZkVmState {}
@@ -119,7 +117,7 @@ impl sdk::ZkContract for ZkVmState {
                         if user_key != std::convert::Into::<[u8; 32]>::into(user_info.get_key()) {
                             panic!("User info does not correspond with user_key used")
                         }
-                        self.escape(&mut state, &calldata, &user_info)?
+                        state.escape(&onchain_state, &calldata, &user_info)?
                     }
                 };
 
@@ -279,116 +277,5 @@ impl ZkVmState {
                 .assets
                 .values()
                 .any(|info| &info.contract_name == contract_name)
-    }
-
-    pub fn escape(
-        &mut self,
-        derived_state: &mut ExecuteState,
-        calldata: &sdk::Calldata,
-        user_info: &UserInfo,
-    ) -> Result<Vec<OrderbookEvent>, String> {
-        // Logic to allow user to escape with their funds
-        let Some(tx_ctx) = &calldata.tx_ctx else {
-            return Err("Escape needs transaction context".to_string());
-        };
-
-        // TODO: make this configurable
-        if tx_ctx.block_height <= self.onchain_state.last_block_number + 5_000 {
-            return Err(format!(
-                "Escape can't be performed. Please wait {} blocks",
-                5_000 - (tx_ctx.block_height.0 - self.onchain_state.last_block_number.0)
-            ));
-        }
-
-        let mut events = Vec::new();
-
-        // Keep track of user's balance for each token
-        let mut user_balances = derived_state.get_user_balances(&user_info.get_key());
-
-        // Find and cancel all orders that belong to this user and cancel them
-        let user_orders = derived_state
-            .order_manager
-            .orders_owner
-            .iter()
-            .filter_map(|(order_id, owner_key)| {
-                if owner_key == &user_info.get_key() {
-                    derived_state.order_manager.orders.get(order_id)
-                } else {
-                    None
-                }
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-
-        for order in user_orders {
-            // Cancel order
-            events.extend(derived_state.order_manager.cancel_order(&order.order_id)?);
-            let required_symbol = match &order.order_side {
-                OrderSide::Bid => order.pair.1.clone(),
-                OrderSide::Ask => order.pair.0.clone(),
-            };
-            // Virtually refund user
-            let user_balance = user_balances.entry(required_symbol).or_default();
-            *user_balance = Balance(user_balance.0 + order.quantity);
-        }
-
-        // Update all balances in the SMT
-        for (symbol, balance) in user_balances {
-            // Remove all balance from user
-            derived_state
-                .update_balances(&symbol, vec![(user_info.get_key(), Balance(0))])
-                .map_err(|e| e.to_string())?;
-
-            events.push(OrderbookEvent::BalanceUpdated {
-                user: user_info.user.clone(),
-                symbol: symbol.to_string(),
-                amount: 0,
-            });
-
-            // Skip verification for zero balances
-            if balance.0 == 0 {
-                continue;
-            }
-
-            // Ensure there is a transfer blob for this token with the correct amount
-            let mut found_valid_transfer = false;
-
-            let Some(asset_info) = self.onchain_state.assets.get(&symbol) else {
-                return Err(format!("Asset info for symbol {symbol} not found"));
-            };
-
-            for (_, blob) in calldata.blobs.iter() {
-                if blob.contract_name == asset_info.contract_name {
-                    let Ok(structured) = StructuredBlob::<SmtTokenAction>::try_from(blob.clone())
-                    else {
-                        continue;
-                    };
-
-                    if let SmtTokenAction::Transfer {
-                        sender,
-                        recipient,
-                        amount,
-                    } = structured.data.parameters
-                    {
-                        if sender.0 == ORDERBOOK_ACCOUNT_IDENTITY
-                            && recipient.0 == user_info.user
-                            && amount == balance.0 as u128
-                        {
-                            found_valid_transfer = true;
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if !found_valid_transfer {
-                return Err(format!(
-                    "No valid escape transfer blob found for symbol {symbol} with amount {} for user {}",
-                    balance.0,
-                    user_info.user
-                ));
-            }
-        }
-        Ok(events)
     }
 }

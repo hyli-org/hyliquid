@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::{Deref, DerefMut};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::BorshableMerkleProof;
@@ -111,6 +112,20 @@ impl FullState {
             borsh::to_vec(&self.derive_onchain_state())
                 .expect("Could not encode onchain state into state commitment"),
         )
+    }
+}
+
+impl Deref for FullState {
+    type Target = ExecuteState;
+
+    fn deref(&self) -> &Self::Target {
+        &self.state
+    }
+}
+
+impl DerefMut for FullState {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state
     }
 }
 

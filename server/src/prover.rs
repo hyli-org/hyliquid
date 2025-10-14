@@ -127,7 +127,6 @@ impl OrderbookProverModule {
 
                 let execution_events = self
                     .orderbook
-                    .state
                     .execute_permissionned_action(
                         user_info.clone(),
                         orderbook_action.clone(),

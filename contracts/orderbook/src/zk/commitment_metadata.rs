@@ -71,7 +71,7 @@ impl FullState {
         }
         let mut balances_map = HashMap::new();
         for user_info in users_info {
-            let balance = self.state.get_balance(user_info, symbol);
+            let balance = self.get_balance(user_info, symbol);
             balances_map.insert(user_info.clone(), balance);
         }
 
@@ -110,7 +110,7 @@ impl FullState {
         String,
     > {
         // Atm, we copy everything (will be merklized in a future version)
-        let mut zkvm_order_manager = self.state.order_manager.clone();
+        let mut zkvm_order_manager = self.order_manager.clone();
 
         // We clear orders_owner and re-populate it based on events with only needed values
         zkvm_order_manager.orders_owner.clear();
@@ -124,7 +124,7 @@ impl FullState {
                 OrderbookEvent::OrderExecuted { order_id, .. }
                 | OrderbookEvent::OrderUpdate { order_id, .. }
                 | OrderbookEvent::OrderCancelled { order_id, .. } => {
-                    if let Some(order_owner) = self.state.order_manager.orders_owner.get(order_id) {
+                    if let Some(order_owner) = self.order_manager.orders_owner.get(order_id) {
                         zkvm_order_manager
                             .orders_owner
                             .insert(order_id.clone(), *order_owner);
@@ -151,7 +151,7 @@ impl FullState {
                     amount,
                 } => {
                     // Get user_info (if available)
-                    let ui = match self.state.get_user_info(user) {
+                    let ui = match self.get_user_info(user) {
                         Ok(ui) => ui,
                         Err(_) => {
                             if user_info.user == *user {
@@ -170,7 +170,7 @@ impl FullState {
                 }
                 OrderbookEvent::SessionKeyAdded { user, .. } => {
                     // Get user_info (if available)
-                    let ui = match self.state.get_user_info(user) {
+                    let ui = match self.get_user_info(user) {
                         Ok(ui) => ui,
                         Err(_) => {
                             if user_info.user == *user {
@@ -190,7 +190,7 @@ impl FullState {
         for (symbol, symbol_balances) in balances_needed.iter() {
             let users: Vec<UserInfo> = symbol_balances
                 .keys()
-                .filter_map(|key| self.state.get_user_info_from_key(key).ok())
+                .filter_map(|key| self.get_user_info_from_key(key).ok())
                 .collect();
 
             let witness = self.create_balances_witness(symbol, &users)?;
@@ -217,7 +217,7 @@ impl FullState {
                 .iter()
                 .map(|(symbol, tree)| (symbol.clone(), tree.root()))
                 .collect(),
-            assets: self.state.assets_info.clone(),
+            assets: self.assets_info.clone(),
             hashed_secret: self.hashed_secret.clone(),
             orders: order_manager,
             lane_id: self.lane_id.clone(),

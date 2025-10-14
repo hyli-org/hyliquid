@@ -2,21 +2,22 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::orderbook::{
-    AssetInfo, ExecutionMode, Order, OrderSide, OrderType, Orderbook, OrderbookEvent, Pair,
-    PairInfo, ORDERBOOK_ACCOUNT_IDENTITY,
-};
-use crate::smt_values::UserInfo;
-use crate::{
-    AddSessionKeyPrivateInput, CreateOrderPrivateInput, OrderbookAction,
-    PermissionnedOrderbookAction, PermissionnedPrivateInput,
-};
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
 use sdk::{guest, BlockHeight, LaneId};
-use sdk::{tracing, ContractAction, ZkContract};
+use sdk::{tracing, ContractAction};
 use sdk::{BlobIndex, Calldata, ContractName, Identity, TxContext, TxHash};
 use sha3::{Digest, Sha3_256};
+
+use crate::model::{
+    AssetInfo, ExecuteState, Order, OrderSide, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo,
+};
+use crate::transaction::{
+    AddSessionKeyPrivateInput, CreateOrderPrivateInput, OrderbookAction,
+    PermissionnedOrderbookAction, PermissionnedPrivateInput,
+};
+use crate::zk::{FullState, ZkVmState};
+use crate::ORDERBOOK_ACCOUNT_IDENTITY;
 
 struct TestSigner {
     signing_key: SigningKey,
@@ -63,8 +64,8 @@ fn get_ctx() -> (ContractName, Identity, TxContext, LaneId, Vec<u8>) {
 }
 
 fn run_action(
-    light: &mut Orderbook,
-    full: &mut Orderbook,
+    light: &mut ExecuteState,
+    full: &mut FullState,
     user: &str,
     action: PermissionnedOrderbookAction,
     private_payload: Vec<u8>,
@@ -112,7 +113,7 @@ fn run_action(
         private_input: borsh::to_vec(&permissioned_private_input).expect("serialize private input"),
     };
 
-    let res = guest::execute::<Orderbook>(&commitment_metadata, &[calldata]);
+    let res = guest::execute::<ZkVmState>(&commitment_metadata, &[calldata]);
 
     assert!(res.len() == 1, "expected one output");
     let hyli_output = &res[0];
@@ -170,8 +171,8 @@ fn apply_balance_deltas<'a>(
 #[track_caller]
 fn assert_stage<'a>(
     stage: &str,
-    light: &Orderbook,
-    full: &Orderbook,
+    light: &ExecuteState,
+    full: &FullState,
     expected: &HashMap<&'a str, BalanceExpectation>,
     users: &[&'a str],
     base_symbol: &str,
@@ -218,8 +219,8 @@ fn signer_for<'a>(users: &[&'a str], signers: &'a [TestSigner], user: &str) -> &
 }
 
 fn submit_signed_order<'a>(
-    light: &mut Orderbook,
-    full: &mut Orderbook,
+    light: &mut ExecuteState,
+    full: &mut FullState,
     users: &[&'a str],
     signers: &'a [TestSigner],
     user: &str,
@@ -246,8 +247,8 @@ fn submit_signed_order<'a>(
 }
 
 fn add_session_key<'a>(
-    light: &mut Orderbook,
-    full: &mut Orderbook,
+    light: &mut ExecuteState,
+    full: &mut FullState,
     users: &[&'a str],
     signers: &'a [TestSigner],
     user: &str,
@@ -267,7 +268,7 @@ fn add_session_key<'a>(
     );
 }
 
-fn deposit(light: &mut Orderbook, full: &mut Orderbook, user: &str, symbol: &str, amount: u64) {
+fn deposit(light: &mut ExecuteState, full: &mut FullState, user: &str, symbol: &str, amount: u64) {
     run_action(
         light,
         full,
@@ -286,8 +287,8 @@ fn execute_market_order<'a>(
     stage: &str,
     order: Order,
     user: &'a str,
-    light: &mut Orderbook,
-    full: &mut Orderbook,
+    light: &mut ExecuteState,
+    full: &mut FullState,
     users: &[&'a str],
     signers: &'a [TestSigner],
     expected: &mut HashMap<&'a str, BalanceExpectation>,
@@ -312,8 +313,14 @@ fn execute_market_order<'a>(
 fn test_complex_multi_user_orderbook() {
     let (_, _, _, lane_id, secret) = get_ctx();
 
-    let mut light = Orderbook::init(lane_id.clone(), ExecutionMode::Light, secret.clone()).unwrap();
-    let mut full = Orderbook::init(lane_id.clone(), ExecutionMode::Full, secret.clone()).unwrap();
+    let mut light = ExecuteState::default();
+    let mut full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
 
     let pair: Pair = ("HYLLAR".to_string(), "ORANJ".to_string());
     let base_symbol = pair.0.clone();
@@ -753,8 +760,14 @@ fn test_complex_multi_user_orderbook() {
 fn test_escape_cancels_orders_and_resets_balances() {
     let (_, _, _, lane_id, secret) = get_ctx();
 
-    let mut light = Orderbook::init(lane_id.clone(), ExecutionMode::Light, secret.clone()).unwrap();
-    let mut full = Orderbook::init(lane_id.clone(), ExecutionMode::Full, secret.clone()).unwrap();
+    let mut light = ExecuteState::default();
+    let mut full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
 
     let pair: Pair = ("HYLLAR".to_string(), "ORANJ".to_string());
     let pair_info = PairInfo {
@@ -860,11 +873,13 @@ fn test_escape_cancels_orders_and_resets_balances() {
         private_input: Vec::new(),
     };
 
+    let onchain_state = full.derive_onchain_state();
+
     let events_light = light
-        .escape(&calldata, &light_user_info)
+        .escape(&onchain_state, &calldata, &light_user_info)
         .expect("light escape should succeed");
     let events_full = full
-        .escape(&calldata, &full_user_info)
+        .escape(&onchain_state, &calldata, &full_user_info)
         .expect("full escape should succeed");
 
     let cancelled_events_light = events_light
