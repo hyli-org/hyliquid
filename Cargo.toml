@@ -3,14 +3,20 @@ resolver = "2"
 members = ["contracts", "contracts/orderbook", "server", "loadtest"]
 
 [workspace.dependencies]
-sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "main" }
-client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "main" }
-hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "main" }
-hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "main" }
-hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "main" }
+#sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "main" }
+#client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "main" }
+#hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "main" }
+#hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "main" }
+#hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "main" }
+
+sdk = { path = "../hyle/crates/contract-sdk", package = "hyli-contract-sdk" }
+client-sdk = { path = "../hyle/crates/client-sdk", package = "hyli-client-sdk", default-features = false }
+hyli-smt-token = { path = "../hyle/crates/contracts/smt-token", package = "hyli-smt-token" }
+hyli-modules = { path = "../hyle/crates/hyli-modules", package = "hyli-modules" }
+hyli-net = { path = "../hyle/crates/hyli-net", package = "hyli-net" }
 
 sp1-sdk = { version = "5.0.3", default-features = false }
-sp1-helper = "5.0.3"
+sp1-build = "5.0.3"
 sp1-zkvm = { version = "5.0.3", default-features = false }
 
 tracing = "0.1.41"

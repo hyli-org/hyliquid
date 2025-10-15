@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use axum::Router;
 use clap::Parser;
 use client_sdk::{
-    helpers::{sp1::SP1Prover, ClientSdkProver},
+    helpers::sp1::SP1Prover,
     rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient},
 };
-use contracts::ORDERBOOK_ELF;
+use contracts::{ORDERBOOK_ELF, ORDERBOOK_VK};
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
@@ -18,7 +18,7 @@ use hyli_modules::{
 };
 use orderbook::orderbook::OrderbookEvent;
 use prometheus::Registry;
-use sdk::{api::NodeInfo, info, Calldata, ZkContract};
+use sdk::{api::NodeInfo, info, ProgramId, ZkContract};
 use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
@@ -269,16 +269,9 @@ async fn actual_main() -> Result<()> {
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;
 
-    info!("Setup sp1 prover client");
-    let local_client = ProverClient::builder().cpu().build();
-    let (pk, _) = local_client.setup(ORDERBOOK_ELF);
-
-    info!("Building Proving Key");
-    let prover = SP1Prover::new(pk).await;
-
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
-        program_id: <SP1Prover as ClientSdkProver<Calldata>>::program_id(&prover).0,
+        program_id: ProgramId(ORDERBOOK_VK.to_vec()),
         initial_state: light_state.commit(),
     }];
 
@@ -338,6 +331,13 @@ async fn actual_main() -> Result<()> {
         .await?;
 
     if !args.no_prover {
+        info!("Setup sp1 prover client");
+        let local_client = ProverClient::builder().cpu().build();
+        let (pk, _) = local_client.setup(ORDERBOOK_ELF);
+
+        info!("Building Proving Key");
+        let prover = SP1Prover::new(pk).await;
+
         let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
             node_client: node_client.clone(),
             orderbook_cn: args.orderbook_cn.clone().into(),
