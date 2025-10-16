@@ -70,6 +70,7 @@ fn run_action(
     action: PermissionnedOrderbookAction,
     private_payload: Vec<u8>,
 ) {
+    let action_repr = format!("{:?}", action);
     let (cn, id, tx_ctx, _, secret) = get_ctx();
 
     let user_info = light
@@ -117,11 +118,29 @@ fn run_action(
 
     assert!(res.len() == 1, "expected one output");
     let hyli_output = &res[0];
-    assert!(hyli_output.success, "execution failed");
+    if !hyli_output.success {
+        let metadata_state: ZkVmState =
+            borsh::from_slice(&commitment_metadata).expect("decode zkvm metadata");
+        panic!(
+            "execution failed for action {action_repr}: {hyli_output:?}; known owners: {:?}; metadata owners: {:?}",
+            full
+                .state
+                .order_manager
+                .orders_owner
+                .keys()
+                .collect::<Vec<_>>(),
+            metadata_state
+                .order_manager
+                .orders_owner
+                .keys()
+                .collect::<Vec<_>>()
+        );
+    }
 
-    assert!(
-        hyli_output.next_state == full.commit(),
-        "Full next state mismatch"
+    assert_eq!(
+        hyli_output.next_state,
+        full.commit(),
+        "Full next state mismatch for action {action_repr}"
     );
 }
 

@@ -12,7 +12,7 @@ use crate::{
     },
     zk::{
         smt::{BorshableH256 as H256, GetKey, UserBalance},
-        ParsedStateCommitment, ZkVmState,
+        ParsedCommitment, ZkVmState,
     },
 };
 
@@ -128,26 +128,27 @@ impl sdk::ZkContract for ZkVmState {
     }
 
     fn commit(&self) -> StateCommitment {
+        let mut order_manager = self.order_manager.clone();
+        order_manager.orders_owner.clear();
+
         StateCommitment(
-            borsh::to_vec(&ParsedStateCommitment {
+            borsh::to_vec(&ParsedCommitment {
                 users_info_root: self
                     .users_info
                     .compute_root()
                     .expect("compute user info root"),
-                balances_roots: &self
+                balances_roots: self
                     .balances
                     .iter()
-                    .map(|(symbol, user_balance)| {
+                    .map(|(symbol, witness)| {
                         (
                             symbol.clone(),
-                            user_balance
-                                .compute_root()
-                                .expect("compute user balance root"),
+                            witness.compute_root().expect("compute user balance root"),
                         )
                     })
                     .collect(),
                 assets: &self.assets,
-                orders: &self.order_manager,
+                orders: self.order_manager.view(),
                 hashed_secret: self.hashed_secret,
                 lane_id: &self.lane_id,
                 last_block_number: &self.last_block_number,
@@ -233,7 +234,7 @@ mod tests {
     use super::*;
     use crate::model::{AssetInfo, Balance, Order, OrderSide, OrderType, UserInfo};
     use crate::order_manager::OrderManager;
-    use crate::zk::{H256, ZkWitnessSet};
+    use crate::zk::{ZkWitnessSet, H256};
     use borsh::{BorshDeserialize, BorshSerialize};
     use sdk::{BlockHeight, ContractName, LaneId};
     use std::collections::{HashMap, HashSet};
@@ -323,9 +324,7 @@ mod tests {
         };
 
         let mut order_manager = OrderManager::default();
-        order_manager
-            .orders
-            .insert(order_id.clone(), order.clone());
+        order_manager.orders.insert(order_id.clone(), order.clone());
         order_manager
             .buy_orders
             .entry(pair.clone())
@@ -399,11 +398,8 @@ mod tests {
         }
     }
 
-    fn assert_witness_equal<T>(
-        actual: &ZkWitnessSet<T>,
-        expected: &ZkWitnessSet<T>,
-        label: &str,
-    ) where
+    fn assert_witness_equal<T>(actual: &ZkWitnessSet<T>, expected: &ZkWitnessSet<T>, label: &str)
+    where
         T: BorshDeserialize
             + BorshSerialize
             + Default
@@ -429,11 +425,7 @@ mod tests {
         if let (Proot::Root(actual_root), Proot::Root(expected_root)) =
             (&actual.proof, &expected.proof)
         {
-            assert_eq!(
-                actual_root, expected_root,
-                "{} root hash differs",
-                label
-            );
+            assert_eq!(actual_root, expected_root, "{} root hash differs", label);
         }
     }
 
@@ -464,10 +456,7 @@ mod tests {
             zk_state.order_manager, expected_state.order_manager,
             "order manager mismatch"
         );
-        assert_eq!(
-            zk_state.lane_id, expected_state.lane_id,
-            "lane id mismatch"
-        );
+        assert_eq!(zk_state.lane_id, expected_state.lane_id, "lane id mismatch");
         assert_eq!(
             zk_state.hashed_secret, expected_state.hashed_secret,
             "hashed secret mismatch"
@@ -487,7 +476,11 @@ mod tests {
                 .balances
                 .get(symbol)
                 .unwrap_or_else(|| panic!("missing witness for symbol {symbol}"));
-            assert_witness_equal(actual_witness, expected_witness, &format!("balances {symbol}"));
+            assert_witness_equal(
+                actual_witness,
+                expected_witness,
+                &format!("balances {symbol}"),
+            );
         }
 
         assert!(

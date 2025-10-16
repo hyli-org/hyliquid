@@ -26,8 +26,14 @@ pub struct OrderManager {
     pub sell_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
 
     // Mapping of order IDs to their owners
-    // This field will not be commited.
-    #[borsh(skip)]
+    pub orders_owner: BTreeMap<OrderId, H256>,
+}
+
+#[derive(BorshSerialize, Debug, Clone, PartialEq, Eq)]
+pub struct OrderManagerView<'a> {
+    pub orders: &'a BTreeMap<OrderId, Order>,
+    pub buy_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+    pub sell_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
     pub orders_owner: BTreeMap<OrderId, H256>,
 }
 
@@ -37,6 +43,15 @@ mod tests;
 impl OrderManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn view(&self) -> OrderManagerView {
+        OrderManagerView {
+            orders: &self.orders,
+            buy_orders: &self.buy_orders,
+            sell_orders: &self.sell_orders,
+            orders_owner: Default::default(),
+        }
     }
 
     pub fn count_buy_orders(&self, pair: &Pair) -> usize {

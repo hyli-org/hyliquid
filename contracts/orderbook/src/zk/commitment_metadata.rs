@@ -119,14 +119,16 @@ impl FullState {
         users_info: &[UserInfo],
         symbol: &Symbol,
     ) -> Result<(HashMap<UserInfo, Balance>, Proot), String> {
-        let tree = self
-            .balances_mt
-            .get(symbol)
-            .ok_or_else(|| format!("No balances tree found for {symbol}"))?;
+        let tree_opt = self.balances_mt.get(symbol);
 
         if users_info.is_empty() {
-            return Ok((HashMap::new(), Proot::Root(tree.root())));
+            let root = tree_opt
+                .map(|tree| tree.root())
+                .unwrap_or_else(|| SMT::<UserBalance>::zero().root());
+            return Ok((HashMap::new(), Proot::Root(root)));
         }
+
+        let tree = tree_opt.ok_or_else(|| format!("No balances tree found for {symbol}"))?;
 
         let mut balances_map = HashMap::new();
         for user_info in users_info {
@@ -211,6 +213,14 @@ impl FullState {
             balances.insert(symbol.clone(), witness);
         }
 
+        let empty_users: Vec<UserInfo> = Vec::new();
+        for symbol in self.state.balances.keys() {
+            if !balances.contains_key(symbol) {
+                let witness = self.create_balances_witness(symbol, &empty_users)?;
+                balances.insert(symbol.clone(), witness);
+            }
+        }
+
         let users_info = self.create_users_info_witness(&users_info_needed)?;
 
         Ok((users_info, balances, zkvm_order_manager))
@@ -222,7 +232,8 @@ impl FullState {
         events: &[OrderbookEvent],
         action: &PermissionnedOrderbookAction,
     ) -> Result<Vec<u8>, String> {
-        let (users_info, balances, order_manager) = self.for_zkvm(user_info, events, action)?;
+        let (users_info, balances, order_manager) =
+            self.for_zkvm(user_info, events, action)?;
 
         let zkvm_state = ZkVmState {
             users_info,

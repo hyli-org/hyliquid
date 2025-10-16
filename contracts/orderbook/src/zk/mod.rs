@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::{Read, Write};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
@@ -7,7 +8,7 @@ use sha2::Sha256;
 use sha3::Digest;
 
 use crate::model::{AssetInfo, ExecuteState, Symbol, UserInfo};
-use crate::order_manager::OrderManager;
+use crate::order_manager::{OrderManager, OrderManagerView};
 use crate::zk::smt::{GetKey, UserBalance};
 
 pub use smt::BorshableH256 as H256;
@@ -138,11 +139,11 @@ impl FullState {
 
     pub fn commit(&self) -> StateCommitment {
         StateCommitment(
-            borsh::to_vec(&ParsedStateCommitment {
+            borsh::to_vec(&ParsedCommitment {
                 users_info_root: self.users_info_mt.root(),
-                balances_roots: &self.balance_roots(),
+                balances_roots: self.balance_roots(),
                 assets: &self.state.assets_info,
-                orders: &self.state.order_manager,
+                orders: self.state.order_manager.view(),
                 hashed_secret: self.hashed_secret,
                 lane_id: &self.lane_id,
                 last_block_number: &self.last_block_number,
@@ -154,11 +155,11 @@ impl FullState {
 
 // Committed state
 #[derive(Debug, BorshSerialize, Eq, PartialEq)]
-pub struct ParsedStateCommitment<'a> {
+pub struct ParsedCommitment<'a> {
     pub users_info_root: H256,
-    pub balances_roots: &'a HashMap<Symbol, H256>,
+    pub balances_roots: HashMap<Symbol, H256>,
     pub assets: &'a HashMap<Symbol, AssetInfo>,
-    pub orders: &'a OrderManager,
+    pub orders: OrderManagerView<'a>,
     pub hashed_secret: [u8; 32],
     pub lane_id: &'a LaneId,
     pub last_block_number: &'a BlockHeight,
