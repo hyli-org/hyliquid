@@ -6,10 +6,10 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::{
     order_manager::OrderManager,
     transaction::{OrderbookAction, PermissionnedOrderbookAction},
-    zk::OnChainState,
+    zk::smt::GetKey,
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
-use sdk::{ContractName, StructuredBlob};
+use sdk::{BlockHeight, ContractName, StructuredBlob};
 
 use crate::zk::H256;
 
@@ -764,7 +764,7 @@ impl ExecuteState {
 
     pub fn escape(
         &mut self,
-        onchain_state: &OnChainState,
+        last_block_number: &BlockHeight,
         calldata: &sdk::Calldata,
         user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
@@ -774,10 +774,10 @@ impl ExecuteState {
         };
 
         // TODO: make this configurable
-        if tx_ctx.block_height <= onchain_state.last_block_number + 5_000 {
+        if tx_ctx.block_height <= *last_block_number + 5_000 {
             return Err(format!(
                 "Escape can't be performed. Please wait {} blocks",
-                5_000 - (tx_ctx.block_height.0 - onchain_state.last_block_number.0)
+                5_000 - (tx_ctx.block_height.0 - last_block_number.0)
             ));
         }
 
@@ -833,7 +833,7 @@ impl ExecuteState {
             // Ensure there is a transfer blob for this token with the correct amount
             let mut found_valid_transfer = false;
 
-            let Some(asset_info) = onchain_state.assets.get(&symbol) else {
+            let Some(asset_info) = self.assets_info.get(&symbol) else {
                 return Err(format!("Asset info for symbol {symbol} not found"));
             };
 
@@ -874,7 +874,18 @@ impl ExecuteState {
 }
 
 #[derive(
-    Debug, Default, Clone, PartialEq, BorshDeserialize, BorshSerialize, Serialize, Deserialize,
+    Debug,
+    Default,
+    Clone,
+    PartialEq,
+    BorshDeserialize,
+    BorshSerialize,
+    Serialize,
+    Deserialize,
+    Eq,
+    Ord,
+    PartialOrd,
+    Hash,
 )]
 pub struct Balance(pub u64);
 

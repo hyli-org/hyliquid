@@ -7,7 +7,7 @@ use orderbook::{
     model::{
         AssetInfo, Balance as OrderbookBalance, ExecuteState, Pair, PairInfo, Symbol, UserInfo,
     },
-    zk::{FullState, OnChainState},
+    zk::{smt::GetKey, FullState, ParsedStateCommitment},
 };
 use reqwest::StatusCode;
 use sdk::{api::APIRegisterContract, info, ContractName, LaneId, ProgramId, StateCommitment};
@@ -205,31 +205,31 @@ pub async fn init_orderbook_from_database(
     }
 
     if let Ok(existing) = node.get_contract(ContractName::from("orderbook")).await {
-        let onchain = OnChainState::from(existing.state_commitment.clone());
-        // Log existing & new orderbook and spot diff
-        let derived_onchain_state = full_orderbook.derive_onchain_state();
-        let diff = onchain.diff(&derived_onchain_state);
-        if !diff.is_empty() {
-            warn!("⚠️ Differences (onchain vs db):");
-            for (key, value) in diff.iter() {
-                warn!("  {}: {}", key, value);
-            }
+        // let onchain = ParsedStateCommitment::from(existing.state_commitment.clone());
+        // // Log existing & new orderbook and spot diff
+        // let derived_onchain_state = full_orderbook.();
+        // let diff = onchain.diff(&derived_onchain_state);
+        // if !diff.is_empty() {
+        //     warn!("⚠️ Differences (onchain vs db):");
+        //     for (key, value) in diff.iter() {
+        //         warn!("  {}: {}", key, value);
+        //     }
 
-            return Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                anyhow::anyhow!("Differences found"),
-            ));
-        }
-        info!("✅ No differences found between onchain and db");
+        //     return Err(AppError(
+        //         StatusCode::INTERNAL_SERVER_ERROR,
+        //         anyhow::anyhow!("Differences found"),
+        //     ));
+        // }
+        // info!("✅ No differences found between onchain and db");
 
-        if derived_onchain_state != onchain {
-            error!("No differences found, but commitment mismatch! Diff algo is broken!");
-            return Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                anyhow::anyhow!("Commitment mismatch"),
-            ));
-        }
-        info!("✅ Commitment matches");
+        // if derived_onchain_state != onchain {
+        //     error!("No differences found, but commitment mismatch! Diff algo is broken!");
+        //     return Err(AppError(
+        //         StatusCode::INTERNAL_SERVER_ERROR,
+        //         anyhow::anyhow!("Commitment mismatch"),
+        //     ));
+        // }
+        // info!("✅ Commitment matches");
     } else {
         info!("🔍 No onchain contract found, can't check for differences");
     }

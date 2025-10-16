@@ -28,6 +28,7 @@ use orderbook::{
         AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
         OrderbookAction, PermissionnedOrderbookAction, WithdrawPrivateInput,
     },
+    zk::smt::GetKey,
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::StatusCode;

@@ -1,17 +1,26 @@
 use std::marker::PhantomData;
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::SHA256Hasher;
 use sha2::{Digest, Sha256};
 use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkleTree, H256};
 
 use crate::model::{Balance, UserInfo};
 
-impl Value for Balance {
+#[derive(
+    Debug, Default, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq, PartialOrd, Ord, Hash,
+)]
+pub struct UserBalance {
+    pub user_key: BorshableH256,
+    pub balance: Balance,
+}
+
+impl Value for UserBalance {
     fn to_h256(&self) -> H256 {
-        if self.0 == 0 {
+        if self.balance.0 == 0 {
             return H256::zero();
         }
-        let serialized = borsh::to_vec(self).unwrap();
+        let serialized = borsh::to_vec(&self.balance).unwrap();
         let mut hasher = Sha256::new();
         hasher.update(&serialized);
         let result = hasher.finalize();
@@ -21,7 +30,16 @@ impl Value for Balance {
     }
 
     fn zero() -> Self {
-        Balance(0)
+        UserBalance {
+            user_key: BorshableH256(H256::zero()),
+            balance: Balance(0),
+        }
+    }
+}
+
+impl GetKey for UserBalance {
+    fn get_key(&self) -> BorshableH256 {
+        self.user_key
     }
 }
 
@@ -45,8 +63,14 @@ impl UserInfo {
             session_keys: Vec::new(),
         }
     }
+}
 
-    pub fn get_key(&self) -> BorshableH256 {
+pub trait GetKey {
+    fn get_key(&self) -> BorshableH256;
+}
+
+impl GetKey for UserInfo {
+    fn get_key(&self) -> BorshableH256 {
         let mut hasher = Sha256::new();
         hasher.update(self.user.as_bytes());
         hasher.update(&self.salt);
@@ -54,6 +78,12 @@ impl UserInfo {
         let mut h = [0u8; 32];
         h.copy_from_slice(&result);
         BorshableH256::from(h)
+    }
+}
+
+impl<T: GetKey> GetKey for &T {
+    fn get_key(&self) -> BorshableH256 {
+        (*self).get_key()
     }
 }
 
@@ -209,20 +239,28 @@ where
     ) -> sparse_merkle_tree::error::Result<BorshableH256> {
         self.0
             .update(key.into(), value.to_h256())
-            .map(|r| BorshableH256(r.clone()))
+            .map(|r| BorshableH256(*r))
     }
 
-    pub fn update_all(
+    pub fn update_all_from_ref<'a, I>(
         &mut self,
-        leaves: Vec<(BorshableH256, T)>,
-    ) -> sparse_merkle_tree::error::Result<BorshableH256> {
-        let h256_leaves = leaves
-            .into_iter()
-            .map(|(k, v)| (k.into(), v.to_h256()))
-            .collect();
-        self.0
-            .update_all(h256_leaves)
-            .map(|r| BorshableH256(r.clone()))
+        leaves: I,
+    ) -> sparse_merkle_tree::error::Result<BorshableH256>
+    where
+        I: Iterator<Item = &'a T>,
+        T: Value + GetKey + 'a,
+    {
+        let h256_leaves = leaves.map(|el| (el.get_key().0, el.to_h256())).collect();
+        self.0.update_all(h256_leaves).map(|r| BorshableH256(*r))
+    }
+
+    pub fn update_all<I>(&mut self, leaves: I) -> sparse_merkle_tree::error::Result<BorshableH256>
+    where
+        I: Iterator<Item = T>,
+        T: Value + GetKey,
+    {
+        let h256_leaves = leaves.map(|el| (el.get_key().0, el.to_h256())).collect();
+        self.0.update_all(h256_leaves).map(|r| BorshableH256(*r))
     }
 
     pub fn root(&self) -> BorshableH256 {
@@ -237,7 +275,6 @@ where
         &self,
         keys: Vec<H256>,
     ) -> sparse_merkle_tree::error::Result<sparse_merkle_tree::merkle_proof::MerkleProof> {
-        self.0
-            .merkle_proof(keys.into_iter().map(Into::into).collect())
+        self.0.merkle_proof(keys.into_iter().collect())
     }
 }

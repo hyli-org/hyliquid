@@ -1,17 +1,19 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 
-use sdk::{merkle_utils::SHA256Hasher, ContractName, RunResult};
+use sdk::{ContractName, RunResult, StateCommitment};
 use sha2::Sha256;
 use sha3::Digest;
-use sparse_merkle_tree::{traits::Value, MerkleProof};
 
 use crate::{
-    model::ExecuteState,
+    model::{Balance, ExecuteState},
     transaction::{
         EscapePrivateInput, OrderbookAction, PermissionlessOrderbookAction,
         PermissionnedOrderbookAction, PermissionnedPrivateInput,
     },
-    zk::{smt::BorshableH256 as H256, OnChainState, ZkVmState},
+    zk::{
+        smt::{BorshableH256 as H256, GetKey, UserBalance},
+        ParsedStateCommitment, ZkVmState,
+    },
 };
 
 impl sdk::FullStateRevert for ZkVmState {}
@@ -41,15 +43,7 @@ impl sdk::ZkContract for ZkVmState {
             }
         }
 
-        // Verify that balances are correct
-        self.verify_balances_proof()
-            .unwrap_or_else(|e| panic!("Failed to verify balances proof: {e}"));
-
-        // Verify that users info proof are correct
-        self.verify_users_info_proof()
-            .unwrap_or_else(|e| panic!("Failed to verify users info proof: {e}"));
-
-        let (mut state, onchain_state) = self.derive_orderbook_state();
+        let mut state = self.into_orderbook_state();
 
         // Verify that orderbook_manager.order_owners is populated with valid users info
         state
@@ -58,7 +52,7 @@ impl sdk::ZkContract for ZkVmState {
 
         let res = match action {
             OrderbookAction::PermissionnedOrderbookAction(action) => {
-                if tx_ctx.lane_id != onchain_state.lane_id {
+                if tx_ctx.lane_id != self.lane_id {
                     return Err("Invalid lane id".to_string());
                 }
 
@@ -68,7 +62,7 @@ impl sdk::ZkContract for ZkVmState {
                     });
 
                 let hashed_secret = Sha256::digest(&permissionned_private_input.secret);
-                if hashed_secret.as_slice() != onchain_state.hashed_secret.as_slice() {
+                if hashed_secret.as_slice() != self.hashed_secret.as_slice() {
                     panic!("Invalid secret in private input");
                 }
 
@@ -117,7 +111,7 @@ impl sdk::ZkContract for ZkVmState {
                         if user_key != std::convert::Into::<[u8; 32]>::into(user_info.get_key()) {
                             panic!("User info does not correspond with user_key used")
                         }
-                        state.escape(&onchain_state, &calldata, &user_info)?
+                        state.escape(&self.last_block_number, calldata, &user_info)?
                     }
                 };
 
@@ -128,136 +122,67 @@ impl sdk::ZkContract for ZkVmState {
             }
         };
 
-        self.update_roots_from_updated_state(&state)?;
+        self.take_changes_back(&mut state)?;
 
         Ok((res, ctx, vec![]))
     }
 
-    /// We serialize a curated version of the state on-chain
-    fn commit(&self) -> sdk::StateCommitment {
-        let mut state_to_commit = self.onchain_state.clone();
-
-        // cleaning sensitive fields before committing
-        state_to_commit.orders.orders_owner = BTreeMap::new();
-
-        sdk::StateCommitment(borsh::to_vec(&state_to_commit).expect("Failed to encode Orderbook"))
+    fn commit(&self) -> StateCommitment {
+        StateCommitment(
+            borsh::to_vec(&ParsedStateCommitment {
+                users_info_root: self
+                    .users_info
+                    .compute_root()
+                    .expect("compute user info root"),
+                balances_roots: &self
+                    .balances
+                    .iter()
+                    .map(|(symbol, user_balance)| {
+                        (
+                            symbol.clone(),
+                            user_balance
+                                .compute_root()
+                                .expect("compute user balance root"),
+                        )
+                    })
+                    .collect(),
+                assets: &self.assets,
+                orders: &self.order_manager,
+                hashed_secret: self.hashed_secret,
+                lane_id: &self.lane_id,
+                last_block_number: &self.last_block_number,
+            })
+            .expect("Could not encode onchain state into state commitment"),
+        )
     }
 }
 
 impl ZkVmState {
-    pub fn verify_users_info_proof(&self) -> Result<(), String> {
-        if self.onchain_state.users_info_root == sparse_merkle_tree::H256::zero().into() {
-            return Ok(());
-        }
-
-        let leaves = self
-            .users_info
-            .value
-            .iter()
-            .map(|user_info| (user_info.get_key().into(), user_info.to_h256()))
-            .collect::<Vec<_>>();
-
-        if leaves.is_empty() {
-            if self.users_info.proof.0 == MerkleProof::new(vec![], vec![]) {
-                return Ok(());
-            }
-            return Err("No leaves in users_info proof, proof should be empty".to_string());
-        }
-
-        let is_valid = self
-            .users_info
-            .proof
-            .0
-            .clone()
-            .verify::<SHA256Hasher>(
-                &TryInto::<[u8; 32]>::try_into(self.onchain_state.users_info_root.as_slice())
-                    .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                    .into(),
-                leaves.clone(),
-            )
-            .map_err(|e| format!("Failed to verify users_info proof: {e}"))?;
-
-        if !is_valid {
-            let derived_root = self
+    pub fn into_orderbook_state(&mut self) -> ExecuteState {
+        ExecuteState {
+            assets_info: std::mem::take(&mut self.assets), // Assets info is not part of zkvm state
+            users_info: self
                 .users_info
-                .proof
-                .0
-                .clone()
-                .compute_root::<SHA256Hasher>(leaves)
-                .map_err(|e| format!("Failed to compute users_info proof root: {e}"))?;
-            return Err(format!(
-                "Invalid users_info proof; root is {} instead of {}, value: {:?}",
-                hex::encode(self.onchain_state.users_info_root.as_slice()),
-                hex::encode(derived_root.as_slice()),
-                self.users_info.value
-            ));
-        }
-
-        Ok(())
-    }
-
-    pub fn verify_balances_proof(&self) -> Result<(), String> {
-        for (symbol, witness) in &self.balances {
-            // Verify that users balance are correct
-            let symbol_root = self
-                .onchain_state
-                .balances_roots
-                .get(symbol.as_str())
-                .ok_or(format!("{symbol} not found in balances merkle roots"))?;
-
-            let leaves = witness
                 .value
-                .iter()
-                .map(|(user_info_key, balance)| ((*user_info_key).into(), balance.to_h256()))
-                .collect::<Vec<_>>();
-
-            if leaves.is_empty() {
-                if witness.proof.0 == MerkleProof::new(vec![], vec![]) {
-                    return Ok(());
-                }
-                return Err("No leaves in users_info proof, proof should be empty".to_string());
-            }
-
-            let is_valid = &witness
-                .proof
-                .0
-                .clone()
-                .verify::<SHA256Hasher>(
-                    &TryInto::<[u8; 32]>::try_into(symbol_root.as_slice())
-                        .map_err(|e| format!("Failed to cast proof root to H256: {e}"))?
-                        .into(),
-                    leaves,
-                )
-                .map_err(|e| format!("Failed to verify balances proof for {symbol}: {e}"))?;
-
-            if !is_valid {
-                return Err(format!("Invalid balances proof for {symbol}"));
-            }
+                .drain()
+                .map(|u| (u.user.clone(), u))
+                .collect(),
+            balances: self
+                .balances
+                .iter_mut()
+                .map(|(symbol, witness)| {
+                    (
+                        symbol.clone(),
+                        witness
+                            .value
+                            .drain()
+                            .map(|ub| (ub.user_key, ub.balance))
+                            .collect::<HashMap<H256, Balance>>(),
+                    )
+                })
+                .collect(),
+            order_manager: std::mem::take(&mut self.order_manager), // OrderManager is not part of zkvm state
         }
-        Ok(())
-    }
-
-    pub fn derive_orderbook_state(&self) -> (ExecuteState, &OnChainState) {
-        (
-            ExecuteState {
-                assets_info: self.onchain_state.assets.clone(), // Assets info is not part of zkvm state
-                users_info: self
-                    .users_info
-                    .value
-                    .clone()
-                    .into_iter()
-                    .map(|u| (u.user.clone(), u))
-                    .collect(),
-                balances: self
-                    .balances
-                    .clone()
-                    .into_iter()
-                    .map(|(symbol, witness)| (symbol.clone(), witness.value))
-                    .collect(),
-                order_manager: self.onchain_state.orders.clone(), // OrderManager is not part of zkvm state
-            },
-            &self.onchain_state,
-        )
     }
 
     pub fn has_user_info_key(&self, user_info_key: H256) -> Result<bool, String> {
@@ -273,73 +198,31 @@ impl ZkVmState {
             return true;
         }
 
-        self.onchain_state.assets.contains_key(&contract_name.0)
+        self.assets.contains_key(&contract_name.0)
             || self
-                .onchain_state
                 .assets
                 .values()
                 .any(|info| &info.contract_name == contract_name)
     }
 
-    pub fn update_roots_from_updated_state(&mut self, state: &ExecuteState) -> Result<(), String> {
-        let user_leaves: Vec<(_, _)> = self
-            .users_info
+    pub fn take_changes_back(&mut self, state: &mut ExecuteState) -> Result<(), String> {
+        self.users_info
             .value
-            .iter()
-            .filter_map(|user| state.users_info.get(&user.user))
-            .map(|user| (user.get_key().0, user.to_h256()))
-            .collect();
-
-        let new_users_root = if user_leaves.is_empty() {
-            sparse_merkle_tree::H256::zero()
-        } else {
-            self.users_info
-                .proof
-                .0
-                .clone()
-                .compute_root::<SHA256Hasher>(user_leaves)
-                .map_err(|e| format!("Failed to compute new users_info root: {e}"))?
-        };
-
-        self.onchain_state.users_info_root = H256(new_users_root);
+            .extend(state.users_info.drain().map(|(_name, user)| user));
 
         for (symbol, witness) in self.balances.iter_mut() {
-            let state_balances = state.balances.get(symbol).cloned().unwrap_or_default();
-
-            let mut leaves = Vec::new();
-            let mut updated_balances = HashMap::new();
-
-            for (user_key, _) in witness.value.iter() {
-                let balance = state_balances
-                    .get(user_key)
-                    .cloned()
-                    .unwrap_or_default();
-                updated_balances.insert(*user_key, balance.clone());
-                leaves.push(((*user_key).into(), balance.to_h256()));
-            }
-
-            witness.value = updated_balances;
-
-            let new_root = if leaves.is_empty() {
-                sparse_merkle_tree::H256::zero()
-            } else {
+            if let Some(mut state_balances) = state.balances.remove(symbol) {
                 witness
-                    .proof
-                    .0
-                    .clone()
-                    .compute_root::<SHA256Hasher>(leaves)
-                    .map_err(|e| {
-                        format!("Failed to compute new balances root for {symbol}: {e}")
-                    })?
-            };
-
-            self.onchain_state
-                .balances_roots
-                .insert(symbol.clone(), H256(new_root));
+                    .value
+                    .extend(state_balances.drain().map(|sb| UserBalance {
+                        user_key: sb.0,
+                        balance: sb.1,
+                    }));
+            }
         }
 
-        self.onchain_state.assets = state.assets_info.clone();
-        self.onchain_state.orders = state.order_manager.clone();
+        std::mem::swap(&mut self.assets, &mut state.assets_info);
+        std::mem::swap(&mut self.order_manager, &mut state.order_manager);
 
         Ok(())
     }

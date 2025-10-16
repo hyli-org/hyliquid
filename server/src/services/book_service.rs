@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 use client_sdk::contract_indexer::AppError;
 use orderbook::model::{Order, OrderSide, UserInfo};
 use orderbook::order_manager::OrderManager;
+use orderbook::zk::smt::GetKey;
 use serde::Serialize;
 use sqlx::{PgPool, Row};
 

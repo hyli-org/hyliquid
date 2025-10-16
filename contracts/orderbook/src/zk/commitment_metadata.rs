@@ -6,9 +6,19 @@ use crate::{
     model::{Balance, Order, OrderbookEvent, Symbol, UserInfo},
     order_manager::OrderManager,
     transaction::PermissionnedOrderbookAction,
-    zk::{smt::BorshableH256 as H256, FullState, OnChainState, ZkVmState, ZkVmWitness, SMT},
+    zk::{
+        smt::{BorshableH256 as H256, GetKey, UserBalance},
+        FullState, ZkVmState, ZkVmWitness, SMT,
+    },
 };
 
+type UsersAndBalancesNeeded = (HashSet<UserInfo>, HashMap<Symbol, Vec<UserBalance>>);
+
+type ZkvmComputedInputs = (
+    ZkVmWitness<HashSet<UserInfo>>,
+    HashMap<Symbol, ZkVmWitness<HashSet<UserBalance>>>,
+    OrderManager,
+);
 /// impl of functions for zkvm state generation and verification
 impl FullState {
     fn resolve_user_from_state(&self, fallback: &UserInfo, user: &str) -> Result<UserInfo, String> {
@@ -23,12 +33,12 @@ impl FullState {
         &self,
         base_user: &UserInfo,
         events: &[OrderbookEvent],
-    ) -> Result<(HashSet<UserInfo>, HashMap<Symbol, Vec<(H256, Balance)>>), String> {
+    ) -> Result<UsersAndBalancesNeeded, String> {
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
         let base = self.resolve_user_from_state(base_user, &base_user.user)?;
         users_info_needed.insert(base);
 
-        let mut balances_needed: HashMap<Symbol, Vec<(H256, Balance)>> = HashMap::new();
+        let mut balances_needed: HashMap<Symbol, Vec<UserBalance>> = HashMap::new();
 
         for event in events {
             match event {
@@ -41,8 +51,11 @@ impl FullState {
                     users_info_needed.insert(ui.clone());
                     balances_needed
                         .entry(symbol.clone())
-                        .or_insert_with(|| Default::default())
-                        .push((ui.get_key(), Balance(*amount)));
+                        .or_default()
+                        .push(UserBalance {
+                            user_key: ui.get_key(),
+                            balance: Balance(*amount),
+                        });
                 }
                 OrderbookEvent::SessionKeyAdded { user, .. }
                 | OrderbookEvent::NonceIncremented { user, .. } => {
@@ -50,12 +63,8 @@ impl FullState {
                     users_info_needed.insert(ui);
                 }
                 OrderbookEvent::PairCreated { pair, .. } => {
-                    balances_needed
-                        .entry(pair.0.clone())
-                        .or_insert_with(Vec::new);
-                    balances_needed
-                        .entry(pair.1.clone())
-                        .or_insert_with(Vec::new);
+                    balances_needed.entry(pair.0.clone()).or_default();
+                    balances_needed.entry(pair.1.clone()).or_default();
                 }
                 _ => {}
             }
@@ -80,11 +89,14 @@ impl FullState {
         &self,
         symbol: &Symbol,
         users: &[UserInfo],
-    ) -> Result<ZkVmWitness<HashMap<H256, Balance>>, String> {
+    ) -> Result<ZkVmWitness<HashSet<UserBalance>>, String> {
         let (balances, proof) = self.get_balances_with_proof(users, symbol)?;
-        let mut map = HashMap::new();
+        let mut map = HashSet::new();
         for (user_info, balance) in balances {
-            map.insert(user_info.get_key(), balance);
+            map.insert(UserBalance {
+                user_key: user_info.get_key(),
+                balance,
+            });
         }
         Ok(ZkVmWitness { value: map, proof })
     }
@@ -154,14 +166,7 @@ impl FullState {
         user_info: &UserInfo,
         events: &[OrderbookEvent],
         action: &PermissionnedOrderbookAction,
-    ) -> Result<
-        (
-            ZkVmWitness<HashSet<UserInfo>>,
-            HashMap<Symbol, ZkVmWitness<HashMap<H256, Balance>>>,
-            OrderManager,
-        ),
-        String,
-    > {
+    ) -> Result<ZkvmComputedInputs, String> {
         // Atm, we copy everything (will be merklized in a future version)
         let mut zkvm_order_manager = self.state.order_manager.clone();
 
@@ -204,11 +209,15 @@ impl FullState {
             }
         }
 
-        let mut balances: HashMap<Symbol, ZkVmWitness<HashMap<H256, Balance>>> = HashMap::new();
+        let mut balances: HashMap<Symbol, ZkVmWitness<HashSet<UserBalance>>> = HashMap::new();
         for (symbol, user_keys) in balances_needed.iter() {
             let users: Vec<UserInfo> = user_keys
                 .iter()
-                .filter_map(|(user_key, _balance)| self.state.get_user_info_from_key(user_key).ok())
+                .filter_map(|user_balance| {
+                    self.state
+                        .get_user_info_from_key(&user_balance.user_key)
+                        .ok()
+                })
                 .collect();
 
             let witness = self.create_balances_witness(symbol, &users)?;
@@ -228,32 +237,14 @@ impl FullState {
     ) -> Result<Vec<u8>, String> {
         let (users_info, balances, order_manager) = self.for_zkvm(user_info, events, action)?;
 
-        let mut balances_roots = self.balance_roots();
-        for event in events {
-            if let OrderbookEvent::PairCreated { pair, .. } = event {
-                balances_roots
-                    .entry(pair.0.clone())
-                    .or_insert_with(H256::default);
-                balances_roots
-                    .entry(pair.1.clone())
-                    .or_insert_with(H256::default);
-            }
-        }
-
-        let onchain_state = OnChainState {
-            users_info_root: self.users_info_mt.root(),
-            balances_roots,
-            assets: self.state.assets_info.clone(),
-            hashed_secret: self.hashed_secret.clone(),
-            orders: order_manager,
-            lane_id: self.lane_id.clone(),
-            last_block_number: self.last_block_number.clone(),
-        };
-
         let zkvm_state = ZkVmState {
-            onchain_state,
             users_info,
             balances,
+            order_manager,
+            lane_id: self.lane_id.clone(),
+            hashed_secret: self.hashed_secret.clone(),
+            last_block_number: self.last_block_number.clone(),
+            assets: self.state.assets_info.clone(),
         };
 
         borsh::to_vec(&zkvm_state)
@@ -277,21 +268,16 @@ impl FullState {
 
         // Update users_info SMT
         self.users_info_mt
-            .update_all(
-                users_to_update
-                    .into_iter()
-                    .map(|u| (u.get_key(), u))
-                    .collect(),
-            )
-            .map_err(|_| format!("Updating users info mt"))?;
+            .update_all(users_to_update.into_iter())
+            .map_err(|_| "Updating users info mt".to_string())?;
 
         // Update balances SMTs
         for (symbol, user_keys) in balances_to_update.drain() {
             self.balances_mt
                 .entry(symbol.clone())
                 .or_insert_with(SMT::zero)
-                .update_all(user_keys)
-                .map_err(|_| format!("Updating balances info mt"))?;
+                .update_all(user_keys.into_iter())
+                .map_err(|_| "Updating balances info mt".to_string())?;
         }
 
         // Ensure every tracked asset has a corresponding balances SMT even if

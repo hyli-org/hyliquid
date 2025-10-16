@@ -1,25 +1,22 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::ops::{Deref, DerefMut};
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::BorshableMerkleProof;
+use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::{BlockHeight, LaneId, StateCommitment};
 use sha2::Sha256;
 use sha3::Digest;
 use sparse_merkle_tree::MerkleProof;
 
-use crate::model::{
-    AssetInfo, Balance, ExecuteState, OrderId, OrderbookEvent, Pair, PairInfo, Symbol, UserInfo,
-};
+use crate::model::{AssetInfo, ExecuteState, Symbol, UserInfo};
 use crate::order_manager::OrderManager;
-use crate::transaction::PermissionnedOrderbookAction;
+use crate::zk::smt::{GetKey, UserBalance};
 
 pub use smt::BorshableH256 as H256;
 pub use smt::SMT;
 
 mod commitment_metadata;
 mod contract;
-mod smt;
+pub mod smt;
 
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmWitness<T: BorshDeserialize + BorshSerialize + Default> {
@@ -36,11 +33,39 @@ impl<T: BorshDeserialize + BorshSerialize + Default> Default for ZkVmWitness<T> 
     }
 }
 
+impl<V, T> ZkVmWitness<T>
+where
+    V: sparse_merkle_tree::traits::Value + GetKey + Clone,
+    for<'b> &'b T: IntoIterator<Item = &'b V>,
+    T: BorshDeserialize + BorshSerialize + Default,
+{
+    fn compute_root(&self) -> Result<H256, String> {
+        let leaves: Vec<(_, _)> = self
+            .value
+            .into_iter()
+            .map(|v| (v.get_key().into(), v.to_h256()))
+            .collect();
+
+        if leaves.is_empty() {
+            return Err("No leaves in users_info proof, proof should be empty".to_string());
+        }
+
+        let derived_root = self
+            .proof
+            .0
+            .clone()
+            .compute_root::<SHA256Hasher>(leaves)
+            .map_err(|e| format!("Failed to compute users_info proof root: {e}"))?;
+
+        Ok(derived_root.into())
+    }
+}
+
 // Full state with commitment structures
 #[derive(Default, Debug)]
 pub struct FullState {
     pub users_info_mt: SMT<UserInfo>,
-    pub balances_mt: HashMap<String, SMT<Balance>>,
+    pub balances_mt: HashMap<String, SMT<UserBalance>>,
     pub state: ExecuteState,
     pub hashed_secret: [u8; 32],
     pub lane_id: LaneId,
@@ -56,24 +81,22 @@ impl FullState {
     ) -> Result<FullState, String> {
         let mut users_info_mt = SMT::zero();
 
-        let leaves = light
-            .users_info
-            .values()
-            .map(|user_info| (user_info.get_key(), user_info.clone()))
-            .collect();
         users_info_mt
-            .update_all(leaves)
+            .update_all_from_ref(light.users_info.values())
             .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
 
         let mut balances_mt = HashMap::new();
         for (symbol, symbol_balances) in light.balances.iter() {
             let mut tree = SMT::zero();
-            let leaves = symbol_balances
-                .iter()
-                .map(|(user_info_key, balance)| ((*user_info_key), balance.clone()))
-                .collect();
-            tree.update_all(leaves)
-                .map_err(|e| format!("Failed to update balances on symbol {symbol}: {e}"))?;
+            tree.update_all(
+                symbol_balances
+                    .iter()
+                    .map(|(user_info_key, balance)| UserBalance {
+                        user_key: user_info_key.clone(),
+                        balance: balance.clone(),
+                    }),
+            )
+            .map_err(|e| format!("Failed to update balances on symbol {symbol}: {e}"))?;
             balances_mt.insert(symbol.clone(), tree);
         }
 
@@ -98,45 +121,42 @@ impl FullState {
             .collect()
     }
 
-    pub fn derive_onchain_state(&self) -> OnChainState {
-        OnChainState {
-            users_info_root: self.users_info_mt.root(),
-            balances_roots: self.balance_roots(),
-            assets: self.state.assets_info.clone(),
-            orders: self.state.order_manager.clone(),
-            hashed_secret: self.hashed_secret.clone(),
-            lane_id: self.lane_id.clone(),
-            last_block_number: self.last_block_number.clone(),
-        }
-    }
-
     pub fn commit(&self) -> StateCommitment {
-        let mut state_to_commit = self.derive_onchain_state();
-        state_to_commit.orders.orders_owner = BTreeMap::new();
         StateCommitment(
-            borsh::to_vec(&state_to_commit)
-                .expect("Could not encode onchain state into state commitment"),
+            borsh::to_vec(&ParsedStateCommitment {
+                users_info_root: self.users_info_mt.root(),
+                balances_roots: &self.balance_roots(),
+                assets: &self.state.assets_info,
+                orders: &self.state.order_manager,
+                hashed_secret: self.hashed_secret,
+                lane_id: &self.lane_id,
+                last_block_number: &self.last_block_number,
+            })
+            .expect("Could not encode onchain state into state commitment"),
         )
     }
 }
 // Committed state
-#[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize, Eq, PartialEq)]
-pub struct OnChainState {
+#[derive(Debug, BorshSerialize, Eq, PartialEq)]
+pub struct ParsedStateCommitment<'a> {
     pub users_info_root: H256,
-    pub balances_roots: HashMap<Symbol, H256>,
-    pub assets: HashMap<Symbol, AssetInfo>,
-    pub orders: OrderManager,
+    pub balances_roots: &'a HashMap<Symbol, H256>,
+    pub assets: &'a HashMap<Symbol, AssetInfo>,
+    pub orders: &'a OrderManager,
     pub hashed_secret: [u8; 32],
-    pub lane_id: LaneId,
-    pub last_block_number: BlockHeight,
+    pub lane_id: &'a LaneId,
+    pub last_block_number: &'a BlockHeight,
 }
 
 #[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmState {
-    // Should not be necessary here
-    pub onchain_state: OnChainState,
     pub users_info: ZkVmWitness<HashSet<UserInfo>>,
-    pub balances: HashMap<Symbol, ZkVmWitness<HashMap<H256, Balance>>>,
+    pub balances: HashMap<Symbol, ZkVmWitness<HashSet<UserBalance>>>,
+    pub lane_id: LaneId,
+    pub hashed_secret: [u8; 32],
+    pub last_block_number: BlockHeight,
+    pub order_manager: OrderManager,
+    pub assets: HashMap<Symbol, AssetInfo>,
 }
 
 /// impl of functions for state management
@@ -175,18 +195,18 @@ impl Clone for FullState {
             users_info_mt,
             balances_mt,
             state: self.state.clone(),
-            hashed_secret: self.hashed_secret.clone(),
+            hashed_secret: self.hashed_secret,
             lane_id: self.lane_id.clone(),
-            last_block_number: self.last_block_number.clone(),
+            last_block_number: self.last_block_number,
         }
     }
 }
 
-impl OnChainState {
+impl<'a> ParsedStateCommitment<'a> {
     // Implementation of functions that are only used by the server.
     // Detects differences between two orderbooks
     // It is used to detect differences between on-chain and db orderbooks
-    pub fn diff(&self, other: &OnChainState) -> BTreeMap<String, String> {
+    pub fn diff(&self, other: &ParsedStateCommitment) -> BTreeMap<String, String> {
         let mut diff = BTreeMap::new();
         if self.hashed_secret != other.hashed_secret {
             diff.insert(
@@ -202,7 +222,7 @@ impl OnChainState {
         if self.assets != other.assets {
             let mut mismatches = Vec::new();
 
-            for (symbol, info) in &self.assets {
+            for (symbol, info) in self.assets {
                 match other.assets.get(symbol) {
                     Some(other_info) if other_info == info => {}
                     Some(other_info) => {
@@ -212,7 +232,7 @@ impl OnChainState {
                 }
             }
 
-            for (symbol, info) in &other.assets {
+            for (symbol, info) in other.assets {
                 if !self.assets.contains_key(symbol) {
                     mismatches.push(format!("{symbol}: present only on other: {info:?}"));
                 }

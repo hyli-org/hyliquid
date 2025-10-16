@@ -27,6 +27,7 @@ pub struct OrderManager {
 
     // Mapping of order IDs to their owners
     // This field will not be commited.
+    #[borsh(skip)]
     pub orders_owner: BTreeMap<OrderId, H256>,
 }
 

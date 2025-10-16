@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     model::{ExecuteState, Order, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo},
     utils,
-    zk::OnChainState,
+    zk::ParsedStateCommitment,
 };
 
 /// Structure to deserialize permissionned private data
@@ -100,13 +100,13 @@ impl OrderbookAction {
     }
 }
 
-impl From<sdk::StateCommitment> for OnChainState {
-    fn from(state: sdk::StateCommitment) -> Self {
-        borsh::from_slice(&state.0)
-            .map_err(|e| format!("Could not decode Orderbook state: {e}"))
-            .unwrap()
-    }
-}
+// impl From<sdk::StateCommitment> for ParsedStateCommitment<'_> {
+//     fn from(state: sdk::StateCommitment) -> Self {
+//         borsh::from_slice(&state.0)
+//             .map_err(|e| format!("Could not decode Orderbook state: {e}"))
+//             .unwrap()
+//     }
+// }
 
 impl ExecuteState {
     /// Entry point for execution
