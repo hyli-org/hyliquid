@@ -232,8 +232,7 @@ impl FullState {
         events: &[OrderbookEvent],
         action: &PermissionnedOrderbookAction,
     ) -> Result<Vec<u8>, String> {
-        let (users_info, balances, order_manager) =
-            self.for_zkvm(user_info, events, action)?;
+        let (users_info, balances, order_manager) = self.for_zkvm(user_info, events, action)?;
 
         let zkvm_state = ZkVmState {
             users_info,
