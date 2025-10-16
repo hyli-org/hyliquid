@@ -5,7 +5,6 @@ use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::{BlockHeight, LaneId, StateCommitment};
 use sha2::Sha256;
 use sha3::Digest;
-use sparse_merkle_tree::MerkleProof;
 
 use crate::model::{AssetInfo, ExecuteState, Symbol, UserInfo};
 use crate::order_manager::OrderManager;
@@ -19,45 +18,61 @@ mod contract;
 pub mod smt;
 
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
-pub struct ZkVmWitness<T: BorshDeserialize + BorshSerialize + Default> {
-    pub value: T,
-    pub proof: BorshableMerkleProof,
+enum Proot {
+    Proof(BorshableMerkleProof),
+    Root(H256),
 }
 
-impl<T: BorshDeserialize + BorshSerialize + Default> Default for ZkVmWitness<T> {
-    fn default() -> Self {
-        ZkVmWitness {
-            value: T::default(),
-            proof: BorshableMerkleProof(MerkleProof::new(vec![], vec![])),
-        }
-    }
+#[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
+pub struct ZkWitnessSet<
+    T: BorshDeserialize
+        + BorshSerialize
+        + Default
+        + sparse_merkle_tree::traits::Value
+        + GetKey
+        + Ord
+        + std::hash::Hash
+        + Clone,
+> {
+    values: HashSet<T>,
+    proof: Proot,
 }
 
-impl<V, T> ZkVmWitness<T>
-where
-    V: sparse_merkle_tree::traits::Value + GetKey + Clone,
-    for<'b> &'b T: IntoIterator<Item = &'b V>,
-    T: BorshDeserialize + BorshSerialize + Default,
+impl<
+        T: BorshDeserialize
+            + BorshSerialize
+            + Default
+            + sparse_merkle_tree::traits::Value
+            + GetKey
+            + Ord
+            + std::hash::Hash
+            + Clone,
+    > ZkWitnessSet<T>
 {
     fn compute_root(&self) -> Result<H256, String> {
-        let leaves: Vec<(_, _)> = self
-            .value
-            .into_iter()
-            .map(|v| (v.get_key().into(), v.to_h256()))
-            .collect();
+        match &self.proof {
+            Proot::Root(root_hash) => Ok(*root_hash),
+            Proot::Proof(proof) => {
+                let leaves: Vec<(_, _)> = self
+                    .values
+                    .clone()
+                    .into_iter()
+                    .map(|v| (v.get_key().into(), v.to_h256()))
+                    .collect();
 
-        if leaves.is_empty() {
-            return Err("No leaves in users_info proof, proof should be empty".to_string());
+                if leaves.is_empty() {
+                    return Err("No leaves in users_info proof, proof should be empty".to_string());
+                }
+
+                let derived_root = proof
+                    .0
+                    .clone()
+                    .compute_root::<SHA256Hasher>(leaves)
+                    .map_err(|e| format!("Failed to compute users_info proof root: {e}"))?;
+
+                Ok(derived_root.into())
+            }
         }
-
-        let derived_root = self
-            .proof
-            .0
-            .clone()
-            .compute_root::<SHA256Hasher>(leaves)
-            .map_err(|e| format!("Failed to compute users_info proof root: {e}"))?;
-
-        Ok(derived_root.into())
     }
 }
 
@@ -149,10 +164,10 @@ pub struct ParsedStateCommitment<'a> {
     pub last_block_number: &'a BlockHeight,
 }
 
-#[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
+#[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmState {
-    pub users_info: ZkVmWitness<HashSet<UserInfo>>,
-    pub balances: HashMap<Symbol, ZkVmWitness<HashSet<UserBalance>>>,
+    pub users_info: ZkWitnessSet<UserInfo>,
+    pub balances: HashMap<Symbol, ZkWitnessSet<UserBalance>>,
     pub lane_id: LaneId,
     pub hashed_secret: [u8; 32],
     pub last_block_number: BlockHeight,

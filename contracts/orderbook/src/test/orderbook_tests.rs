@@ -876,14 +876,14 @@ fn test_escape_cancels_orders_and_resets_balances() {
         private_input: Vec::new(),
     };
 
-    let onchain_state = full.derive_onchain_state();
+    let last_block_number = full.last_block_number;
 
     let events_light = light
-        .escape(&onchain_state, &calldata, &light_user_info)
+        .escape(&last_block_number, &calldata, &light_user_info)
         .expect("light escape should succeed");
     let events_full = full
         .state
-        .escape(&onchain_state, &calldata, &full_user_info)
+        .escape(&last_block_number, &calldata, &full_user_info)
         .expect("full escape should succeed");
 
     let cancelled_events_light = events_light

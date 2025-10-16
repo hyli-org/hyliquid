@@ -1,5 +1,4 @@
 use sdk::merkle_utils::BorshableMerkleProof;
-use sparse_merkle_tree::MerkleProof;
 use std::collections::{HashMap, HashSet};
 
 use crate::{
@@ -8,15 +7,15 @@ use crate::{
     transaction::PermissionnedOrderbookAction,
     zk::{
         smt::{GetKey, UserBalance},
-        FullState, ZkVmState, ZkVmWitness, SMT,
+        FullState, Proot, ZkVmState, ZkWitnessSet, SMT,
     },
 };
 
 type UsersAndBalancesNeeded = (HashSet<UserInfo>, HashMap<Symbol, Vec<UserBalance>>);
 
 type ZkvmComputedInputs = (
-    ZkVmWitness<HashSet<UserInfo>>,
-    HashMap<Symbol, ZkVmWitness<HashSet<UserBalance>>>,
+    ZkWitnessSet<UserInfo>,
+    HashMap<Symbol, ZkWitnessSet<UserBalance>>,
     OrderManager,
 );
 /// impl of functions for zkvm state generation and verification
@@ -76,64 +75,59 @@ impl FullState {
     fn create_users_info_witness(
         &self,
         users: &HashSet<UserInfo>,
-    ) -> Result<ZkVmWitness<HashSet<UserInfo>>, String> {
+    ) -> Result<ZkWitnessSet<UserInfo>, String> {
         let proof = self.get_users_info_proofs(users)?;
-        let mut set = HashSet::new();
+        let mut values = HashSet::new();
         for user in users {
-            set.insert(user.clone());
+            values.insert(user.clone());
         }
-        Ok(ZkVmWitness { value: set, proof })
+        Ok(ZkWitnessSet { values, proof })
     }
 
     fn create_balances_witness(
         &self,
         symbol: &Symbol,
         users: &[UserInfo],
-    ) -> Result<ZkVmWitness<HashSet<UserBalance>>, String> {
+    ) -> Result<ZkWitnessSet<UserBalance>, String> {
         let (balances, proof) = self.get_balances_with_proof(users, symbol)?;
-        let mut map = HashSet::new();
+        let mut values = HashSet::new();
         for (user_info, balance) in balances {
-            map.insert(UserBalance {
+            values.insert(UserBalance {
                 user_key: user_info.get_key(),
                 balance,
             });
         }
-        Ok(ZkVmWitness { value: map, proof })
+        Ok(ZkWitnessSet { values, proof })
     }
 
-    fn get_users_info_proofs(
-        &self,
-        users_info: &HashSet<UserInfo>,
-    ) -> Result<BorshableMerkleProof, String> {
+    fn get_users_info_proofs(&self, users_info: &HashSet<UserInfo>) -> Result<Proot, String> {
         if users_info.is_empty() {
-            return Ok(BorshableMerkleProof(MerkleProof::new(vec![], vec![])));
+            return Ok(Proot::Root(self.users_info_mt.root()));
         }
 
-        Ok(BorshableMerkleProof(
+        Ok(Proot::Proof(BorshableMerkleProof(
             self.users_info_mt
-                .merkle_proof(
-                    users_info
-                        .iter()
-                        .map(|u| u.get_key().into())
-                        .collect::<Vec<_>>(),
-                )
+                .merkle_proof(users_info.iter())
                 .map_err(|e| {
                     format!("Failed to create merkle proof for users {users_info:?}: {e}")
                 })?,
-        ))
+        )))
     }
 
     fn get_balances_with_proof(
         &self,
         users_info: &[UserInfo],
         symbol: &Symbol,
-    ) -> Result<(HashMap<UserInfo, Balance>, BorshableMerkleProof), String> {
+    ) -> Result<(HashMap<UserInfo, Balance>, Proot), String> {
+        let tree = self
+            .balances_mt
+            .get(symbol)
+            .ok_or_else(|| format!("No balances tree found for {symbol}"))?;
+
         if users_info.is_empty() {
-            return Ok((
-                HashMap::new(),
-                BorshableMerkleProof(MerkleProof::new(vec![], vec![])),
-            ));
+            return Ok((HashMap::new(), Proot::Root(tree.root())));
         }
+
         let mut balances_map = HashMap::new();
         for user_info in users_info {
             let balance = self.state.get_balance(user_info, symbol);
@@ -141,24 +135,17 @@ impl FullState {
         }
 
         let users: Vec<UserInfo> = balances_map.keys().cloned().collect();
-        let tree = self
-            .balances_mt
-            .get(symbol)
-            .ok_or_else(|| format!("No balances tree found for {symbol}"))?;
-        let proof = BorshableMerkleProof(
-            tree.merkle_proof(users.iter().map(|u| u.get_key().into()).collect::<Vec<_>>())
-                .map_err(|e| {
-                    format!(
-                        "Failed to create merkle proof for {symbol} and users {:?}: {e}",
-                        users_info
-                            .iter()
-                            .map(|u| u.user.clone())
-                            .collect::<Vec<_>>()
-                    )
-                })?,
-        );
+        let proof = BorshableMerkleProof(tree.merkle_proof(users.iter()).map_err(|e| {
+            format!(
+                "Failed to create merkle proof for {symbol} and users {:?}: {e}",
+                users_info
+                    .iter()
+                    .map(|u| u.user.clone())
+                    .collect::<Vec<_>>()
+            )
+        })?);
 
-        Ok((balances_map, proof))
+        Ok((balances_map, Proot::Proof(proof)))
     }
 
     fn for_zkvm(
@@ -209,7 +196,7 @@ impl FullState {
             }
         }
 
-        let mut balances: HashMap<Symbol, ZkVmWitness<HashSet<UserBalance>>> = HashMap::new();
+        let mut balances: HashMap<Symbol, ZkWitnessSet<UserBalance>> = HashMap::new();
         for (symbol, user_keys) in balances_needed.iter() {
             let users: Vec<UserInfo> = user_keys
                 .iter()

@@ -163,7 +163,7 @@ impl ZkVmState {
             assets_info: std::mem::take(&mut self.assets), // Assets info is not part of zkvm state
             users_info: self
                 .users_info
-                .value
+                .values
                 .drain()
                 .map(|u| (u.user.clone(), u))
                 .collect(),
@@ -174,7 +174,7 @@ impl ZkVmState {
                     (
                         symbol.clone(),
                         witness
-                            .value
+                            .values
                             .drain()
                             .map(|ub| (ub.user_key, ub.balance))
                             .collect::<HashMap<H256, Balance>>(),
@@ -188,7 +188,7 @@ impl ZkVmState {
     pub fn has_user_info_key(&self, user_info_key: H256) -> Result<bool, String> {
         Ok(self
             .users_info
-            .value
+            .values
             .iter()
             .any(|user_info| user_info.get_key() == user_info_key))
     }
@@ -207,13 +207,13 @@ impl ZkVmState {
 
     pub fn take_changes_back(&mut self, state: &mut ExecuteState) -> Result<(), String> {
         self.users_info
-            .value
+            .values
             .extend(state.users_info.drain().map(|(_name, user)| user));
 
         for (symbol, witness) in self.balances.iter_mut() {
             if let Some(mut state_balances) = state.balances.remove(symbol) {
                 witness
-                    .value
+                    .values
                     .extend(state_balances.drain().map(|sb| UserBalance {
                         user_key: sb.0,
                         balance: sb.1,
@@ -225,5 +225,289 @@ impl ZkVmState {
         std::mem::swap(&mut self.order_manager, &mut state.order_manager);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{AssetInfo, Balance, Order, OrderSide, OrderType, UserInfo};
+    use crate::order_manager::OrderManager;
+    use crate::zk::{H256, ZkWitnessSet};
+    use borsh::{BorshDeserialize, BorshSerialize};
+    use sdk::{BlockHeight, ContractName, LaneId};
+    use std::collections::{HashMap, HashSet};
+    use std::mem::discriminant;
+
+    use sparse_merkle_tree::traits::Value;
+
+    use super::super::Proot;
+
+    fn sample_user(name: &str, salt_byte: u8, nonce: u32, extra_key: Option<Vec<u8>>) -> UserInfo {
+        let mut user = UserInfo::new(name.to_string(), vec![salt_byte; 4]);
+        user.nonce = nonce;
+        if let Some(key) = extra_key {
+            user.session_keys.push(key);
+        }
+        user
+    }
+
+    fn sample_zk_state() -> ZkVmState {
+        let alice = sample_user("alice", 0xAA, 7, Some(vec![1, 2, 3, 4]));
+        let bob = sample_user("bob", 0xBB, 11, Some(vec![9, 9, 9]));
+
+        let mut users_values: HashSet<UserInfo> = HashSet::new();
+        users_values.insert(alice.clone());
+        users_values.insert(bob.clone());
+
+        let users_info = ZkWitnessSet {
+            values: users_values,
+            proof: Proot::Root(H256::default()),
+        };
+
+        let alice_key = alice.get_key();
+        let bob_key = bob.get_key();
+
+        let mut eth_balances: HashSet<UserBalance> = HashSet::new();
+        eth_balances.insert(UserBalance {
+            user_key: alice_key,
+            balance: Balance(1_000),
+        });
+        eth_balances.insert(UserBalance {
+            user_key: bob_key,
+            balance: Balance(2_000),
+        });
+
+        let mut usdc_balances: HashSet<UserBalance> = HashSet::new();
+        usdc_balances.insert(UserBalance {
+            user_key: alice_key,
+            balance: Balance(5_000),
+        });
+
+        let mut balances: HashMap<String, ZkWitnessSet<UserBalance>> = HashMap::new();
+        balances.insert(
+            "ETH".to_string(),
+            ZkWitnessSet {
+                values: eth_balances,
+                proof: Proot::Root(H256::default()),
+            },
+        );
+        balances.insert(
+            "USDC".to_string(),
+            ZkWitnessSet {
+                values: usdc_balances,
+                proof: Proot::Root(H256::default()),
+            },
+        );
+
+        let mut assets = HashMap::new();
+        assets.insert(
+            "ETH".to_string(),
+            AssetInfo::new(18, ContractName("eth".to_string())),
+        );
+        assets.insert(
+            "USDC".to_string(),
+            AssetInfo::new(6, ContractName("usdc".to_string())),
+        );
+
+        let order_id = "order-1".to_string();
+        let pair = ("ETH".to_string(), "USDC".to_string());
+        let price = 1_500;
+        let order = Order {
+            order_id: order_id.clone(),
+            order_type: OrderType::Limit,
+            order_side: OrderSide::Bid,
+            price: Some(price),
+            pair: pair.clone(),
+            quantity: 3,
+        };
+
+        let mut order_manager = OrderManager::default();
+        order_manager
+            .orders
+            .insert(order_id.clone(), order.clone());
+        order_manager
+            .buy_orders
+            .entry(pair.clone())
+            .or_default()
+            .entry(price)
+            .or_default()
+            .push_back(order_id.clone());
+        order_manager
+            .orders_owner
+            .insert(order_id.clone(), alice_key);
+
+        ZkVmState {
+            users_info,
+            balances,
+            lane_id: LaneId::default(),
+            hashed_secret: [42; 32],
+            last_block_number: BlockHeight::default(),
+            order_manager,
+            assets,
+        }
+    }
+
+    fn assert_users_match(
+        execution_users: &HashMap<String, UserInfo>,
+        expected_users: &ZkWitnessSet<UserInfo>,
+    ) {
+        assert_eq!(
+            execution_users.len(),
+            expected_users.values.len(),
+            "user map size mismatch"
+        );
+        for expected in expected_users.values.iter() {
+            let actual = execution_users
+                .get(&expected.user)
+                .unwrap_or_else(|| panic!("missing user {}", expected.user));
+            assert_eq!(
+                actual, expected,
+                "user {} mismatch between witnesses and execution state",
+                expected.user
+            );
+        }
+    }
+
+    fn assert_balances_match(
+        execution_balances: &HashMap<String, HashMap<H256, Balance>>,
+        expected_balances: &HashMap<String, ZkWitnessSet<UserBalance>>,
+    ) {
+        assert_eq!(
+            execution_balances.len(),
+            expected_balances.len(),
+            "symbol count mismatch"
+        );
+        for (symbol, witness) in expected_balances {
+            let actual = execution_balances
+                .get(symbol)
+                .unwrap_or_else(|| panic!("missing balances for symbol {symbol}"));
+            assert_eq!(
+                actual.len(),
+                witness.values.len(),
+                "balance entry count mismatch for symbol {symbol}"
+            );
+            for expected_balance in witness.values.iter() {
+                let actual_balance = actual
+                    .get(&expected_balance.user_key)
+                    .unwrap_or_else(|| panic!("missing user balance for symbol {symbol}"));
+                assert_eq!(
+                    actual_balance, &expected_balance.balance,
+                    "balance mismatch for symbol {symbol}"
+                );
+            }
+        }
+    }
+
+    fn assert_witness_equal<T>(
+        actual: &ZkWitnessSet<T>,
+        expected: &ZkWitnessSet<T>,
+        label: &str,
+    ) where
+        T: BorshDeserialize
+            + BorshSerialize
+            + Default
+            + Value
+            + crate::zk::smt::GetKey
+            + Ord
+            + Clone
+            + Eq
+            + std::hash::Hash
+            + std::fmt::Debug,
+    {
+        assert_eq!(
+            actual.values, expected.values,
+            "{} witness values differ",
+            label
+        );
+        assert_eq!(
+            discriminant(&actual.proof),
+            discriminant(&expected.proof),
+            "{} proof discriminant differs",
+            label
+        );
+        if let (Proot::Root(actual_root), Proot::Root(expected_root)) =
+            (&actual.proof, &expected.proof)
+        {
+            assert_eq!(
+                actual_root, expected_root,
+                "{} root hash differs",
+                label
+            );
+        }
+    }
+
+    #[test]
+    fn zkvm_state_roundtrip_is_lossless() {
+        let mut zk_state = sample_zk_state();
+        let expected_state = zk_state.clone();
+
+        let mut execution_state = zk_state.into_orderbook_state();
+
+        assert_eq!(
+            execution_state.assets_info, expected_state.assets,
+            "asset info mismatch after into_orderbook_state"
+        );
+        assert_eq!(
+            execution_state.order_manager, expected_state.order_manager,
+            "order manager mismatch after into_orderbook_state"
+        );
+        assert_users_match(&execution_state.users_info, &expected_state.users_info);
+        assert_balances_match(&execution_state.balances, &expected_state.balances);
+
+        zk_state
+            .take_changes_back(&mut execution_state)
+            .expect("take_changes_back should succeed");
+
+        assert_eq!(zk_state.assets, expected_state.assets, "assets mismatch");
+        assert_eq!(
+            zk_state.order_manager, expected_state.order_manager,
+            "order manager mismatch"
+        );
+        assert_eq!(
+            zk_state.lane_id, expected_state.lane_id,
+            "lane id mismatch"
+        );
+        assert_eq!(
+            zk_state.hashed_secret, expected_state.hashed_secret,
+            "hashed secret mismatch"
+        );
+        assert_eq!(
+            zk_state.last_block_number, expected_state.last_block_number,
+            "last block number mismatch"
+        );
+        assert_witness_equal(&zk_state.users_info, &expected_state.users_info, "users");
+        assert_eq!(
+            zk_state.balances.len(),
+            expected_state.balances.len(),
+            "balance witness map size mismatch"
+        );
+        for (symbol, expected_witness) in expected_state.balances.iter() {
+            let actual_witness = zk_state
+                .balances
+                .get(symbol)
+                .unwrap_or_else(|| panic!("missing witness for symbol {symbol}"));
+            assert_witness_equal(actual_witness, expected_witness, &format!("balances {symbol}"));
+        }
+
+        assert!(
+            execution_state.users_info.is_empty(),
+            "execution users map should be empty after take back"
+        );
+        assert!(
+            execution_state.balances.is_empty(),
+            "execution balances should be drained after take back"
+        );
+        assert!(
+            execution_state.assets_info.is_empty(),
+            "execution assets should be empty after take back"
+        );
+        assert!(
+            execution_state.order_manager.orders.is_empty()
+                && execution_state.order_manager.buy_orders.is_empty()
+                && execution_state.order_manager.sell_orders.is_empty()
+                && execution_state.order_manager.orders_owner.is_empty(),
+            "execution order manager should be empty after take back"
+        );
     }
 }

@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use borsh::BorshSerialize;
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
-use k256::FieldBytes;
 use sha3::{Digest, Sha3_256};
 
+use crate::zk::smt::GetKey;
 use crate::{
     model::{
         AssetInfo, Balance, ExecuteState, Order, OrderSide, OrderType, OrderbookEvent, Pair,
@@ -367,10 +367,7 @@ fn withdraw_deducts_balance() {
     );
 
     let destination = "dest-address".to_string();
-    let withdraw_message = format!(
-        "{}:{}:withdraw:{}:{}",
-        user.user, user.nonce, pair.1, 400
-    );
+    let withdraw_message = format!("{}:{}:withdraw:{}:{}", user.user, user.nonce, pair.1, 400);
     let withdraw_events = execute_action_ok(
         &mut orderbook,
         &mut user,
@@ -393,10 +390,7 @@ fn withdraw_deducts_balance() {
             if user == "carol" && symbol == &pair.1 && amount == 600
     ));
 
-    let overdraft_message = format!(
-        "{}:{}:withdraw:{}:{}",
-        user.user, user.nonce, pair.1, 700
-    );
+    let overdraft_message = format!("{}:{}:withdraw:{}:{}", user.user, user.nonce, pair.1, 700);
     let err = execute_action_err(
         &mut orderbook,
         &user,

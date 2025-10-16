@@ -271,10 +271,15 @@ where
         self.0.store()
     }
 
-    pub fn merkle_proof(
+    pub fn merkle_proof<'a, I, V>(
         &self,
-        keys: Vec<H256>,
-    ) -> sparse_merkle_tree::error::Result<sparse_merkle_tree::merkle_proof::MerkleProof> {
-        self.0.merkle_proof(keys.into_iter().collect())
+        keys: I,
+    ) -> sparse_merkle_tree::error::Result<sparse_merkle_tree::merkle_proof::MerkleProof>
+    where
+        I: Iterator<Item = &'a V>,
+        V: Value + GetKey + 'a,
+    {
+        self.0
+            .merkle_proof(keys.map(|v| v.get_key().0).collect::<Vec<_>>())
     }
 }
