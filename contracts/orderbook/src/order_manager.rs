@@ -45,7 +45,7 @@ impl OrderManager {
         Self::default()
     }
 
-    pub fn view(&self) -> OrderManagerView {
+    pub fn view<'a>(&'a self) -> OrderManagerView<'a> {
         OrderManagerView {
             orders: &self.orders,
             buy_orders: &self.buy_orders,

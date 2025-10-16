@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
