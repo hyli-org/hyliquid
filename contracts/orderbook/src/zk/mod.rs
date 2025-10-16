@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
@@ -92,7 +92,7 @@ impl FullState {
                 symbol_balances
                     .iter()
                     .map(|(user_info_key, balance)| UserBalance {
-                        user_key: user_info_key.clone(),
+                        user_key: *user_info_key,
                         balance: balance.clone(),
                     }),
             )

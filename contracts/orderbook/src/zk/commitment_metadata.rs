@@ -7,7 +7,7 @@ use crate::{
     order_manager::OrderManager,
     transaction::PermissionnedOrderbookAction,
     zk::{
-        smt::{BorshableH256 as H256, GetKey, UserBalance},
+        smt::{GetKey, UserBalance},
         FullState, ZkVmState, ZkVmWitness, SMT,
     },
 };
@@ -242,8 +242,8 @@ impl FullState {
             balances,
             order_manager,
             lane_id: self.lane_id.clone(),
-            hashed_secret: self.hashed_secret.clone(),
-            last_block_number: self.last_block_number.clone(),
+            hashed_secret: self.hashed_secret,
+            last_block_number: self.last_block_number,
             assets: self.state.assets_info.clone(),
         };
 

@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use crate::{
     model::{ExecuteState, Order, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo},
     utils,
-    zk::ParsedStateCommitment,
 };
 
 /// Structure to deserialize permissionned private data
