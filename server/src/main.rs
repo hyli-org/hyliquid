@@ -2,10 +2,10 @@ use anyhow::{Context, Result};
 use axum::Router;
 use clap::Parser;
 use client_sdk::{
-    helpers::{sp1::SP1Prover, ClientSdkProver},
+    helpers::sp1::SP1Prover,
     rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient},
 };
-use contracts::ORDERBOOK_ELF;
+use contracts::{ORDERBOOK_ELF, ORDERBOOK_VK};
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
@@ -14,10 +14,11 @@ use hyli_modules::{
         websocket::WebSocketModule,
         BuildApiContextInner, ModulesHandler,
     },
+    utils::logger::setup_tracing,
 };
 use orderbook::model::OrderbookEvent;
 use prometheus::Registry;
-use sdk::{api::NodeInfo, info, Calldata};
+use sdk::{api::NodeInfo, info, CallData, ProgramId, ZkContract};
 use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
@@ -51,6 +52,9 @@ pub struct Args {
 
     #[arg(long, default_value = "false")]
     pub no_blobs: bool,
+
+    #[arg(long, default_value = "false")]
+    pub tracing: bool,
 
     /// Clean the data directory before starting the server
     /// Argument used by hylix tests commands
@@ -190,12 +194,25 @@ fn init_tracing() {
     tracing::info!("Tracing initialized with OTLP exporter to http://localhost:4317");
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        // Results in poor threading performance otherwise.
+        .disable_lifo_slot()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(actual_main())
+}
+
+async fn actual_main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
-    init_tracing();
+    if args.tracing {
+        init_tracing();
+    } else {
+        setup_tracing(&config.log_format, "hyliquid".to_string())?;
+    }
 
     let config = Arc::new(config);
 
@@ -252,13 +269,6 @@ async fn main() -> Result<()> {
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;
 
-    info!("Setup sp1 prover client");
-    let local_client = ProverClient::builder().cpu().build();
-    let (pk, _) = local_client.setup(ORDERBOOK_ELF);
-
-    info!("Building Proving Key");
-    let prover = SP1Prover::new(pk).await;
-
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
         program_id: <SP1Prover as ClientSdkProver<Calldata>>::program_id(&prover).0,
@@ -300,14 +310,6 @@ async fn main() -> Result<()> {
         no_blobs: args.no_blobs,
     });
 
-    let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
-        node_client: node_client.clone(),
-        orderbook_cn: args.orderbook_cn.clone().into(),
-        prover: Arc::new(prover),
-        lane_id: validator_lane_id,
-        initial_orderbook: full_state,
-    });
-
     let api_module_ctx = Arc::new(ApiModuleCtx {
         api: api_ctx.clone(),
         book_service,
@@ -316,10 +318,34 @@ async fn main() -> Result<()> {
     });
 
     handler
+        .build_module::<DAListener>(DAListenerConf {
+            start_block: None,
+            data_directory: config.data_directory.clone(),
+            da_read_from: config.da_read_from.clone(),
+            timeout_client_secs: 10,
+        })
+        .await?;
+
+    handler
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
         .await?;
 
     if !args.no_prover {
+        info!("Setup sp1 prover client");
+        let local_client = ProverClient::builder().cpu().build();
+        let (pk, _) = local_client.setup(ORDERBOOK_ELF);
+
+        info!("Building Proving Key");
+        let prover = SP1Prover::new(pk).await;
+
+        let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
+            node_client: node_client.clone(),
+            orderbook_cn: args.orderbook_cn.clone().into(),
+            prover: Arc::new(prover),
+            lane_id: validator_lane_id,
+            initial_orderbook: full_state,
+        });
+
         handler
             .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
             .await?;
@@ -337,15 +363,6 @@ async fn main() -> Result<()> {
         .build_module::<WebSocketModule<OrderbookWsInMessage, OrderbookEvent>>(
             config.websocket.clone(),
         )
-        .await?;
-
-    handler
-        .build_module::<DAListener>(DAListenerConf {
-            start_block: None,
-            data_directory: config.data_directory.clone(),
-            da_read_from: config.da_read_from.clone(),
-            timeout_client_secs: 10,
-        })
         .await?;
 
     // Should come last so the other modules have nested their own routes.

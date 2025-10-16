@@ -29,7 +29,7 @@ use crate::services::{
 
 pub struct ContractInit {
     pub name: ContractName,
-    pub program_id: Vec<u8>,
+    pub program_id: ProgramId,
     pub initial_state: StateCommitment,
 }
 
@@ -51,14 +51,12 @@ async fn init_contract(
 ) -> Result<()> {
     match node.get_contract(contract.name.clone()).await {
         Ok(existing) => {
-            let onchain_program_id = hex::encode(existing.program_id.0.as_slice());
-            let program_id = hex::encode(contract.program_id);
-            if onchain_program_id != program_id {
+            if existing.program_id != contract.program_id {
                 bail!(
                     "Invalid program_id for {}. On-chain version is {}, expected {}",
                     contract.name,
-                    onchain_program_id,
-                    program_id
+                    hex::encode(existing.program_id.0.as_slice()),
+                    hex::encode(contract.program_id.0.as_slice()),
                 );
             }
             info!("✅ {} contract is up to date", contract.name);
@@ -70,7 +68,7 @@ async fn init_contract(
             info!("🚀 Registering {} contract", contract.name);
             node.register_contract(APIRegisterContract {
                 verifier: sdk::verifiers::SP1_4.into(),
-                program_id: ProgramId(contract.program_id.to_vec()),
+                program_id: contract.program_id,
                 state_commitment: contract.initial_state,
                 contract_name: contract.name.clone(),
                 ..Default::default()

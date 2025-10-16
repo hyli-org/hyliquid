@@ -1945,7 +1945,8 @@ version = "0.0.0"
 dependencies = [
  "hyli-contract-sdk",
  "orderbook",
- "sp1-helper",
+ "serde_json",
+ "sp1-build",
  "sp1-sdk",
 ]
 
@@ -3508,7 +3509,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hyli-client-sdk"
 version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=rest_traces#cb810248152d445a55759f1fe96cc0c4de4a0ad9"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#4b18054010c939a76c827da19eb11278851543e6"
 dependencies = [
  "anyhow",
  "axum 0.8.6",
@@ -3529,7 +3530,7 @@ dependencies = [
 [[package]]
 name = "hyli-contract-sdk"
 version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=rest_traces#cb810248152d445a55759f1fe96cc0c4de4a0ad9"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#4b18054010c939a76c827da19eb11278851543e6"
 dependencies = [
  "borsh",
  "hyli-model",
@@ -3543,7 +3544,7 @@ dependencies = [
 [[package]]
 name = "hyli-crypto"
 version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=rest_traces#cb810248152d445a55759f1fe96cc0c4de4a0ad9"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#4b18054010c939a76c827da19eb11278851543e6"
 dependencies = [
  "anyhow",
  "blst",
@@ -3556,7 +3557,7 @@ dependencies = [
 [[package]]
 name = "hyli-model"
 version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=rest_traces#cb810248152d445a55759f1fe96cc0c4de4a0ad9"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#4b18054010c939a76c827da19eb11278851543e6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3579,7 +3580,7 @@ dependencies = [
 [[package]]
 name = "hyli-modules"
 version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=rest_traces#cb810248152d445a55759f1fe96cc0c4de4a0ad9"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#4b18054010c939a76c827da19eb11278851543e6"
 dependencies = [
  "anyhow",
  "anymap",
@@ -3619,7 +3620,7 @@ dependencies = [
 [[package]]
 name = "hyli-net"
 version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=rest_traces#cb810248152d445a55759f1fe96cc0c4de4a0ad9"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#4b18054010c939a76c827da19eb11278851543e6"
 dependencies = [
  "anyhow",
  "axum 0.8.6",
@@ -3645,7 +3646,7 @@ dependencies = [
 [[package]]
 name = "hyli-smt-token"
 version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=rest_traces#cb810248152d445a55759f1fe96cc0c4de4a0ad9"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#4b18054010c939a76c827da19eb11278851543e6"
 dependencies = [
  "anyhow",
  "borsh",
@@ -6979,15 +6980,6 @@ checksum = "a736bce661752b1d6ecf33eca197443fb535124b3caabd332862d6f8258e3c8d"
 dependencies = [
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "sp1-helper"
-version = "5.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13bec35a20c556505bfe6891b97a8899c77d11fcd8170a9b27d5cc60f65aa1cc"
-dependencies = [
- "sp1-build",
 ]
 
 [[package]]

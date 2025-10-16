@@ -12,7 +12,9 @@ orderbook = { workspace = true, features = ["sp1"] }
 sp1-sdk = { workspace = true }
 
 [build-dependencies]
-sp1-helper = { workspace = true }
+sp1-build = { workspace = true }
+sp1-sdk = { workspace = true }
+serde_json = { version = "1.0.142" }
 
 [features]
 default = ["nonreproducible"]
