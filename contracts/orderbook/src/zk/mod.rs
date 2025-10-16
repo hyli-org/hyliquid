@@ -136,6 +136,7 @@ impl FullState {
         )
     }
 }
+
 // Committed state
 #[derive(Debug, BorshSerialize, Eq, PartialEq)]
 pub struct ParsedStateCommitment<'a> {
@@ -199,81 +200,5 @@ impl Clone for FullState {
             lane_id: self.lane_id.clone(),
             last_block_number: self.last_block_number,
         }
-    }
-}
-
-impl<'a> ParsedStateCommitment<'a> {
-    // Implementation of functions that are only used by the server.
-    // Detects differences between two orderbooks
-    // It is used to detect differences between on-chain and db orderbooks
-    pub fn diff(&self, other: &ParsedStateCommitment) -> BTreeMap<String, String> {
-        let mut diff = BTreeMap::new();
-        if self.hashed_secret != other.hashed_secret {
-            diff.insert(
-                "hashed_secret".to_string(),
-                format!(
-                    "{} != {}",
-                    hex::encode(self.hashed_secret.as_slice()),
-                    hex::encode(other.hashed_secret.as_slice())
-                ),
-            );
-        }
-
-        if self.assets != other.assets {
-            let mut mismatches = Vec::new();
-
-            for (symbol, info) in self.assets {
-                match other.assets.get(symbol) {
-                    Some(other_info) if other_info == info => {}
-                    Some(other_info) => {
-                        mismatches.push(format!("{symbol}: {info:?} != {other_info:?}"))
-                    }
-                    None => mismatches.push(format!("{symbol}: present only on self: {info:?}")),
-                }
-            }
-
-            for (symbol, info) in other.assets {
-                if !self.assets.contains_key(symbol) {
-                    mismatches.push(format!("{symbol}: present only on other: {info:?}"));
-                }
-            }
-
-            diff.insert("symbols_info".to_string(), mismatches.join("; "));
-        }
-
-        if self.lane_id != other.lane_id {
-            diff.insert(
-                "lane_id".to_string(),
-                format!(
-                    "{} != {}",
-                    hex::encode(&self.lane_id.0 .0),
-                    hex::encode(&other.lane_id.0 .0)
-                ),
-            );
-        }
-
-        if self.balances_roots != other.balances_roots {
-            diff.insert(
-                "balances_merkle_roots".to_string(),
-                format!("{:?} != {:?}", self.balances_roots, other.balances_roots),
-            );
-        }
-
-        if self.users_info_root != other.users_info_root {
-            diff.insert(
-                "users_info_merkle_root".to_string(),
-                format!(
-                    "{} != {}",
-                    hex::encode(self.users_info_root.as_slice()),
-                    hex::encode(other.users_info_root.as_slice())
-                ),
-            );
-        }
-
-        if self.orders != other.orders {
-            diff.extend(self.orders.diff(&other.orders));
-        }
-
-        diff
     }
 }

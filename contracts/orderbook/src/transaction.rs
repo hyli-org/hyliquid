@@ -100,14 +100,6 @@ impl OrderbookAction {
     }
 }
 
-// impl From<sdk::StateCommitment> for ParsedStateCommitment<'_> {
-//     fn from(state: sdk::StateCommitment) -> Self {
-//         borsh::from_slice(&state.0)
-//             .map_err(|e| format!("Could not decode Orderbook state: {e}"))
-//             .unwrap()
-//     }
-// }
-
 impl ExecuteState {
     /// Entry point for execution
     pub fn execute_permissionned_action(
