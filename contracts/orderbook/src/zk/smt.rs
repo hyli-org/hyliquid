@@ -232,16 +232,6 @@ where
         SMT(SparseMerkleTree::new(root.into(), store), PhantomData)
     }
 
-    pub fn update(
-        &mut self,
-        key: BorshableH256,
-        value: T,
-    ) -> sparse_merkle_tree::error::Result<BorshableH256> {
-        self.0
-            .update(key.into(), value.to_h256())
-            .map(|r| BorshableH256(*r))
-    }
-
     pub fn update_all_from_ref<'a, I>(
         &mut self,
         leaves: I,
