@@ -88,6 +88,14 @@ pub struct FullState {
 }
 
 impl FullState {
+    fn resolve_user_from_state(&self, fallback: &UserInfo, user: &str) -> Result<UserInfo, String> {
+        match self.state.get_user_info(user) {
+            Ok(ui) => Ok(ui),
+            Err(_) if fallback.user == user => Ok(fallback.clone()),
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn from_data(
         light: &ExecuteState,
         secret: Vec<u8>,

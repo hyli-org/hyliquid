@@ -26,10 +26,8 @@ impl FullState {
         events: &[OrderbookEvent],
     ) -> Result<UsersAndBalancesNeeded, String> {
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
-        if let Some(base) = self.state.users_info.get(&base_user.user) {
-            users_info_needed.insert(base.clone());
-        }
-
+        let base = self.resolve_user_from_state(base_user, &base_user.user)?;
+        users_info_needed.insert(base);
         let mut balances_needed: HashMap<Symbol, Vec<UserBalance>> = HashMap::new();
 
         for event in events {
@@ -39,12 +37,8 @@ impl FullState {
                     symbol,
                     amount,
                 } => {
-                    let ui = self
-                        .state
-                        .users_info
-                        .get(user)
-                        .cloned()
-                        .unwrap_or(base_user.clone());
+                    let ui = self.resolve_user_from_state(base_user, user)?;
+                    users_info_needed.insert(ui.clone());
                     let user_key = ui.get_key();
                     users_info_needed.insert(ui);
                     balances_needed
@@ -57,13 +51,8 @@ impl FullState {
                 }
                 OrderbookEvent::SessionKeyAdded { user, .. }
                 | OrderbookEvent::NonceIncremented { user, .. } => {
-                    users_info_needed.insert(
-                        self.state
-                            .users_info
-                            .get(user)
-                            .cloned()
-                            .unwrap_or(base_user.clone()),
-                    );
+                    let ui = self.resolve_user_from_state(base_user, user)?;
+                    users_info_needed.insert(ui);
                 }
                 OrderbookEvent::PairCreated { pair, .. } => {
                     balances_needed.entry(pair.0.clone()).or_default();
