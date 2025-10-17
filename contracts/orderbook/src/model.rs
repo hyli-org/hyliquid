@@ -413,6 +413,10 @@ impl ExecuteState {
             .nonce
             .checked_add(1)
             .ok_or("Nonce overflow")?;
+
+        self.users_info
+            .insert(updated_user_info.user.clone(), updated_user_info.clone());
+
         Ok(OrderbookEvent::NonceIncremented {
             user: user_info.user.clone(),
             nonce: updated_user_info.nonce,

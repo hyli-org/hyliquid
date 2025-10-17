@@ -418,6 +418,105 @@ fn decode_commitment(commitment: &StateCommitment) -> OwnedCommitment {
     borsh::from_slice(&commitment.0).expect("decode state commitment")
 }
 
+fn execute_add_session_key_with_zk_checks(
+    light: &mut ExecuteState,
+    full: &mut FullState,
+    ctx: &(ContractName, Identity, TxContext, LaneId, Vec<u8>),
+    user: &str,
+    new_key: Vec<u8>,
+) -> StateCommitment {
+    let (contract_name, identity, tx_ctx, _lane_id, secret) = ctx;
+
+    let action = PermissionnedOrderbookAction::AddSessionKey;
+
+    let user_info_light = light
+        .get_user_info(user)
+        .unwrap_or_else(|_| test_user(user));
+
+    let private_payload =
+        borsh::to_vec(&AddSessionKeyPrivateInput { new_public_key: new_key.clone() })
+            .expect("serialize add session key input");
+
+    let events_light = light
+        .execute_permissionned_action(
+            user_info_light.clone(),
+            action.clone(),
+            &private_payload,
+        )
+        .expect("light execution add session key");
+
+    let initial_commitment = full.commit();
+
+    let user_info_full = full
+        .state
+        .get_user_info(user)
+        .expect("user info before session key addition");
+
+    let metadata = full
+        .derive_zkvm_commitment_metadata_from_events(&user_info_full, &events_light, &action)
+        .expect("derive zk metadata for add session key");
+
+    let zk_state: ZkVmState =
+        borsh::from_slice(&metadata).expect("decode zk state for add session key metadata");
+    let zk_initial_commitment = ZkContract::commit(&zk_state);
+    assert_eq!(
+        zk_initial_commitment, initial_commitment,
+        "Initial commitment mismatch between FullState and ZkVmState metadata for add session key"
+    );
+
+    let events_full = full
+        .execute_and_update_roots(&user_info_full, &action, &private_payload)
+        .expect("full execution add session key");
+    assert_eq!(
+        events_light, events_full,
+        "Light and full execution events mismatch for add session key"
+    );
+
+    let private_input = PermissionnedPrivateInput {
+        secret: secret.clone(),
+        user_info: user_info_full.clone(),
+        private_input: private_payload.clone(),
+    };
+
+    let calldata = Calldata {
+        identity: identity.clone(),
+        blobs: vec![OrderbookAction::PermissionnedOrderbookAction(action.clone())
+            .as_blob(contract_name.clone())]
+        .into(),
+        tx_blob_count: 1,
+        index: BlobIndex(0),
+        tx_hash: TxHash::from("test-tx-hash"),
+        tx_ctx: Some(tx_ctx.clone()),
+        private_input: borsh::to_vec(&private_input)
+            .expect("serialize permissionned private input for add session key"),
+    };
+
+    let outputs = guest::execute::<ZkVmState>(&metadata, &[calldata]);
+    assert_eq!(outputs.len(), 1, "expected single zkvm output");
+    let hyli_output = &outputs[0];
+    if !hyli_output.success {
+        panic!("add session key execution failed: {:?}", hyli_output);
+    }
+
+    let final_commitment = full.commit();
+    assert_eq!(
+        hyli_output.next_state, final_commitment,
+        "Next state mismatch between ZkVm output and FullState after add session key"
+    );
+
+    let parsed_next = decode_commitment(&hyli_output.next_state);
+    assert!(
+        parsed_next
+            .users_info_root
+            .as_ref()
+            .iter()
+            .any(|byte| *byte != 0),
+        "users info root should be non-zero in zkvm state commitment after adding a session key"
+    );
+
+    final_commitment
+}
+
 #[test_log::test]
 fn test_deposit_state_commitment() {
     let ctx = get_ctx();
@@ -567,6 +666,69 @@ fn test_multiple_deposits_state_commitment() {
     assert!(
         !second_parsed.balances_roots.contains_key(&quote_symbol),
         "quote symbol should not appear after chained deposits"
+    );
+}
+
+#[test_log::test]
+fn test_add_session_key_state_commitment() {
+    let ctx = get_ctx();
+    let lane_id = ctx.3.clone();
+    let secret = ctx.4.clone();
+
+    let mut light = ExecuteState::default();
+    let mut full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
+
+    let user = "alice";
+    let signer = TestSigner::new(1);
+    let base_user = test_user(user);
+
+    light
+        .users_info
+        .insert(user.to_string(), base_user.clone());
+    full
+        .state
+        .users_info
+        .insert(user.to_string(), base_user.clone());
+    full
+        .users_info_mt
+        .update_all(std::iter::once(base_user.clone()))
+        .expect("prime users info tree");
+
+    let final_commitment = execute_add_session_key_with_zk_checks(
+        &mut light,
+        &mut full,
+        &ctx,
+        user,
+        signer.public_key.clone(),
+    );
+
+    let parsed = decode_commitment(&final_commitment);
+
+    assert!(
+        parsed
+            .users_info_root
+            .as_ref()
+            .iter()
+            .any(|byte| *byte != 0),
+        "users info root should be non-zero after adding a session key"
+    );
+
+    assert!(parsed.balances_roots.is_empty(), "no balances expected");
+    assert!(parsed.assets.is_empty(), "no assets expected");
+
+    let session_user = full
+        .state
+        .get_user_info(user)
+        .expect("user info after add session key");
+    assert!(
+        session_user.session_keys.contains(&signer.public_key),
+        "session key should be registered in state"
     );
 }
 
