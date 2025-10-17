@@ -1,3 +1,10 @@
+#[derive(Clone)]
+enum FieldKind {
+    Commit,
+    Ident,
+    Plain,
+}
+
 use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote};
@@ -44,11 +51,12 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut commit_fields: Vec<TokenStream2> = Vec::new();
     let mut zk_fields: Vec<TokenStream2> = Vec::new();
 
+    let mut field_meta = Vec::new();
+
     for field in fields.iter() {
         let field_ident = field.ident.clone().unwrap();
         let ty = field.ty.clone();
-        let mut has_commit = false;
-        let mut has_ident = false;
+        let mut field_kind = FieldKind::Plain;
 
         for attr in &field.attrs {
             if attr.path().is_ident("commit") {
@@ -59,7 +67,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let commit_ident = format_ident!("{}_smt", field_ident);
                     commit_fields.push(quote! { pub #commit_ident: ::state_core::SMT<#ty> });
                     zk_fields.push(quote! { pub #field_ident: ::state_core::ZkWitnessSet<#ty> });
-                    has_commit = true;
+                    field_kind = FieldKind::Commit;
                 }
             } else if attr.path().is_ident("ident") {
                 let args = attr
@@ -67,15 +75,35 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     .unwrap_or_else(|err| panic!("invalid ident attribute on field: {}", err));
                 if args.kind == "borsh" {
                     zk_fields.push(quote! { pub #field_ident: #ty });
-                    has_ident = true;
+                    if !matches!(field_kind, FieldKind::Commit) {
+                        field_kind = FieldKind::Ident;
+                    }
                 }
             }
         }
 
-        if !has_commit && !has_ident {
-            // Fields without annotations are not mirrored in FullState/ZkVmState
-        }
+        field_meta.push((field_ident.clone(), field_kind));
     }
+
+    let drain_fields: Vec<TokenStream2> = field_meta
+        .iter()
+        .map(|(ident, kind)| match kind {
+            FieldKind::Commit => quote! { #ident: self.#ident.take_inner() },
+            FieldKind::Ident => quote! { #ident: ::std::mem::take(&mut self.#ident) },
+            FieldKind::Plain => quote! { #ident: Default::default() },
+        })
+        .collect();
+
+    let load_statements: Vec<TokenStream2> = field_meta
+        .iter()
+        .map(|(ident, kind)| match kind {
+            FieldKind::Commit => {
+                quote! { self.#ident = ::state_core::ZkWitnessSet::from(state.#ident); }
+            }
+            FieldKind::Ident => quote! { self.#ident = state.#ident; },
+            FieldKind::Plain => quote! { let _ = state.#ident; },
+        })
+        .collect();
 
     let output = quote! {
         #[allow(non_snake_case)]
@@ -136,6 +164,23 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let events = self.execute_state.compute_events(action);
                     self.execute_state.apply_events(&events);
                     events
+                }
+            }
+
+            pub trait WitnessBridge {
+                fn drain_to_execute_state(&mut self) -> ExecuteState;
+                fn populate_from_execute_state(&mut self, state: ExecuteState);
+            }
+
+            impl WitnessBridge for ZkVmState {
+                fn drain_to_execute_state(&mut self) -> ExecuteState {
+                    ExecuteState {
+                        #( #drain_fields, )*
+                    }
+                }
+
+                fn populate_from_execute_state(&mut self, mut state: ExecuteState) {
+                    #( #load_statements )*
                 }
             }
         }
