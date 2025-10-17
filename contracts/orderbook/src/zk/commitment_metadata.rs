@@ -7,7 +7,7 @@ use crate::{
     transaction::PermissionnedOrderbookAction,
     zk::{
         smt::{GetKey, UserBalance},
-        FullState, Proot, ZkVmState, ZkWitnessSet, SMT,
+        FullState, Proof, ZkVmState, ZkWitnessSet, SMT,
     },
 };
 
@@ -20,22 +20,15 @@ type ZkvmComputedInputs = (
 );
 /// impl of functions for zkvm state generation and verification
 impl FullState {
-    fn resolve_user_from_state(&self, fallback: &UserInfo, user: &str) -> Result<UserInfo, String> {
-        match self.state.get_user_info(user) {
-            Ok(ui) => Ok(ui),
-            Err(_) if fallback.user == user => Ok(fallback.clone()),
-            Err(e) => Err(e),
-        }
-    }
-
     pub fn collect_user_and_balance_updates(
         &self,
         base_user: &UserInfo,
         events: &[OrderbookEvent],
     ) -> Result<UsersAndBalancesNeeded, String> {
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
-        let base = self.resolve_user_from_state(base_user, &base_user.user)?;
-        users_info_needed.insert(base);
+        if let Some(base) = self.state.users_info.get(&base_user.user) {
+            users_info_needed.insert(base.clone());
+        }
 
         let mut balances_needed: HashMap<Symbol, Vec<UserBalance>> = HashMap::new();
 
@@ -46,20 +39,31 @@ impl FullState {
                     symbol,
                     amount,
                 } => {
-                    let ui = self.resolve_user_from_state(base_user, user)?;
-                    users_info_needed.insert(ui.clone());
+                    let ui = self
+                        .state
+                        .users_info
+                        .get(user)
+                        .cloned()
+                        .unwrap_or(base_user.clone());
+                    let user_key = ui.get_key();
+                    users_info_needed.insert(ui);
                     balances_needed
                         .entry(symbol.clone())
                         .or_default()
                         .push(UserBalance {
-                            user_key: ui.get_key(),
+                            user_key,
                             balance: Balance(*amount),
                         });
                 }
                 OrderbookEvent::SessionKeyAdded { user, .. }
                 | OrderbookEvent::NonceIncremented { user, .. } => {
-                    let ui = self.resolve_user_from_state(base_user, user)?;
-                    users_info_needed.insert(ui);
+                    users_info_needed.insert(
+                        self.state
+                            .users_info
+                            .get(user)
+                            .cloned()
+                            .unwrap_or(base_user.clone()),
+                    );
                 }
                 OrderbookEvent::PairCreated { pair, .. } => {
                     balances_needed.entry(pair.0.clone()).or_default();
@@ -100,12 +104,12 @@ impl FullState {
         Ok(ZkWitnessSet { values, proof })
     }
 
-    fn get_users_info_proofs(&self, users_info: &HashSet<UserInfo>) -> Result<Proot, String> {
+    fn get_users_info_proofs(&self, users_info: &HashSet<UserInfo>) -> Result<Proof, String> {
         if users_info.is_empty() {
-            return Ok(Proot::Root(self.users_info_mt.root()));
+            return Ok(Proof::CurrentRootHash(self.users_info_mt.root()));
         }
 
-        Ok(Proot::Proof(BorshableMerkleProof(
+        Ok(Proof::Some(BorshableMerkleProof(
             self.users_info_mt
                 .merkle_proof(users_info.iter())
                 .map_err(|e| {
@@ -118,14 +122,14 @@ impl FullState {
         &self,
         users_info: &[UserInfo],
         symbol: &Symbol,
-    ) -> Result<(HashMap<UserInfo, Balance>, Proot), String> {
+    ) -> Result<(HashMap<UserInfo, Balance>, Proof), String> {
         let tree_opt = self.balances_mt.get(symbol);
 
         if users_info.is_empty() {
             let root = tree_opt
                 .map(|tree| tree.root())
                 .unwrap_or_else(|| SMT::<UserBalance>::zero().root());
-            return Ok((HashMap::new(), Proot::Root(root)));
+            return Ok((HashMap::new(), Proof::CurrentRootHash(root)));
         }
 
         let tree = tree_opt.ok_or_else(|| format!("No balances tree found for {symbol}"))?;
@@ -147,7 +151,7 @@ impl FullState {
             )
         })?);
 
-        Ok((balances_map, Proot::Proof(proof)))
+        Ok((balances_map, Proof::Some(proof)))
     }
 
     fn for_zkvm(

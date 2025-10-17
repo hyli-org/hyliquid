@@ -18,9 +18,9 @@ mod contract;
 pub mod smt;
 
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
-enum Proot {
-    Proof(BorshableMerkleProof),
-    Root(H256),
+enum Proof {
+    Some(BorshableMerkleProof),
+    CurrentRootHash(H256),
 }
 
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
@@ -35,7 +35,7 @@ pub struct ZkWitnessSet<
         + Clone,
 > {
     values: HashSet<T>,
-    proof: Proot,
+    proof: Proof,
 }
 
 impl<
@@ -51,8 +51,8 @@ impl<
 {
     fn compute_root(&self) -> Result<H256, String> {
         match &self.proof {
-            Proot::Root(root_hash) => Ok(*root_hash),
-            Proot::Proof(proof) => {
+            Proof::CurrentRootHash(root_hash) => Ok(*root_hash),
+            Proof::Some(proof) => {
                 let leaves: Vec<(_, _)> = self
                     .values
                     .clone()

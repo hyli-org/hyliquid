@@ -242,7 +242,7 @@ mod tests {
 
     use sparse_merkle_tree::traits::Value;
 
-    use super::super::Proot;
+    use super::super::Proof;
 
     fn sample_user(name: &str, salt_byte: u8, nonce: u32, extra_key: Option<Vec<u8>>) -> UserInfo {
         let mut user = UserInfo::new(name.to_string(), vec![salt_byte; 4]);
@@ -263,7 +263,7 @@ mod tests {
 
         let users_info = ZkWitnessSet {
             values: users_values,
-            proof: Proot::Root(H256::default()),
+            proof: Proof::CurrentRootHash(H256::default()),
         };
 
         let alice_key = alice.get_key();
@@ -290,14 +290,14 @@ mod tests {
             "ETH".to_string(),
             ZkWitnessSet {
                 values: eth_balances,
-                proof: Proot::Root(H256::default()),
+                proof: Proof::CurrentRootHash(H256::default()),
             },
         );
         balances.insert(
             "USDC".to_string(),
             ZkWitnessSet {
                 values: usdc_balances,
-                proof: Proot::Root(H256::default()),
+                proof: Proof::CurrentRootHash(H256::default()),
             },
         );
 
@@ -422,7 +422,7 @@ mod tests {
             "{} proof discriminant differs",
             label
         );
-        if let (Proot::Root(actual_root), Proot::Root(expected_root)) =
+        if let (Proof::CurrentRootHash(actual_root), Proof::CurrentRootHash(expected_root)) =
             (&actual.proof, &expected.proof)
         {
             assert_eq!(actual_root, expected_root, "{} root hash differs", label);
