@@ -1,7 +1,8 @@
 use borsh::{BorshDeserialize, BorshSerialize};
+use std::collections::{HashMap, HashSet};
 use sha2::{Digest, Sha256};
 use sparse_merkle_tree::{traits::Value, H256};
-use state_core::{BorshableH256, GetHashMapIndex, GetKey};
+use state_core::{BorshableH256, GetHashMapIndex, GetKey, Proof, ZkWitnessSet};
 use state_macros::vapp_state;
 
 #[derive(
@@ -169,8 +170,8 @@ pub struct Vapp {
     pub assets: std::collections::HashMap<String, AssetInfo>,
 }
 
-impl vapp::Logic for vapp::ExecuteState {
-    fn compute_events(&self, action: &vapp::Action) -> Vec<vapp::Event> {
+impl vapp::ExecuteState {
+    pub fn compute_events_logic(&self, action: &vapp::Action) -> Vec<vapp::Event> {
         match action {
             vapp::Action::RegisterUser { username, name } => {
                 if self.user_infos.contains_key(username) {
@@ -201,7 +202,7 @@ impl vapp::Logic for vapp::ExecuteState {
         }
     }
 
-    fn apply_events(&mut self, events: &[vapp::Event]) {
+    pub fn apply_events_logic(&mut self, events: &[vapp::Event]) {
         for event in events {
             match event {
                 vapp::Event::UserRegistered(user) => {
@@ -228,6 +229,66 @@ impl vapp::Logic for vapp::ExecuteState {
                     balance.amount += amount;
                 }
             }
+        }
+    }
+}
+
+impl vapp::FullState {
+    pub fn build_witness_state(&self, events: &[vapp::Event]) -> vapp::ZkVmState {
+        let mut user_values: HashSet<UserInfo> = HashSet::new();
+        let mut balance_values: HashMap<String, HashSet<Balance>> = HashMap::new();
+
+        for event in events {
+            match event {
+                vapp::Event::UserRegistered(event_user) => {
+                    if let Some(user) = self
+                        .execute_state
+                        .user_infos
+                        .get(&event_user.username)
+                    {
+                        user_values.insert(user.clone());
+                    } else {
+                        user_values.insert(event_user.clone());
+                    }
+                }
+                vapp::Event::BalanceCredited {
+                    symbol,
+                    username,
+                    ..
+                } => {
+                    if let Some(balances) = self.execute_state.balances.get(symbol) {
+                        if let Some(balance) = balances.get(username) {
+                            balance_values
+                                .entry(symbol.clone())
+                                .or_default()
+                                .insert(balance.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        let user_infos = ZkWitnessSet {
+            values: user_values,
+            proof: Proof::CurrentRootHash(self.user_infos.root()),
+        };
+
+        let balances = balance_values
+            .into_iter()
+            .map(|(symbol, values)| {
+                let proof = self
+                    .balances
+                    .get(&symbol)
+                    .map(|tree| Proof::CurrentRootHash(tree.root()))
+                    .unwrap_or_default();
+                (symbol, ZkWitnessSet { values, proof })
+            })
+            .collect();
+
+        vapp::ZkVmState {
+            user_infos,
+            balances,
+            assets: self.execute_state.assets.clone(),
         }
     }
 }

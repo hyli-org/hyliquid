@@ -45,6 +45,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut execute_fields: Vec<TokenStream2> = Vec::new();
     let mut full_fields: Vec<TokenStream2> = Vec::new();
     let mut zk_fields: Vec<TokenStream2> = Vec::new();
+    let mut sync_statements: Vec<TokenStream2> = Vec::new();
 
     for field in fields_vec.iter() {
         let field_ident = field.ident.clone().unwrap();
@@ -62,6 +63,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let witness_ty = build_witness_type(&ty);
                     full_fields.push(quote! { pub #field_ident: #commit_ty });
                     zk_fields.push(quote! { pub #field_ident: #witness_ty });
+                    sync_statements.push(build_commit_sync(&field_ident, &ty));
                     field_kind = FieldKind::Commit;
                     break;
                 }
@@ -138,11 +140,61 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
             impl FullState {
                 pub fn apply_action(&mut self, action: &Action) -> Vec<Event>
                 where
-                    ExecuteState: Logic,
+                    Self: Logic,
                 {
-                    let events = self.execute_state.compute_events(action);
-                    self.execute_state.apply_events(&events);
+                    let events = <Self as Logic>::compute_events(self, action);
+                    <Self as Logic>::apply_events(self, &events);
                     events
+                }
+
+                pub fn sync_commitments(&mut self) {
+                    #( #sync_statements )*
+                }
+            }
+
+            pub trait StateStorage {
+                fn execute_state(&self) -> &ExecuteState;
+                fn execute_state_mut(&mut self) -> &mut ExecuteState;
+                fn refresh_commitments(&mut self);
+            }
+
+            impl StateStorage for ExecuteState {
+                fn execute_state(&self) -> &ExecuteState {
+                    self
+                }
+
+                fn execute_state_mut(&mut self) -> &mut ExecuteState {
+                    self
+                }
+
+                fn refresh_commitments(&mut self) {}
+            }
+
+            impl StateStorage for FullState {
+                fn execute_state(&self) -> &ExecuteState {
+                    &self.execute_state
+                }
+
+                fn execute_state_mut(&mut self) -> &mut ExecuteState {
+                    &mut self.execute_state
+                }
+
+                fn refresh_commitments(&mut self) {
+                    self.sync_commitments();
+                }
+            }
+
+            impl<T> Logic for T
+            where
+                T: StateStorage,
+            {
+                fn compute_events(&self, action: &Action) -> Vec<Event> {
+                    self.execute_state().compute_events_logic(action)
+                }
+
+                fn apply_events(&mut self, events: &[Event]) {
+                    self.execute_state_mut().apply_events_logic(events);
+                    self.refresh_commitments();
                 }
             }
         }
@@ -172,6 +224,56 @@ fn build_witness_type(value_ty: &Type) -> TokenStream2 {
         }
     } else {
         quote! { ::state_core::ZkWitnessSet<#value_ty> }
+    }
+}
+
+fn build_commit_sync(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
+    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if parse_hash_map(&inner_ty).is_some() {
+            quote! {
+                self.#field_ident = self
+                    .execute_state
+                    .#field_ident
+                    .iter()
+                    .map(|(outer_key, inner_map)| {
+                        let mut tree = ::state_core::SMT::zero();
+                        if let Err(err) = tree.update_all(inner_map.values().cloned()) {
+                            panic!(
+                                "failed to update {} commitments for key {}: {}",
+                                stringify!(#field_ident),
+                                outer_key,
+                                err
+                            );
+                        }
+                        (outer_key.clone(), tree)
+                    })
+                    .collect();
+            }
+        } else {
+            quote! {
+                let mut tree = ::state_core::SMT::zero();
+                if let Err(err) = tree.update_all(self.execute_state.#field_ident.values().cloned()) {
+                    panic!(
+                        "failed to update {} commitments: {}",
+                        stringify!(#field_ident),
+                        err
+                    );
+                }
+                self.#field_ident = tree;
+            }
+        }
+    } else {
+        quote! {
+            let mut tree = ::state_core::SMT::zero();
+            if let Err(err) = tree.update_all(::std::iter::once(self.execute_state.#field_ident.clone())) {
+                panic!(
+                    "failed to update {} commitments: {}",
+                    stringify!(#field_ident),
+                    err
+                );
+            }
+            self.#field_ident = tree;
+        }
     }
 }
 

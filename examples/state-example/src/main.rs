@@ -18,23 +18,25 @@ fn main() {
         assets: execute.assets.clone(),
     };
 
-    let events = execute.compute_events(&vapp::Action::RegisterUser {
-        username: "alice".into(),
-        name: "Alice".into(),
-    });
-    println!("events: {:?}", events);
+    let mut events = Vec::new();
 
-    full.apply_action(&vapp::Action::RegisterUser {
+    let register_events = full.apply_action(&vapp::Action::RegisterUser {
         username: "alice".into(),
         name: "Alice".into(),
     });
-    full.apply_action(&vapp::Action::CreditBalance {
+    println!("register events: {:?}", register_events);
+    events.extend(register_events);
+
+    let credit_events = full.apply_action(&vapp::Action::CreditBalance {
         symbol: "ETH".into(),
         username: "alice".into(),
         amount: 100,
     });
+    println!("credit events: {:?}", credit_events);
+    events.extend(credit_events);
 
-    let zk_state = vapp::ZkVmState::default();
+    let zk_state = full.build_witness_state(&events);
+
     println!("full: {:?}", full);
     println!("zk: {:?}", zk_state);
 }
