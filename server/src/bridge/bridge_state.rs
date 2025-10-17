@@ -87,6 +87,11 @@ impl BridgeState {
     }
 
     pub fn record_eth_identity_binding(&mut self, address: Address, user_identity: String) {
+        sdk::info!(
+            "Recording ETH address binding: {:?} -> {}",
+            address,
+            user_identity
+        );
         self.eth_address_bindings.insert(address, user_identity);
     }
 

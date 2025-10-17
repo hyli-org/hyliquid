@@ -157,7 +157,7 @@ const currentUsername = computed(() => wallet.value?.username || "current user")
 
 const handleEthereumDeposit = async () => {
     if (!canSendTokenDeposit.value || isSwitchingNetwork.value) return;
-    await sendDepositTransaction(tokenAmount.value);
+    await sendDepositTransaction("" + tokenAmount.value);
     if (txHash.value) {
         tokenAmount.value = 0;
     }
@@ -403,10 +403,7 @@ const handleEthereumDeposit = async () => {
                             <span v-if="submittingAssociation">Awaiting signature…</span>
                             <span v-else>Claim Ethereum address</span>
                         </button>
-                        <p
-                            v-else-if="needsBridgeClaim"
-                            class="text-xs text-neutral-500"
-                        >
+                        <p v-else-if="needsBridgeClaim" class="text-xs text-neutral-500">
                             Connect an Ethereum wallet to claim this identity.
                         </p>
                     </div>

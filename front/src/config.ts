@@ -53,32 +53,26 @@ export interface CollateralNetworkConfig {
     chainId: string;
     tokenAddress: string;
     vaultAddress: string;
-    rpcUrl?: string;
+    rpcUrl: string;
     blockExplorerUrl?: string;
 }
 
 const DEFAULT_COLLATERAL_NETWORKS: CollateralNetworkConfig[] = [
     {
+        id: "ethereum-sepolia",
+        name: "Ethereum Sepolia",
+        chainId: "0xaa36a7",
+        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS,
+        vaultAddress: HYLI_VAULT_ADDRESS,
+        rpcUrl: "https://0xrpc.io/sep",
+    },
+    {
         id: "local-anvil",
         name: "Local (Anvil)",
         chainId: "0x7a69",
-        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS || "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS || "0x6d6Fc2b5B6F71B84838C70ED1719C9D498FdB083",
         vaultAddress: HYLI_VAULT_ADDRESS || "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
         rpcUrl: "http://localhost:8545",
-    },
-    {
-        id: "ethereum-mainnet",
-        name: "Ethereum Mainnet",
-        chainId: "0x1",
-        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS,
-        vaultAddress: HYLI_VAULT_ADDRESS,
-    },
-    {
-        id: "arbitrum-one",
-        name: "Arbitrum One",
-        chainId: "0xa4b1",
-        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS,
-        vaultAddress: HYLI_VAULT_ADDRESS,
     },
 ];
 

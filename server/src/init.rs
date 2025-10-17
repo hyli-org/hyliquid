@@ -394,3 +394,19 @@ impl DebugStateCommitment {
         diff
     }
 }
+
+pub fn install_rustls_crypto_provider() {
+    use rustls::crypto::{aws_lc_rs, ring, CryptoProvider};
+
+    if CryptoProvider::get_default().is_some() {
+        return;
+    }
+
+    if aws_lc_rs::default_provider().install_default().is_ok() {
+        return;
+    }
+
+    ring::default_provider()
+        .install_default()
+        .expect("installing rustls ring crypto provider");
+}

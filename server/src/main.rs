@@ -76,6 +76,7 @@ fn main() -> Result<()> {
 }
 
 async fn actual_main() -> Result<()> {
+    server::init::install_rustls_crypto_provider();
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 

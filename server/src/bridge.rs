@@ -162,9 +162,11 @@ impl Module for BridgeModule {
         let vault_address = self.eth_contract_vault_address;
 
         info!(
-            "Listening for Transfer events to vault: {:?}",
-            self.eth_contract_vault_address
+            "Listening for Transfer events to vault: {:?} on contract {:?}",
+            self.eth_contract_vault_address, self.eth_contract_address
         );
+
+        // TODO: filtrer par address de contrat
         let mut to_vault_stream = eth_listener.stream_transfers_to(vault_address).await?;
 
         // TODO: implement all bridge's flows.
@@ -190,6 +192,7 @@ impl Module for BridgeModule {
                 match msg {
                     Ok(log) => {
                         // Flow 1
+                        sdk::info!("Received ETH to vault log: {:?}", log);
                         self.handle_eth_to_vault_log(log.clone()).await?;
                     },
                     Err(e) => error!("Error (to vault): {}", e),
@@ -540,6 +543,12 @@ async fn claim(
                 contract_name: claim_state.collateral_token_cn.clone(),
                 amount: hyli_amount,
             };
+
+            sdk::info!(
+                "Queuing pending deposit for eth tx {:?}: {:?}",
+                eth_tx.tx_hash,
+                deposit
+            );
 
             claim_state
                 .bus

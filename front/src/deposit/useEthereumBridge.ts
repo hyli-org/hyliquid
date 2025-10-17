@@ -6,6 +6,7 @@ import {
     type CollateralNetworkConfig,
     WALLET_SERVER_BASE_URL,
 } from "../config";
+import { Interface, parseUnits } from "ethers";
 
 interface BackendSessionKey {
     key: string;
@@ -51,41 +52,7 @@ const buildClaimMessage = (chain: string, ethAddress: string, userIdentity: stri
     return `${normalizedChain}:${normalizedAddress}:${userIdentity}`;
 };
 
-const amountRegex = /^\d+(\.\d+)?$/;
-const coerceToDecimalString = (value: unknown): string => {
-    if (typeof value === "string") return value;
-    if (typeof value === "number") {
-        if (!Number.isFinite(value)) {
-            return "";
-        }
-        return value.toString();
-    }
-    if (typeof value === "bigint") {
-        return value.toString();
-    }
-    if (value == null) return "";
-    return String(value);
-};
-const normalizeAmount = (amount: unknown, decimals: number): bigint => {
-    const sanitized = coerceToDecimalString(amount).trim();
-    if (!amountRegex.test(sanitized)) {
-        throw new Error("Invalid amount format");
-    }
-
-    const [integerPart, fractionalPart = ""] = sanitized.split(".");
-
-    if (fractionalPart.length > decimals && fractionalPart.slice(decimals).replace(/0+$/, "") !== "") {
-        throw new Error(`Amount exceeds ${decimals} decimal places`);
-    }
-
-    const normalizedFraction = fractionalPart.padEnd(decimals, "0").slice(0, decimals);
-    const joined = `${integerPart}${normalizedFraction}`;
-    if (!joined) {
-        return 0n;
-    }
-    return BigInt(joined);
-};
-const hexFromBigInt = (value: bigint) => `0x${value.toString(16)}`;
+const isHexAddress = (value: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 
 const fetchAccountInfo = async (username: string): Promise<AccountInfo | null> => {
     try {
@@ -120,14 +87,33 @@ export function useEthereumBridge() {
     const isSendingTransaction = ref(false);
     const networkError = ref<string | null>(null);
     const isSwitchingNetwork = ref(false);
-    const tokenDecimalsCache = ref<Record<string, number>>({});
     const bridgeClaimed = ref(false);
     const claimStatusLoading = ref(false);
     const claimStatusError = ref<string | null>(null);
     const claimAddress = ref<string | null>(null);
 
+    const setClaimState = ({ claimed, address }: { claimed: boolean; address?: string | null }) => {
+        bridgeClaimed.value = claimed;
+        claimAddress.value = address ? normalizeHexLike(address) : null;
+    };
+
+    const resetClaimState = () => {
+        setClaimState({ claimed: false, address: null });
+    };
+
+    const requireIdentity = (): string => {
+        const identity = userIdentity.value;
+        if (!identity) {
+            throw new Error("Wallet identity unavailable");
+        }
+        return identity;
+    };
+
     const selectedNetworkId = ref<string | null>(
-        availableNetworks.find(network => network.id === "local-anvil")?.id ?? availableNetworks[0]?.id ?? null
+        // availableNetworks.find((network) => network.id === "local-anvil")?.id ??
+        availableNetworks.find((network) => network.id === "ethereum-sepolia")?.id ??
+            availableNetworks[0]?.id ??
+            null,
     );
     const selectedNetwork = computed<CollateralNetworkConfig | null>(() => {
         if (!selectedNetworkId.value) return null;
@@ -172,6 +158,45 @@ export function useEthereumBridge() {
     const hasBridgeIdentity = computed(() => Boolean(userIdentity.value));
     const needsBridgeClaim = computed(() => hasBridgeIdentity.value && !bridgeClaimed.value);
 
+    const requireSelectedNetwork = (
+        errorMessage = "Please select a network",
+    ): CollateralNetworkConfig => {
+        const network = selectedNetwork.value;
+        if (!network) {
+            throw new Error(errorMessage);
+        }
+        return network;
+    };
+
+    const requireAssociatedAddress = (): string => {
+        const address = associatedAddress.value;
+        if (!address) {
+            throw new Error("No associated Ethereum address found");
+        }
+        return address;
+    };
+
+    const requireBridgeClaimed = () => {
+        if (!bridgeClaimed.value) {
+            throw new Error("Please claim your Ethereum address before depositing");
+        }
+    };
+
+    const requireHexAddress = (
+        value: string | undefined | null,
+        errorMessage: string,
+        missingMessage?: string,
+    ): string => {
+        const trimmed = value?.trim() ?? "";
+        if (!trimmed) {
+            throw new Error(missingMessage ?? errorMessage);
+        }
+        if (!isHexAddress(trimmed)) {
+            throw new Error(errorMessage);
+        }
+        return normalizeHexLike(trimmed);
+    };
+
     const providerAvailable = computed(() => typeof window !== "undefined" && Boolean(window.ethereum));
 
     const getProvider = (): EthereumProvider => {
@@ -182,12 +207,11 @@ export function useEthereumBridge() {
     };
 
     const checkBridgeClaimStatus = async () => {
-        const identity = userIdentity.value;
         claimStatusError.value = null;
 
+        const identity = userIdentity.value;
         if (!identity) {
-            bridgeClaimed.value = false;
-            claimAddress.value = null;
+            resetClaimState();
             return;
         }
 
@@ -199,8 +223,7 @@ export function useEthereumBridge() {
             );
 
             if (response.status === 404) {
-                bridgeClaimed.value = false;
-                claimAddress.value = null;
+                resetClaimState();
                 return;
             }
 
@@ -209,18 +232,15 @@ export function useEthereumBridge() {
             }
 
             const data = (await response.json()) as { claimed: boolean; eth_address?: string };
-            bridgeClaimed.value = Boolean(data.claimed);
-
-            if (bridgeClaimed.value && data.eth_address) {
-                claimAddress.value = normalizeHexLike(data.eth_address);
-            } else {
-                claimAddress.value = null;
-            }
+            const claimed = Boolean(data.claimed);
+            setClaimState({
+                claimed,
+                address: claimed && data.eth_address ? data.eth_address : null,
+            });
         } catch (error) {
             claimStatusError.value =
                 error instanceof Error ? error.message : "Failed to load bridge claim status";
-            bridgeClaimed.value = false;
-            claimAddress.value = null;
+            resetClaimState();
         } finally {
             claimStatusLoading.value = false;
         }
@@ -259,10 +279,7 @@ export function useEthereumBridge() {
         ethAddress: string,
         signerAccount?: string,
     ): Promise<string> => {
-        const identity = userIdentity.value;
-        if (!identity) {
-            throw new Error("Wallet identity unavailable");
-        }
+        const identity = requireIdentity();
 
         const normalizedChain = normalizeHexLike(chain);
         const normalizedAddress = normalizeHexLike(ethAddress);
@@ -275,9 +292,8 @@ export function useEthereumBridge() {
         });
 
         await submitBridgeClaim(normalizedChain, normalizedAddress, identity, signature);
-        bridgeClaimed.value = true;
         claimStatusError.value = null;
-        claimAddress.value = normalizedAddress;
+        setClaimState({ claimed: true, address: normalizedAddress });
 
         return signature;
     };
@@ -320,9 +336,8 @@ export function useEthereumBridge() {
         if (!username) {
             accountInfo.value = null;
             manualAssociation.value = null;
-            bridgeClaimed.value = false;
             claimStatusError.value = null;
-            claimAddress.value = null;
+            resetClaimState();
             return;
         }
 
@@ -349,15 +364,8 @@ export function useEthereumBridge() {
     };
 
     const requestManualAssociation = async () => {
-        const identity = userIdentity.value;
-        if (!identity) {
-            throw new Error("Wallet identity unavailable");
-        }
-
-        const network = selectedNetwork.value;
-        if (!network) {
-            throw new Error("Please select a network before associating an address");
-        }
+        requireIdentity();
+        const network = requireSelectedNetwork("Please select a network before associating an address");
 
         submitError.value = null;
         submittingAssociation.value = true;
@@ -378,19 +386,18 @@ export function useEthereumBridge() {
                 targetAddress = signerAccount;
             }
 
+            const normalizedTarget = normalizeHexLike(targetAddress);
             const signature = await claimBridgeIdentity(
                 provider,
                 network.chainId,
-                targetAddress,
+                normalizedTarget,
                 signerAccount,
             );
 
             manualAssociation.value = {
-                address: normalizeHexLike(targetAddress),
+                address: normalizedTarget,
                 signature,
             };
-            bridgeClaimed.value = true;
-            claimAddress.value = normalizeHexLike(targetAddress);
         } catch (error) {
             if (!submitError.value) {
                 submitError.value = error instanceof Error ? error.message : "Failed to establish association";
@@ -401,161 +408,28 @@ export function useEthereumBridge() {
         }
     };
 
-    const ensureTokenDecimals = async (
-        provider: EthereumProvider,
-        token: string,
-        cacheKey: string,
-    ): Promise<number> => {
-        const cached = tokenDecimalsCache.value[cacheKey];
-        if (cached !== undefined) {
-            return cached;
-        }
 
-        try {
-            const response = await provider.request<string>({
-                method: "eth_call",
-                params: [
-                    {
-                        to: token,
-                        data: "0x313ce567",
-                    },
-                    "latest",
-                ],
-            });
-            if (response) {
-                const parsed = Number.parseInt(response, 16);
-                if (!Number.isNaN(parsed)) {
-                    tokenDecimalsCache.value = {
-                        ...tokenDecimalsCache.value,
-                        [cacheKey]: parsed,
-                    };
-                    return parsed;
-                }
-            }
-        } catch (error) {
-            console.warn("Failed to fetch token decimals, defaulting to 18", error);
-        }
-
-        tokenDecimalsCache.value = {
-            ...tokenDecimalsCache.value,
-            [cacheKey]: 18,
-        };
-        return 18;
-    };
-
-    const encodeErc20Transfer = (recipient: string, amount: bigint): string => {
-        const selector = "0xa9059cbb";
-        const encodeAddress = (address: string) => address.replace(/^0x/, "").padStart(64, "0");
-        const encodeUint256 = (value: bigint) => value.toString(16).padStart(64, "0");
-
-        const toField = encodeAddress(recipient.toLowerCase());
-        const amountField = encodeUint256(amount);
-        return `${selector}${toField}${amountField}`;
-    };
-
-    const ensureProviderNetwork = async (provider: EthereumProvider, network: CollateralNetworkConfig) => {
-        const currentChainId = await provider.request<string>({ method: "eth_chainId" });
-        if (currentChainId?.toLowerCase() === network.chainId.toLowerCase()) {
-            return;
-        }
-
-        try {
-            await provider.request({
-                method: "wallet_switchEthereumChain",
-                params: [{ chainId: network.chainId }],
-            });
-        } catch (switchError: any) {
-            if (switchError?.code === 4902 || switchError?.data === 4902) {
-                if (!network.rpcUrl) {
-                    throw new Error(
-                        "Selected network is not available in the wallet and no RPC URL is configured to add it",
-                    );
-                }
-
-                await provider.request({
-                    method: "wallet_addEthereumChain",
-                    params: [
-                        {
-                            chainId: network.chainId,
-                            chainName: network.name,
-                            rpcUrls: [network.rpcUrl],
-                            nativeCurrency: {
-                                name: "ETH",
-                                symbol: "ETH",
-                                decimals: 18,
-                            },
-                            blockExplorerUrls: network.blockExplorerUrl ? [network.blockExplorerUrl] : undefined,
-                        },
-                    ],
-                });
-
-                await provider.request({
-                    method: "wallet_switchEthereumChain",
-                    params: [{ chainId: network.chainId }],
-                });
-            } else {
-                const message =
-                    switchError instanceof Error ? switchError.message : "Failed to switch wallet network";
-                throw new Error(message);
-            }
-        }
-    };
-
-    const sendDepositTransaction = async (amountTokens: number) => {
+    const sendDepositTransaction = async (amountTokens: string) => {
         depositError.value = null;
         txHash.value = null;
 
-        const network = selectedNetwork.value;
-        if (!network) {
-            depositError.value = "Please select a network";
-            return;
-        }
-
-        const address = associatedAddress.value;
-        if (!address) {
-            depositError.value = "No associated Ethereum address found";
-            return;
-        }
-
-        if (!bridgeClaimed.value) {
-            depositError.value = "Please claim your Ethereum address before depositing";
-            return;
-        }
-
-        const tokenAddress = network.tokenAddress?.trim() ?? "";
-        if (!tokenAddress) {
-            depositError.value = "Collateral token address is not configured";
-            return;
-        }
-
-        const vaultAddress = network.vaultAddress?.trim() ?? "";
-        if (!/^0x[a-fA-F0-9]{40}$/.test(vaultAddress)) {
-            depositError.value = "Vault address is invalid";
-            return;
-        }
-
-        if (!/^0x[a-fA-F0-9]{40}$/.test(tokenAddress)) {
-            depositError.value = "Collateral token address is invalid";
-            return;
-        }
-
-        isSendingTransaction.value = true;
-
         try {
+            const network = requireSelectedNetwork();
+            const address = requireAssociatedAddress();
+            requireBridgeClaimed();
+
+            const tokenAddress = requireHexAddress(
+                network.tokenAddress,
+                "Collateral token address is invalid",
+                "Collateral token address is not configured",
+            );
+            const vaultAddress = requireHexAddress(network.vaultAddress, "Vault address is invalid");
+
+            isSendingTransaction.value = true;
+
             const provider = getProvider();
             isSwitchingNetwork.value = true;
             networkError.value = null;
-            try {
-                await ensureProviderNetwork(provider, network);
-            } catch (switchError) {
-                const message =
-                    switchError instanceof Error ? switchError.message : "Failed to switch wallet network";
-                networkError.value = message;
-                depositError.value = message;
-                return;
-            } finally {
-                isSwitchingNetwork.value = false;
-            }
 
             let signerAccount: string;
             try {
@@ -565,35 +439,26 @@ export function useEthereumBridge() {
                     accountError instanceof Error
                         ? accountError.message
                         : "Unable to resolve Ethereum signer account";
-                depositError.value = message;
-                return;
+                throw new Error(message);
             }
 
-            const cacheKey = `${network.chainId.toLowerCase()}:${tokenAddress.toLowerCase()}`;
-            const decimals = await ensureTokenDecimals(provider, tokenAddress, cacheKey);
+            // FIXME: Do not hardcode this
+            const decimals = "wei";
+            const erc20 = new Interface(['function transfer(address to, uint256 amount) returns (bool)']);
             
-            if (!Number.isFinite(amountTokens) || amountTokens <= 0) {
-                throw new Error("Amount must be greater than zero");
-            }
-            
-            const amountBigInt = normalizeAmount(amountTokens.toString(), decimals);
-            if (amountBigInt <= 0n) {
-                throw new Error("Amount must be greater than zero");
-            }
-
-            const data = encodeErc20Transfer(vaultAddress, amountBigInt);
-            const valueHex = hexFromBigInt(0n);
-
-            const txParams: Record<string, string> = {
-                from: signerAccount,
-                to: tokenAddress,
-                value: valueHex,
-                data,
-            };
+            const amount = parseUnits(amountTokens, decimals);
+            const data = erc20.encodeFunctionData('transfer', [vaultAddress, amount]);
 
             const hash = await provider.request<string>({
                 method: "eth_sendTransaction",
-                params: [txParams],
+                params: [
+                    {
+                        from: signerAccount,
+                        to: tokenAddress,
+                        data,
+                        value: "0x0",
+                    },
+                ],
             });
 
             txHash.value = hash;
