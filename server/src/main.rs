@@ -8,24 +8,23 @@ use hyli_modules::{
     modules::{
         da_listener::{DAListener, DAListenerConf},
         rest::{RestApi, RestApiRunContext},
-        websocket::WebSocketModule,
         BuildApiContextInner, ModulesHandler,
     },
     utils::logger::setup_tracing,
 };
-use orderbook::model::OrderbookEvent;
 use prometheus::Registry;
 use sdk::{api::NodeInfo, info};
 use server::{
     api::{ApiModule, ApiModuleCtx},
-    app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
+    app::{OrderbookModule, OrderbookModuleCtx},
+    bridge::{BridgeModule, BridgeModuleCtx},
     conf::Conf,
     database::{DatabaseModule, DatabaseModuleCtx},
     prover::{OrderbookProverCtx, OrderbookProverModule},
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use tracing::error;
 
 #[derive(Parser, Debug)]
@@ -36,6 +35,9 @@ pub struct Args {
 
     #[arg(long, default_value = "orderbook")]
     pub orderbook_cn: String,
+
+    #[arg(long, default_value = "oranj")] // This should be USDC contrat or so
+    pub collateral_token_cn: String,
 
     #[arg(long, default_value = "false")]
     pub clean_db: bool,
@@ -211,9 +213,14 @@ async fn actual_main() -> Result<()> {
         .await?;
 
     handler
-        .build_module::<WebSocketModule<OrderbookWsInMessage, OrderbookEvent>>(
-            config.websocket.clone(),
-        )
+        .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
+            api: api_ctx.clone(),
+            collateral_token_cn: args.collateral_token_cn.clone().into(),
+            bridge_config: config.bridge.clone(),
+            state_path: PathBuf::from(&config.data_directory).join("bridge_state.bin"),
+            asset_service: asset_service.clone(),
+            orderbook_cn: args.orderbook_cn.clone().into(),
+        }))
         .await?;
 
     // Should come last so the other modules have nested their own routes.

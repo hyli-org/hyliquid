@@ -37,7 +37,19 @@ interface AccountInfo {
     salt: string;
 }
 
-const associationMessage = (username: string) => `i am ${username}: ${Date.now()}`;
+const normalizeHexLike = (value: string): string => {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("0x")) {
+        return trimmed.toLowerCase();
+    }
+    return `0x${trimmed.slice(2).toLowerCase()}`;
+};
+
+const buildClaimMessage = (chain: string, ethAddress: string, userIdentity: string): string => {
+    const normalizedChain = normalizeHexLike(chain);
+    const normalizedAddress = normalizeHexLike(ethAddress);
+    return `${normalizedChain}:${normalizedAddress}:${userIdentity}`;
+};
 
 const amountRegex = /^\d+(\.\d+)?$/;
 const coerceToDecimalString = (value: unknown): string => {
@@ -95,6 +107,7 @@ const availableNetworks: CollateralNetworkConfig[] = COLLATERAL_NETWORKS.filter(
 
 export function useEthereumBridge() {
     const { wallet } = useWallet();
+    const userIdentity = computed(() => wallet.value?.address ?? null);
 
     const loadingAssociation = ref(false);
     const associationError = ref<string | null>(null);
@@ -108,6 +121,10 @@ export function useEthereumBridge() {
     const networkError = ref<string | null>(null);
     const isSwitchingNetwork = ref(false);
     const tokenDecimalsCache = ref<Record<string, number>>({});
+    const bridgeClaimed = ref(false);
+    const claimStatusLoading = ref(false);
+    const claimStatusError = ref<string | null>(null);
+    const claimAddress = ref<string | null>(null);
 
     const selectedNetworkId = ref<string | null>(
         availableNetworks.find(network => network.id === "local-anvil")?.id ?? availableNetworks[0]?.id ?? null
@@ -137,16 +154,23 @@ export function useEthereumBridge() {
         }
 
         const { address } = info.auth_method.Ethereum;
-        return address ? address.toLowerCase() : null;
+        return address ? normalizeHexLike(address) : null;
     });
 
     const associatedAddress = computed(() => {
-        return manualAssociation.value?.address ?? normalizedWalletAddress.value ?? null;
+        return claimAddress.value ?? manualAssociation.value?.address ?? normalizedWalletAddress.value ?? null;
     });
 
-    const needsManualAssociation = computed(
-        () => normalizedWalletAddress.value === null && manualAssociation.value === null,
-    );
+    const needsManualAssociation = computed(() => {
+        return (
+            normalizedWalletAddress.value === null &&
+            manualAssociation.value === null &&
+            claimAddress.value === null
+        );
+    });
+
+    const hasBridgeIdentity = computed(() => Boolean(userIdentity.value));
+    const needsBridgeClaim = computed(() => hasBridgeIdentity.value && !bridgeClaimed.value);
 
     const providerAvailable = computed(() => typeof window !== "undefined" && Boolean(window.ethereum));
 
@@ -157,10 +181,148 @@ export function useEthereumBridge() {
         return window.ethereum as EthereumProvider;
     };
 
+    const checkBridgeClaimStatus = async () => {
+        const identity = userIdentity.value;
+        claimStatusError.value = null;
+
+        if (!identity) {
+            bridgeClaimed.value = false;
+            claimAddress.value = null;
+            return;
+        }
+
+        claimStatusLoading.value = true;
+
+        try {
+            const response = await fetch(
+                `${BACKEND_API_URL.value}/bridge/claim/${encodeURIComponent(identity)}`,
+            );
+
+            if (response.status === 404) {
+                bridgeClaimed.value = false;
+                claimAddress.value = null;
+                return;
+            }
+
+            if (!response.ok) {
+                throw new Error(`Bridge claim status failed (${response.status})`);
+            }
+
+            const data = (await response.json()) as { claimed: boolean; eth_address?: string };
+            bridgeClaimed.value = Boolean(data.claimed);
+
+            if (bridgeClaimed.value && data.eth_address) {
+                claimAddress.value = normalizeHexLike(data.eth_address);
+            } else {
+                claimAddress.value = null;
+            }
+        } catch (error) {
+            claimStatusError.value =
+                error instanceof Error ? error.message : "Failed to load bridge claim status";
+            bridgeClaimed.value = false;
+            claimAddress.value = null;
+        } finally {
+            claimStatusLoading.value = false;
+        }
+    };
+
+    const submitBridgeClaim = async (
+        chain: string,
+        ethAddress: string,
+        identity: string,
+        signature: string,
+    ): Promise<void> => {
+        const normalizedChain = normalizeHexLike(chain);
+        const normalizedAddress = normalizeHexLike(ethAddress);
+
+        const response = await fetch(`${BACKEND_API_URL.value}/bridge/claim`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                chain: normalizedChain,
+                eth_address: normalizedAddress,
+                user_identity: identity,
+                signature,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Bridge claim failed (${response.status})`);
+        }
+    };
+
+    const claimBridgeIdentity = async (
+        provider: EthereumProvider,
+        chain: string,
+        ethAddress: string,
+        signerAccount?: string,
+    ): Promise<string> => {
+        const identity = userIdentity.value;
+        if (!identity) {
+            throw new Error("Wallet identity unavailable");
+        }
+
+        const normalizedChain = normalizeHexLike(chain);
+        const normalizedAddress = normalizeHexLike(ethAddress);
+        const message = buildClaimMessage(normalizedChain, normalizedAddress, identity);
+
+        const accountForSignature = signerAccount ?? ethAddress;
+        const signature = await provider.request<string>({
+            method: "personal_sign",
+            params: [message, accountForSignature],
+        });
+
+        await submitBridgeClaim(normalizedChain, normalizedAddress, identity, signature);
+        bridgeClaimed.value = true;
+        claimStatusError.value = null;
+        claimAddress.value = normalizedAddress;
+
+        return signature;
+    };
+
+    const resolveSignerAccount = async (
+        provider: EthereumProvider,
+        targetAddress: string,
+    ): Promise<string> => {
+        const normalizedTarget = normalizeHexLike(targetAddress);
+
+        try {
+            const accounts = await provider.request<string[]>({ method: "eth_accounts" });
+            if (accounts?.length) {
+                const match = accounts.find(
+                    (account) => normalizeHexLike(account) === normalizedTarget,
+                );
+                if (match) {
+                    return match;
+                }
+            }
+        } catch {
+            // ignore and fallback to requesting accounts
+        }
+
+        const requested = await provider.request<string[]>({ method: "eth_requestAccounts" });
+        if (!requested || requested.length === 0) {
+            throw new Error("No Ethereum account available");
+        }
+
+        const match = requested.find((account) => normalizeHexLike(account) === normalizedTarget);
+        if (!match) {
+            throw new Error("Connected wallet does not control the associated Ethereum address");
+        }
+
+        return match;
+    };
+
     const refreshAssociation = async () => {
         const username = wallet.value?.username;
         if (!username) {
             accountInfo.value = null;
+            manualAssociation.value = null;
+            bridgeClaimed.value = false;
+            claimStatusError.value = null;
+            claimAddress.value = null;
             return;
         }
 
@@ -182,12 +344,19 @@ export function useEthereumBridge() {
         } finally {
             loadingAssociation.value = false;
         }
+
+        await checkBridgeClaimStatus();
     };
 
     const requestManualAssociation = async () => {
-        const username = wallet.value?.username;
-        if (!username) {
-            throw new Error("Wallet username unavailable");
+        const identity = userIdentity.value;
+        if (!identity) {
+            throw new Error("Wallet identity unavailable");
+        }
+
+        const network = selectedNetwork.value;
+        if (!network) {
+            throw new Error("Please select a network before associating an address");
         }
 
         submitError.value = null;
@@ -195,47 +364,33 @@ export function useEthereumBridge() {
 
         try {
             const provider = getProvider();
-            const accounts = await provider.request<string[]>({ method: "eth_requestAccounts" });
+            let targetAddress = associatedAddress.value;
+            let signerAccount: string;
 
-            if (!accounts || accounts.length === 0) {
-                throw new Error("No Ethereum account available");
-            }
-
-            const account = accounts[0]!;
-            const message = associationMessage(username);
-            const signature = await provider.request<string>({
-                method: "personal_sign",
-                params: [message, account],
-            });
-
-            try {
-                const response = await fetch(`${BACKEND_API_URL.value}/bridge/associate`, {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                        username,
-                        ethAddress: account,
-                        signature,
-                        message,
-                    }),
-                });
-                if (!response.ok) {
-                    throw new Error(`Backend association request failed (${response.status})`);
+            if (targetAddress) {
+                signerAccount = await resolveSignerAccount(provider, targetAddress);
+            } else {
+                const accounts = await provider.request<string[]>({ method: "eth_requestAccounts" });
+                if (!accounts || accounts.length === 0) {
+                    throw new Error("No Ethereum account available");
                 }
-            } catch (error) {
-                const message =
-                    error instanceof Error ? error.message : "Failed to notify backend about association";
-                submitError.value = message;
-                throw error;
+                signerAccount = accounts[0]!;
+                targetAddress = signerAccount;
             }
+
+            const signature = await claimBridgeIdentity(
+                provider,
+                network.chainId,
+                targetAddress,
+                signerAccount,
+            );
 
             manualAssociation.value = {
-                address: account.toLowerCase(),
+                address: normalizeHexLike(targetAddress),
                 signature,
             };
-            await refreshAssociation();
+            bridgeClaimed.value = true;
+            claimAddress.value = normalizeHexLike(targetAddress);
         } catch (error) {
             if (!submitError.value) {
                 submitError.value = error instanceof Error ? error.message : "Failed to establish association";
@@ -362,6 +517,11 @@ export function useEthereumBridge() {
             return;
         }
 
+        if (!bridgeClaimed.value) {
+            depositError.value = "Please claim your Ethereum address before depositing";
+            return;
+        }
+
         const tokenAddress = network.tokenAddress?.trim() ?? "";
         if (!tokenAddress) {
             depositError.value = "Collateral token address is not configured";
@@ -397,6 +557,18 @@ export function useEthereumBridge() {
                 isSwitchingNetwork.value = false;
             }
 
+            let signerAccount: string;
+            try {
+                signerAccount = await resolveSignerAccount(provider, address);
+            } catch (accountError) {
+                const message =
+                    accountError instanceof Error
+                        ? accountError.message
+                        : "Unable to resolve Ethereum signer account";
+                depositError.value = message;
+                return;
+            }
+
             const cacheKey = `${network.chainId.toLowerCase()}:${tokenAddress.toLowerCase()}`;
             const decimals = await ensureTokenDecimals(provider, tokenAddress, cacheKey);
             
@@ -404,8 +576,7 @@ export function useEthereumBridge() {
                 throw new Error("Amount must be greater than zero");
             }
             
-            const amountInput = amountTokens.toString();
-            const amountBigInt = normalizeAmount(amountInput, decimals);
+            const amountBigInt = normalizeAmount(amountTokens.toString(), decimals);
             if (amountBigInt <= 0n) {
                 throw new Error("Amount must be greater than zero");
             }
@@ -414,7 +585,7 @@ export function useEthereumBridge() {
             const valueHex = hexFromBigInt(0n);
 
             const txParams: Record<string, string> = {
-                from: address,
+                from: signerAccount,
                 to: tokenAddress,
                 value: valueHex,
                 data,
@@ -426,31 +597,6 @@ export function useEthereumBridge() {
             });
 
             txHash.value = hash;
-
-
-            const username = wallet.value?.username;
-            if (username) {
-                try {
-                    await fetch(`${BACKEND_API_URL.value}/bridge/claim`, {
-                        method: "POST",
-                        headers: {
-                            "Content-Type": "application/json",
-                        },
-                        body: JSON.stringify({
-                            username,
-                            ethAddress: address,
-                            txHash: hash,
-                            amount: amountInput,
-                            tokenAddress,
-                            vaultAddress,
-                            networkId: network.id,
-                            chainId: network.chainId,
-                        }),
-                    });
-                } catch (error) {
-                    console.warn("Failed to notify backend about Ethereum deposit", error);
-                }
-            }
         } catch (error) {
             depositError.value = error instanceof Error ? error.message : "Ethereum transaction failed";
         } finally {
@@ -462,6 +608,11 @@ export function useEthereumBridge() {
         loadingAssociation,
         associationError,
         needsManualAssociation,
+        needsBridgeClaim,
+        hasBridgeIdentity,
+        bridgeClaimed,
+        claimStatusLoading,
+        claimStatusError,
         associatedAddress,
         submittingAssociation,
         submitError,
@@ -476,6 +627,7 @@ export function useEthereumBridge() {
         selectedNetwork,
         selectedNetworkId,
         setSelectedNetwork,
+        checkBridgeClaimStatus,
         refreshAssociation,
         requestManualAssociation,
         sendDepositTransaction,

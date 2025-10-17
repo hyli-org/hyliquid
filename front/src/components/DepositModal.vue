@@ -48,6 +48,11 @@ const {
     selectedNetwork,
     selectedNetworkId,
     setSelectedNetwork,
+    needsBridgeClaim,
+    hasBridgeIdentity,
+    bridgeClaimed,
+    claimStatusLoading,
+    claimStatusError,
     refreshAssociation,
     requestManualAssociation,
     sendDepositTransaction,
@@ -66,6 +71,7 @@ const resetFormState = () => {
     clearHyliStatus();
     depositError.value = null;
     networkError.value = null;
+    claimStatusError.value = null;
 };
 
 watch(
@@ -111,7 +117,7 @@ const handleHyliDeposit = async () => {
     }
 };
 
-const canAssociate = computed(() => providerAvailable.value && needsManualAssociation.value);
+const canClaimAddress = computed(() => providerAvailable.value && needsBridgeClaim.value);
 
 const hasNetworks = computed(() => availableNetworks.length > 0);
 
@@ -141,6 +147,8 @@ const canSendTokenDeposit = computed(() => {
         Boolean(selectedNetwork.value?.tokenAddress) &&
         Boolean(selectedNetwork.value?.vaultAddress) &&
         !needsManualAssociation.value &&
+        bridgeClaimed.value &&
+        !claimStatusLoading.value &&
         !isSwitchingNetwork.value
     );
 });
@@ -349,6 +357,17 @@ const handleEthereumDeposit = async () => {
                         </p>
                         <p v-else class="text-xs text-amber-400">No Ethereum address linked yet.</p>
 
+                        <p v-if="!hasBridgeIdentity" class="text-xs text-neutral-500">
+                            Connect your Hyli wallet to check the bridge claim status.
+                        </p>
+                        <p v-else-if="claimStatusLoading" class="text-xs text-neutral-500">
+                            Checking bridge claim status…
+                        </p>
+                        <p v-else-if="needsBridgeClaim" class="text-xs text-amber-400">
+                            This identity is not claimed yet. Claim it before sending a deposit.
+                        </p>
+                        <p v-else class="text-xs text-emerald-400">Bridge claim already registered.</p>
+
                         <div
                             v-if="associationError"
                             class="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"
@@ -362,22 +381,34 @@ const handleEthereumDeposit = async () => {
                             {{ submitError }}
                         </div>
                         <div
+                            v-if="claimStatusError"
+                            class="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"
+                        >
+                            {{ claimStatusError }}
+                        </div>
+                        <div
                             v-if="manualAssociation"
                             class="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-200"
                         >
-                            Association registered. Keep the signature for reference.
+                            Claim signature recorded. Keep it for your records.
                         </div>
 
                         <button
-                            v-if="canAssociate"
+                            v-if="canClaimAddress"
                             type="button"
                             class="w-full rounded border border-cyan-600 px-3 py-2 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-600/20 disabled:cursor-not-allowed disabled:border-neutral-700 disabled:text-neutral-500"
-                            :disabled="submittingAssociation"
+                            :disabled="submittingAssociation || claimStatusLoading"
                             @click="requestManualAssociation"
                         >
                             <span v-if="submittingAssociation">Awaiting signature…</span>
-                            <span v-else>Sign message to link address</span>
+                            <span v-else>Claim Ethereum address</span>
                         </button>
+                        <p
+                            v-else-if="needsBridgeClaim"
+                            class="text-xs text-neutral-500"
+                        >
+                            Connect an Ethereum wallet to claim this identity.
+                        </p>
                     </div>
 
                     <div
