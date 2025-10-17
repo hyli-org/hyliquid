@@ -17,11 +17,11 @@ use crate::transaction::{
     AddSessionKeyPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, PermissionnedPrivateInput,
 };
+use crate::ORDERBOOK_ACCOUNT_IDENTITY;
 use crate::{
     order_manager::OrderManager,
     zk::{FullState, ZkVmState, H256},
 };
-use crate::ORDERBOOK_ACCOUNT_IDENTITY;
 
 struct TestSigner {
     signing_key: SigningKey,
@@ -155,8 +155,7 @@ fn run_action(
 
     let full_commit = full.commit();
     assert_eq!(
-        hyli_output.next_state,
-        full_commit,
+        hyli_output.next_state, full_commit,
         "Full next state mismatch for action {action_repr}"
     );
 
@@ -457,8 +456,14 @@ fn test_deposit_state_commitment() {
     );
 
     let deposit_amount = 1_000_u64;
-    let commitment =
-        execute_deposit_with_zk_checks(&mut light, &mut full, &ctx, users[0], &base_symbol, deposit_amount);
+    let commitment = execute_deposit_with_zk_checks(
+        &mut light,
+        &mut full,
+        &ctx,
+        users[0],
+        &base_symbol,
+        deposit_amount,
+    );
     let parsed = decode_commitment(&commitment);
 
     let base_root = parsed
