@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { HyliWallet, setWalletConfig, useWallet } from "hyli-wallet-vue";
 import { useApi } from "./api_call";
-import { BACKEND_API_URL, NODE_BASE_URL, WALLET_SERVER_BASE_URL, WALLET_WEBSOCKET_URL, GOOGLE_CLIENT_ID } from "./config";
+import {
+    BACKEND_API_URL,
+    NODE_BASE_URL,
+    WALLET_SERVER_BASE_URL,
+    WALLET_WEBSOCKET_URL,
+    GOOGLE_CLIENT_ID,
+} from "./config";
 import { assetsState, instrumentsState } from "./trade/trade";
 
 setWalletConfig({
@@ -13,9 +19,14 @@ setWalletConfig({
             password: {
                 enabled: true,
             },
-            google: GOOGLE_CLIENT_ID ? {
-                clientId: GOOGLE_CLIENT_ID,
-            } : undefined,
+            metamask: {
+                enabled: true,
+            },
+            google: GOOGLE_CLIENT_ID
+                ? {
+                      clientId: GOOGLE_CLIENT_ID,
+                  }
+                : undefined,
         },
     },
     forceSessionKey: true,
@@ -91,19 +102,25 @@ const onWalletClose = () => {
         <div class="flex w-full h-16 justify-between items-center px-4">
             <h3>HYLILILILILIQUID</h3>
             <div class="flex justify-between items-center gap-4">
-                <button @click="createPair"
-                    class="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 rounded text-sm cursor-pointer">
+                <button
+                    @click="createPair"
+                    class="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 rounded text-sm cursor-pointer"
+                >
                     Create all pairs
                 </button>
                 <p v-if="wallet?.address">Logged in as {{ wallet?.address }}</p>
-                <button @click="depositBase"
+                <button
+                    @click="depositBase"
                     class="px-3 py-1 bg-blue-600 hover:bg-blue-700 rounded text-sm cursor-pointer"
-                    v-if="wallet?.address && instrumentsState.selected?.base_asset">
+                    v-if="wallet?.address && instrumentsState.selected?.base_asset"
+                >
                     Deposit 100 {{ instrumentsState.selected?.base_asset }}
                 </button>
-                <button @click="depositQuote"
+                <button
+                    @click="depositQuote"
                     class="px-3 py-1 bg-green-600 hover:bg-green-700 rounded text-sm cursor-pointer"
-                    v-if="wallet?.address && instrumentsState.selected?.quote_asset">
+                    v-if="wallet?.address && instrumentsState.selected?.quote_asset"
+                >
                     Deposit 100 {{ instrumentsState.selected?.quote_asset }}
                 </button>
                 <HyliWallet :on-close="onWalletClose"></HyliWallet>
