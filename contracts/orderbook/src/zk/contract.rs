@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use sdk::{ContractName, RunResult, StateCommitment};
 use sha2::Sha256;
 use sha3::Digest;
+use sparse_merkle_tree::traits::Value;
 
 use crate::{
     model::{Balance, ExecuteState},
@@ -140,11 +141,13 @@ impl sdk::ZkContract for ZkVmState {
                 balances_roots: self
                     .balances
                     .iter()
-                    .map(|(symbol, witness)| {
-                        (
-                            symbol.clone(),
-                            witness.compute_root().expect("compute user balance root"),
-                        )
+                    .filter_map(|(symbol, witness)| {
+                        let root = witness.compute_root().expect("compute user balance root");
+                        if root == H256::zero() {
+                            None
+                        } else {
+                            Some((symbol.clone(), root))
+                        }
                     })
                     .collect(),
                 assets: &self.assets,
