@@ -555,10 +555,7 @@ mod tests {
 
         let expected_commitment = StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
-                users_info_root: users_witness
-                    .clone()
-                    .compute_root()
-                    .expect("users root"),
+                users_info_root: users_witness.clone().compute_root().expect("users root"),
                 balances_roots: expected_balances,
                 assets: &assets,
                 orders: order_manager.view(),
@@ -625,9 +622,7 @@ mod tests {
 
         let expected_commitment = StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
-                users_info_root: users_witness
-                    .compute_root()
-                    .expect("users root"),
+                users_info_root: users_witness.compute_root().expect("users root"),
                 balances_roots: HashMap::from([("TOKEN".to_string(), balance_root)]),
                 assets: &assets,
                 orders: order_manager.view(),
