@@ -1,6 +1,6 @@
 use proc_macro::TokenStream;
-use proc_macro2::Span;
-use quote::quote;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::{format_ident, quote};
 use syn::parse::{Parse, ParseStream};
 use syn::{Error, Fields, Ident, ItemStruct, Result, Token, Type};
 
@@ -33,13 +33,49 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     let event_ty = args.event;
 
     let execute_fields: Vec<_> = fields
-        .into_iter()
-        .map(|mut field| {
-            let field_ident = field.ident.take().unwrap();
-            let ty = field.ty;
+        .iter()
+        .map(|field| {
+            let field_ident = field.ident.clone().unwrap();
+            let ty = field.ty.clone();
             quote! { pub #field_ident: #ty }
         })
         .collect();
+
+    let mut commit_fields: Vec<TokenStream2> = Vec::new();
+    let mut zk_fields: Vec<TokenStream2> = Vec::new();
+
+    for field in fields.iter() {
+        let field_ident = field.ident.clone().unwrap();
+        let ty = field.ty.clone();
+        let mut has_commit = false;
+        let mut has_ident = false;
+
+        for attr in &field.attrs {
+            if attr.path().is_ident("commit") {
+                let args = attr
+                    .parse_args::<CommitArgs>()
+                    .unwrap_or_else(|err| panic!("invalid commit attribute on field: {}", err));
+                if args.kind == "SMT" {
+                    let commit_ident = format_ident!("{}_smt", field_ident);
+                    commit_fields.push(quote! { pub #commit_ident: ::state_core::SMT<#ty> });
+                    zk_fields.push(quote! { pub #field_ident: ::state_core::ZkWitnessSet<#ty> });
+                    has_commit = true;
+                }
+            } else if attr.path().is_ident("ident") {
+                let args = attr
+                    .parse_args::<IdentArgs>()
+                    .unwrap_or_else(|err| panic!("invalid ident attribute on field: {}", err));
+                if args.kind == "borsh" {
+                    zk_fields.push(quote! { pub #field_ident: #ty });
+                    has_ident = true;
+                }
+            }
+        }
+
+        if !has_commit && !has_ident {
+            // Fields without annotations are not mirrored in FullState/ZkVmState
+        }
+    }
 
     let output = quote! {
         #[allow(non_snake_case)]
@@ -48,16 +84,19 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
 
             #[derive(Debug, Default, Clone)]
             pub struct ExecuteState {
-                #(#execute_fields,)*
+                #( #execute_fields, )*
             }
 
             #[derive(Debug, Default, Clone)]
             pub struct FullState {
                 pub execute_state: ExecuteState,
+                #( #commit_fields, )*
             }
 
             #[derive(Debug, Default, Clone)]
-            pub struct ZkVmState;
+            pub struct ZkVmState {
+                #( #zk_fields, )*
+            }
 
             pub type Action = super::#action_ty;
             pub type Event = super::#event_ty;
@@ -143,5 +182,31 @@ impl Parse for MacroArgs {
                 "vapp_state requires `action = ...` and `event = ...` arguments",
             )),
         }
+    }
+}
+
+struct CommitArgs {
+    kind: String,
+}
+
+impl Parse for CommitArgs {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let kind: Ident = input.parse()?;
+        Ok(CommitArgs {
+            kind: kind.to_string(),
+        })
+    }
+}
+
+struct IdentArgs {
+    kind: String,
+}
+
+impl Parse for IdentArgs {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let kind: Ident = input.parse()?;
+        Ok(IdentArgs {
+            kind: kind.to_string(),
+        })
     }
 }
