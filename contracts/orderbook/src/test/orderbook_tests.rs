@@ -433,16 +433,13 @@ fn execute_add_session_key_with_zk_checks(
         .get_user_info(user)
         .unwrap_or_else(|_| test_user(user));
 
-    let private_payload =
-        borsh::to_vec(&AddSessionKeyPrivateInput { new_public_key: new_key.clone() })
-            .expect("serialize add session key input");
+    let private_payload = borsh::to_vec(&AddSessionKeyPrivateInput {
+        new_public_key: new_key.clone(),
+    })
+    .expect("serialize add session key input");
 
     let events_light = light
-        .execute_permissionned_action(
-            user_info_light.clone(),
-            action.clone(),
-            &private_payload,
-        )
+        .execute_permissionned_action(user_info_light.clone(), action.clone(), &private_payload)
         .expect("light execution add session key");
 
     let initial_commitment = full.commit();
@@ -480,8 +477,10 @@ fn execute_add_session_key_with_zk_checks(
 
     let calldata = Calldata {
         identity: identity.clone(),
-        blobs: vec![OrderbookAction::PermissionnedOrderbookAction(action.clone())
-            .as_blob(contract_name.clone())]
+        blobs: vec![
+            OrderbookAction::PermissionnedOrderbookAction(action.clone())
+                .as_blob(contract_name.clone()),
+        ]
         .into(),
         tx_blob_count: 1,
         index: BlobIndex(0),
@@ -688,15 +687,11 @@ fn test_add_session_key_state_commitment() {
     let signer = TestSigner::new(1);
     let base_user = test_user(user);
 
-    light
+    light.users_info.insert(user.to_string(), base_user.clone());
+    full.state
         .users_info
         .insert(user.to_string(), base_user.clone());
-    full
-        .state
-        .users_info
-        .insert(user.to_string(), base_user.clone());
-    full
-        .users_info_mt
+    full.users_info_mt
         .update_all(std::iter::once(base_user.clone()))
         .expect("prime users info tree");
 
