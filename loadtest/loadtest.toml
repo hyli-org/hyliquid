@@ -5,8 +5,8 @@ base_url = "http://localhost:3000"
 
 [instrument]
 # Trading pair configuration
-base_asset = "BTC"
-quote_asset = "USDT"
+base_asset = "bitcoin"
+quote_asset = "usdt"
 
 # Price and quantity scaling (integer-based to avoid floats)
 price_tick = 1000000 # Minimum price increment

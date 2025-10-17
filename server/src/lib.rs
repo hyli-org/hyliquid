@@ -5,3 +5,4 @@ pub mod database;
 pub mod init;
 pub mod prover;
 pub mod services;
+pub mod setup;

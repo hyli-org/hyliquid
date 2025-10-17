@@ -1,11 +1,9 @@
-use std::{collections::BTreeMap, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use client_sdk::{helpers::ClientSdkProver, rest_client::NodeApiClient};
 use hyli_modules::{
-    bus::{BusMessage, SharedMessageBus},
-    log_error, module_bus_client, module_handle_messages,
-    modules::Module,
+    bus::SharedMessageBus, log_error, module_bus_client, module_handle_messages, modules::Module,
 };
 use orderbook::{
     model::{OrderbookEvent, UserInfo},
@@ -14,6 +12,8 @@ use orderbook::{
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
+use serde::{Deserialize, Serialize};
+use sqlx::{PgPool, Row};
 use tracing::{debug, error, info};
 
 #[derive(Debug, Clone)]
@@ -22,23 +22,19 @@ pub struct PendingTx {
     pub calldata: Calldata,
 }
 
-#[derive(Debug, Clone)]
-pub enum OrderbookProverRequest {
-    TxToProve {
-        user_info: UserInfo,
-        events: Vec<OrderbookEvent>,
-        orderbook_action: PermissionnedOrderbookAction,
-        action_private_input: Vec<u8>,
-        tx_hash: TxHash,
-    },
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OrderbookProverRequest {
+    pub user_info: UserInfo,
+    pub events: Vec<OrderbookEvent>,
+    pub orderbook_action: PermissionnedOrderbookAction,
+    pub nonce: u32,
+    pub action_private_input: Vec<u8>,
+    pub tx_hash: TxHash,
 }
-
-impl BusMessage for OrderbookProverRequest {}
 
 module_bus_client! {
     #[derive(Debug)]
     struct OrderbookProverBusClient {
-        receiver(OrderbookProverRequest),
         receiver(NodeStateEvent),
     }
 }
@@ -51,12 +47,12 @@ pub struct OrderbookProverCtx {
     pub lane_id: LaneId,
     pub node_client: Arc<dyn NodeApiClient + Send + Sync>,
     pub initial_orderbook: FullState,
+    pub pool: PgPool,
 }
 
 pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
-    pending_txs: BTreeMap<TxHash, PendingTx>,
     orderbook: FullState,
 }
 
@@ -69,7 +65,6 @@ impl Module for OrderbookProverModule {
         Ok(OrderbookProverModule {
             ctx,
             bus,
-            pending_txs: BTreeMap::new(),
             orderbook,
         })
     }
@@ -85,10 +80,6 @@ impl OrderbookProverModule {
         module_handle_messages! {
             on_self self,
 
-            listen<OrderbookProverRequest> request => {
-                _ = log_error!(self.handle_prover_request(request).await, "handle prover request")
-            }
-
             listen<NodeStateEvent> event => {
                 _ = log_error!(self.handle_node_state_event(event).await, "handle node state event")
             }
@@ -96,110 +87,84 @@ impl OrderbookProverModule {
         Ok(())
     }
 
-    async fn handle_prover_request(&mut self, request: OrderbookProverRequest) -> Result<()> {
-        match request {
-            OrderbookProverRequest::TxToProve {
-                events,
-                user_info,
-                action_private_input,
-                orderbook_action,
-                tx_hash,
-            } => {
-                // The goal is to create commitment metadata that contains the proofs to be able to load the zkvm state into the zkvm
+    async fn handle_prover_request(
+        &mut self,
+        request: OrderbookProverRequest,
+    ) -> Result<PendingTx> {
+        let OrderbookProverRequest {
+            events,
+            user_info,
+            action_private_input,
+            orderbook_action,
+            tx_hash,
+            nonce,
+        } = request;
+        // The goal is to create commitment metadata that contains the proofs to be able to load the zkvm state into the zkvm
 
-                // We generate the commitment metadata from the zkvm state
-                // We then execute the action with the complete orderbook to compare the events and update the state
+        // We generate the commitment metadata from the zkvm state
+        // We then execute the action with the complete orderbook to compare the events and update the state
 
-                let commitment_metadata = self
-                    .orderbook
-                    .derive_zkvm_commitment_metadata_from_events(
-                        &user_info,
-                        &events,
-                        &orderbook_action,
-                    )
-                    .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
+        let commitment_metadata = self
+            .orderbook
+            .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &orderbook_action)
+            .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
 
-                let permissioned_private_input = PermissionnedPrivateInput {
-                    secret: vec![1, 2, 3],
-                    user_info: user_info.clone(),
-                    private_input: action_private_input.clone(),
-                };
+        let permissioned_private_input = PermissionnedPrivateInput {
+            secret: vec![1, 2, 3],
+            user_info: user_info.clone(),
+            private_input: action_private_input.clone(),
+        };
 
-                let execution_events = self
-                    .orderbook
-                    .execute_and_update_roots(
-                        &user_info,
-                        &orderbook_action,
-                        &permissioned_private_input.private_input,
-                    )
-                    .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
+        let execution_events = self
+            .orderbook
+            .execute_and_update_roots(
+                &user_info,
+                &orderbook_action,
+                &permissioned_private_input.private_input,
+            )
+            .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
 
-                // This should NEVER happen. If it happens, it means there is a difference in execution logic between api and prover.
-                // FIXME: we should compare elements and not lengths
-                if events.len() != execution_events.len() {
-                    bail!("The provided events do not match the executed events. This should NEVER happen. Provided: {events:#?}, Executed: {execution_events:#?}");
-                }
-
-                let private_input = borsh::to_vec(&permissioned_private_input)?;
-
-                let calldata = Calldata {
-                    identity: ORDERBOOK_ACCOUNT_IDENTITY.into(),
-                    tx_hash: tx_hash.clone(),
-                    blobs: vec![OrderbookAction::PermissionnedOrderbookAction(
-                        orderbook_action.clone(),
-                    )
-                    .as_blob(self.ctx.orderbook_cn.clone())]
-                    .into(),
-                    tx_blob_count: 1,
-                    index: BlobIndex(0),
-                    private_input,
-                    tx_ctx: Default::default(), // Will be set when proving
-                };
-
-                let pending_tx = PendingTx {
-                    commitment_metadata,
-                    calldata,
-                };
-
-                self.pending_txs.insert(tx_hash.clone(), pending_tx);
-
-                debug!(
-                    tx_hash = %tx_hash,
-                    events = ?events,
-                    "Transaction added to pending transactions queue"
-                );
-            }
+        // This should NEVER happen. If it happens, it means there is a difference in execution logic between api and prover.
+        // FIXME: we should compare elements and not lengths
+        if events.len() != execution_events.len() {
+            bail!("The provided events do not match the executed events. This should NEVER happen. Provided: {events:#?}, Executed: {execution_events:#?}");
         }
-        Ok(())
+
+        let private_input = borsh::to_vec(&permissioned_private_input)?;
+
+        let calldata = Calldata {
+            identity: ORDERBOOK_ACCOUNT_IDENTITY.into(),
+            tx_hash: tx_hash.clone(),
+            blobs: vec![OrderbookAction::PermissionnedOrderbookAction(
+                orderbook_action.clone(),
+                nonce,
+            )
+            .as_blob(self.ctx.orderbook_cn.clone())]
+            .into(),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            private_input,
+            tx_ctx: Default::default(), // Will be set when proving
+        };
+
+        let pending_tx = PendingTx {
+            commitment_metadata,
+            calldata,
+        };
+
+        debug!(
+            tx_hash = %tx_hash,
+            events = ?events,
+            "Transaction processed for proving"
+        );
+
+        Ok(pending_tx)
     }
 
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         match event {
             NodeStateEvent::NewBlock(block) => {
                 tracing::debug!("New block received: {:?}", block);
-
-                let first_tx_hash = match self.pending_txs.keys().next() {
-                    Some(tx_hash) => {
-                        if block
-                            .parsed_block
-                            .txs
-                            .iter()
-                            .any(|(id, _)| id.1 == *tx_hash)
-                        {
-                            tx_hash
-                        } else {
-                            // If the transaction is not in the block, we can't prove it.
-                            return Ok(());
-                        }
-                    }
-                    None => {
-                        // There's no transaction to prove.
-                        return Ok(());
-                    }
-                };
-
-                // Compute tx_ctx that will be used to prove transactions
-                let tx_ctx = block.parsed_block.build_tx_ctx(first_tx_hash)?;
 
                 let tx_hashes: Vec<TxHash> = block
                     .parsed_block
@@ -208,10 +173,35 @@ impl OrderbookProverModule {
                     .map(|(tx_id, _)| tx_id.1.clone())
                     .collect();
 
+                if tx_hashes.is_empty() {
+                    // No transactions to prove
+                    return Ok(());
+                }
+
+                // Get the first transaction hash for computing tx_ctx
+                let first_tx_hash = &tx_hashes[0];
+
+                // Compute tx_ctx that will be used to prove transactions
+                let tx_ctx = block.parsed_block.build_tx_ctx(first_tx_hash)?;
+
                 // Extract all transactions that need to be proved and that have been sequenced
                 let mut txs_to_prove = Vec::new();
                 for tx_hash in tx_hashes {
-                    if let Some(pending_tx) = self.pending_txs.remove(&tx_hash) {
+                    // Query the database for the prover request
+                    let row = sqlx::query("SELECT request FROM prover_requests WHERE tx_hash = $1")
+                        .bind(tx_hash.0.clone())
+                        .fetch_optional(&self.ctx.pool)
+                        .await?;
+
+                    if let Some(row) = row {
+                        let request_json: Vec<u8> = row.get("request");
+                        let prover_request: OrderbookProverRequest =
+                            serde_json::from_slice(&request_json).map_err(|e| {
+                                anyhow!("Failed to parse prover request JSON: {}", e)
+                            })?;
+
+                        // Process the request to get the pending transaction
+                        let pending_tx = self.handle_prover_request(prover_request).await?;
                         txs_to_prove.push((tx_hash, pending_tx));
                     }
                 }
@@ -258,6 +248,40 @@ impl OrderbookProverModule {
                         Ok(())
                     });
                 }
+
+                // Gather settled txs
+                let mut settled_txs: Vec<&String> = block
+                    .parsed_block
+                    .successful_txs
+                    .iter()
+                    .map(|tx_hash| &tx_hash.0)
+                    .collect();
+                settled_txs.extend(
+                    block
+                        .parsed_block
+                        .failed_txs
+                        .iter()
+                        .map(|tx_hash| &tx_hash.0),
+                );
+                settled_txs.extend(
+                    block
+                        .parsed_block
+                        .timed_out_txs
+                        .iter()
+                        .map(|tx_hash| &tx_hash.0),
+                );
+
+                if !settled_txs.is_empty() {
+                    // Delete settled txs from the database
+                    log_error!(
+                        sqlx::query("DELETE FROM prover_requests WHERE tx_hash = ANY($1)")
+                            .bind(settled_txs)
+                            .execute(&self.ctx.pool)
+                            .await,
+                        "Failed to delete settled txs from the database"
+                    )?;
+                }
+
                 Ok(())
             }
         }

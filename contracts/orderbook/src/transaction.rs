@@ -58,8 +58,8 @@ pub struct EscapePrivateInput {
 /// Enum representing possible calls to the contract functions.
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
 pub enum OrderbookAction {
-    PermissionnedOrderbookAction(PermissionnedOrderbookAction),
-    PermissionlessOrderbookAction(PermissionlessOrderbookAction),
+    PermissionnedOrderbookAction(PermissionnedOrderbookAction, u32),
+    PermissionlessOrderbookAction(PermissionlessOrderbookAction, u32),
 }
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]

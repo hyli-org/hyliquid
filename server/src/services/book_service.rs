@@ -71,6 +71,7 @@ impl BookService {
     pub async fn get_order_manager(
         &self,
         users_info: &HashMap<String, UserInfo>,
+        commit_id: i64,
     ) -> Result<OrderManager, AppError> {
         let rows = sqlx::query(
             "
@@ -79,20 +80,26 @@ impl BookService {
             o.type, 
             o.side, 
             o.price, 
-            o.qty_remaining, 
+            o.qty - o.qty_filled as qty_remaining, 
             u.identity,
             base_asset.symbol as base_asset_symbol,
             quote_asset.symbol as quote_asset_symbol
-        FROM orders o
+        FROM order_events o
         JOIN instruments i ON o.instrument_id = i.instrument_id
         JOIN assets base_asset ON i.base_asset_id = base_asset.asset_id
         JOIN assets quote_asset ON i.quote_asset_id = quote_asset.asset_id
         JOIN users u ON o.user_id = u.user_id
-        ORDER BY o.created_at ASC
+        where
+            o.commit_id = (select MAX(commit_id) from order_events where order_id = o.order_id and commit_id <= $1)
+            and o.status in ('open', 'partially_filled')
+        ORDER BY o.event_time asc;
         ",
         )
+        .bind(commit_id)
         .fetch_all(&self.pool)
         .await?;
+
+        tracing::info!("Orders: {:?}", rows);
 
         let orders: HashMap<String, (Order, String)> = rows
             .iter()
@@ -120,11 +127,17 @@ impl BookService {
             .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Bid)
             .fold(BTreeMap::new(), |mut acc, row| {
                 acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
-                    .or_default()
-                    .insert(
+                    .and_modify(|v| {
+                        v.entry(row.get::<i64, _>("price") as u64)
+                            .and_modify(|v| {
+                                v.push_front(row.get("order_id"));
+                            })
+                            .or_insert(VecDeque::from([row.get("order_id")]));
+                    })
+                    .or_insert(BTreeMap::from([(
                         row.get::<i64, _>("price") as u64,
                         VecDeque::from([row.get("order_id")]),
-                    );
+                    )]));
                 acc
             });
 
@@ -133,11 +146,17 @@ impl BookService {
             .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Ask)
             .fold(BTreeMap::new(), |mut acc, row| {
                 acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
-                    .or_default()
-                    .insert(
+                    .and_modify(|v| {
+                        v.entry(row.get::<i64, _>("price") as u64)
+                            .and_modify(|v| {
+                                v.push_front(row.get("order_id"));
+                            })
+                            .or_insert(VecDeque::from([row.get("order_id")]));
+                    })
+                    .or_insert(BTreeMap::from([(
                         row.get::<i64, _>("price") as u64,
                         VecDeque::from([row.get("order_id")]),
-                    );
+                    )]));
                 acc
             });
 

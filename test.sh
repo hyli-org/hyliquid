@@ -1,15 +1,15 @@
 #!/bin/bash
 
 function tx {
-    echo "Next command: $@"
-    read -p "Press enter to continue"
+	echo "Next command: $@"
+	read -p "Press enter to continue"
 
-    cargo run --bin tx_sender -F nonreproducible -- "$@"
+	cargo run --bin tx_sender -F nonreproducible -- "$@"
 }
 
 identity=hyli@wallet
 
-tx --identity $identity create-pair --contract-name1 BTC --contract-name2 USDT
+tx --identity $identity create-pair --contract-name1 bitcoin --contract-name2 usdt
 
 tx --identity tx_sender add-session-key
 tx --identity tx_sender deposit --symbol USDT --amount 10000000000

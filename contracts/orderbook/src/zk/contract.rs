@@ -52,7 +52,7 @@ impl sdk::ZkContract for ZkVmState {
             .unwrap_or_else(|e| panic!("Failed to verify orders owners: {e}"));
 
         let res = match action {
-            OrderbookAction::PermissionnedOrderbookAction(action) => {
+            OrderbookAction::PermissionnedOrderbookAction(action, _) => {
                 if tx_ctx.lane_id != self.lane_id {
                     return Err("Invalid lane id".to_string());
                 }
@@ -91,7 +91,7 @@ impl sdk::ZkContract for ZkVmState {
 
                 res
             }
-            OrderbookAction::PermissionlessOrderbookAction(action) => {
+            OrderbookAction::PermissionlessOrderbookAction(action, _) => {
                 // Execute the given action
                 let events = match action {
                     PermissionlessOrderbookAction::Escape { user_key } => {

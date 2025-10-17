@@ -121,7 +121,7 @@ fn run_action(
 
     let calldata = Calldata {
         identity: id.clone(),
-        blobs: vec![OrderbookAction::PermissionnedOrderbookAction(action).as_blob(cn.clone())]
+        blobs: vec![OrderbookAction::PermissionnedOrderbookAction(action, 0).as_blob(cn.clone())]
             .into(),
         tx_blob_count: 1,
         index: BlobIndex(0),
@@ -386,7 +386,7 @@ fn execute_deposit_with_zk_checks(
     let calldata = Calldata {
         identity: identity.clone(),
         blobs: vec![
-            OrderbookAction::PermissionnedOrderbookAction(action.clone())
+            OrderbookAction::PermissionnedOrderbookAction(action.clone(), 0)
                 .as_blob(contract_name.clone()),
         ]
         .into(),
@@ -478,7 +478,7 @@ fn execute_add_session_key_with_zk_checks(
     let calldata = Calldata {
         identity: identity.clone(),
         blobs: vec![
-            OrderbookAction::PermissionnedOrderbookAction(action.clone())
+            OrderbookAction::PermissionnedOrderbookAction(action.clone(), 0)
                 .as_blob(contract_name.clone()),
         ]
         .into(),

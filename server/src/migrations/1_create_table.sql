@@ -198,3 +198,17 @@ CREATE TABLE balance_events (
   ref_trade_signed_id text DEFAULT NULL,
   event_time  timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE prover_requests (
+  commit_id bigint NOT NULL REFERENCES commits (commit_id),
+  tx_hash text NOT NULL,
+  request bytea NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE user_events_nonces (
+  commit_id bigint NOT NULL REFERENCES commits (commit_id),
+  user_id bigint NOT NULL REFERENCES users (user_id),
+  nonce bigint NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
