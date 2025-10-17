@@ -2,9 +2,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use borsh::BorshDeserialize;
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
-use sdk::{guest, BlockHeight, LaneId};
+use sdk::{guest, BlockHeight, LaneId, StateCommitment, ZkContract};
 use sdk::{tracing, ContractAction};
 use sdk::{BlobIndex, Calldata, ContractName, Identity, TxContext, TxHash};
 use sha3::{Digest, Sha3_256};
@@ -16,7 +17,10 @@ use crate::transaction::{
     AddSessionKeyPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, PermissionnedPrivateInput,
 };
-use crate::zk::{FullState, ZkVmState};
+use crate::{
+    order_manager::OrderManager,
+    zk::{FullState, ZkVmState, H256},
+};
 use crate::ORDERBOOK_ACCOUNT_IDENTITY;
 
 struct TestSigner {
@@ -63,13 +67,25 @@ fn get_ctx() -> (ContractName, Identity, TxContext, LaneId, Vec<u8>) {
     (cn, id, tx_ctx, lane_id, secret)
 }
 
+#[allow(dead_code)]
+#[derive(BorshDeserialize)]
+struct OwnedCommitment {
+    users_info_root: H256,
+    balances_roots: HashMap<String, H256>,
+    assets: HashMap<String, AssetInfo>,
+    orders: OrderManager,
+    hashed_secret: [u8; 32],
+    lane_id: LaneId,
+    last_block_number: BlockHeight,
+}
+
 fn run_action(
     light: &mut ExecuteState,
     full: &mut FullState,
     user: &str,
     action: PermissionnedOrderbookAction,
     private_payload: Vec<u8>,
-) {
+) -> Vec<OrderbookEvent> {
     let action_repr = format!("{:?}", action);
     let (cn, id, tx_ctx, _, secret) = get_ctx();
 
@@ -137,11 +153,14 @@ fn run_action(
         );
     }
 
+    let full_commit = full.commit();
     assert_eq!(
         hyli_output.next_state,
-        full.commit(),
+        full_commit,
         "Full next state mismatch for action {action_repr}"
     );
+
+    events_full
 }
 
 #[derive(Default, Clone, Copy)]
@@ -259,7 +278,7 @@ fn submit_signed_order<'a>(
     };
     let private_payload = borsh::to_vec(&private_input).expect("serialize create order input");
 
-    run_action(
+    let _ = run_action(
         light,
         full,
         user,
@@ -281,7 +300,7 @@ fn add_session_key<'a>(
     })
     .expect("serialize add session key input");
 
-    run_action(
+    let _ = run_action(
         light,
         full,
         user,
@@ -290,7 +309,13 @@ fn add_session_key<'a>(
     );
 }
 
-fn deposit(light: &mut ExecuteState, full: &mut FullState, user: &str, symbol: &str, amount: u64) {
+fn deposit(
+    light: &mut ExecuteState,
+    full: &mut FullState,
+    user: &str,
+    symbol: &str,
+    amount: u64,
+) -> Vec<OrderbookEvent> {
     run_action(
         light,
         full,
@@ -300,6 +325,243 @@ fn deposit(light: &mut ExecuteState, full: &mut FullState, user: &str, symbol: &
             amount,
         },
         Vec::new(),
+    )
+}
+
+fn execute_deposit_with_zk_checks(
+    light: &mut ExecuteState,
+    full: &mut FullState,
+    ctx: &(ContractName, Identity, TxContext, LaneId, Vec<u8>),
+    user: &str,
+    symbol: &str,
+    amount: u64,
+) -> StateCommitment {
+    let (contract_name, identity, tx_ctx, _lane_id, secret) = ctx;
+
+    let action = PermissionnedOrderbookAction::Deposit {
+        symbol: symbol.to_string(),
+        amount,
+    };
+
+    let user_info_light = light
+        .get_user_info(user)
+        .unwrap_or_else(|_| test_user(user));
+
+    let events_light = light
+        .execute_permissionned_action(user_info_light.clone(), action.clone(), &[])
+        .expect("light execution deposit");
+
+    let initial_commitment = full.commit();
+
+    let user_info_full = full
+        .state
+        .get_user_info(user)
+        .expect("user info before deposit");
+
+    let metadata = full
+        .derive_zkvm_commitment_metadata_from_events(&user_info_full, &events_light, &action)
+        .expect("derive zk metadata for deposit");
+
+    let zk_state: ZkVmState =
+        borsh::from_slice(&metadata).expect("decode zk state for deposit metadata");
+    let zk_initial_commitment = ZkContract::commit(&zk_state);
+    assert_eq!(
+        zk_initial_commitment, initial_commitment,
+        "Initial commitment mismatch between FullState and ZkVmState metadata"
+    );
+
+    let events_full = full
+        .execute_and_update_roots(&user_info_full, &action, &[])
+        .expect("full execution deposit");
+    assert_eq!(
+        events_light, events_full,
+        "Light and full execution events mismatch for deposit"
+    );
+
+    let private_input = PermissionnedPrivateInput {
+        secret: secret.clone(),
+        user_info: user_info_full.clone(),
+        private_input: Vec::new(),
+    };
+
+    let calldata = Calldata {
+        identity: identity.clone(),
+        blobs: vec![
+            OrderbookAction::PermissionnedOrderbookAction(action.clone())
+                .as_blob(contract_name.clone()),
+        ]
+        .into(),
+        tx_blob_count: 1,
+        index: BlobIndex(0),
+        tx_hash: TxHash::from("test-tx-hash"),
+        tx_ctx: Some(tx_ctx.clone()),
+        private_input: borsh::to_vec(&private_input)
+            .expect("serialize permissionned private input for deposit"),
+    };
+
+    let outputs = guest::execute::<ZkVmState>(&metadata, &[calldata]);
+    assert_eq!(outputs.len(), 1, "expected single zkvm output");
+    let hyli_output = &outputs[0];
+    if !hyli_output.success {
+        panic!("deposit execution failed: {:?}", hyli_output);
+    }
+
+    let final_commitment = full.commit();
+    assert_eq!(
+        hyli_output.next_state, final_commitment,
+        "Next state mismatch between ZkVm output and FullState after deposit"
+    );
+
+    final_commitment
+}
+
+fn decode_commitment(commitment: &StateCommitment) -> OwnedCommitment {
+    borsh::from_slice(&commitment.0).expect("decode state commitment")
+}
+
+#[test_log::test]
+fn test_deposit_state_commitment() {
+    let ctx = get_ctx();
+    let lane_id = ctx.3.clone();
+    let secret = ctx.4.clone();
+    let mut light = ExecuteState::default();
+    let mut full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
+
+    let users = ["alice"];
+    let signers = vec![TestSigner::new(1)];
+    add_session_key(&mut light, &mut full, &users, &signers, users[0]);
+
+    let base_symbol = "HYLLAR".to_string();
+    let quote_symbol = "ORANJ".to_string();
+    let pair = (base_symbol.clone(), quote_symbol.clone());
+    let pair_info = PairInfo {
+        base: AssetInfo::new(0, ContractName(base_symbol.clone())),
+        quote: AssetInfo::new(0, ContractName(quote_symbol.clone())),
+    };
+
+    let _ = run_action(
+        &mut light,
+        &mut full,
+        users[0],
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: pair_info,
+        },
+        Vec::new(),
+    );
+
+    let deposit_amount = 1_000_u64;
+    let commitment =
+        execute_deposit_with_zk_checks(&mut light, &mut full, &ctx, users[0], &base_symbol, deposit_amount);
+    let parsed = decode_commitment(&commitment);
+
+    let base_root = parsed
+        .balances_roots
+        .get(&base_symbol)
+        .unwrap_or_else(|| panic!("missing {base_symbol} root after deposit"));
+    assert!(
+        base_root.as_ref().iter().any(|byte| *byte != 0),
+        "base symbol root should be non-zero after deposit"
+    );
+    assert!(
+        !parsed.balances_roots.contains_key(&quote_symbol),
+        "zero balances symbol should not appear in commitment"
+    );
+}
+
+#[test_log::test]
+fn test_multiple_deposits_state_commitment() {
+    let ctx = get_ctx();
+    let lane_id = ctx.3.clone();
+    let secret = ctx.4.clone();
+    let mut light = ExecuteState::default();
+    let mut full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
+
+    let users = ["alice"];
+    let signers = vec![TestSigner::new(1)];
+    add_session_key(&mut light, &mut full, &users, &signers, users[0]);
+
+    let base_symbol = "HYLLAR".to_string();
+    let quote_symbol = "ORANJ".to_string();
+    let pair = (base_symbol.clone(), quote_symbol.clone());
+    let pair_info = PairInfo {
+        base: AssetInfo::new(0, ContractName(base_symbol.clone())),
+        quote: AssetInfo::new(0, ContractName(quote_symbol.clone())),
+    };
+
+    let _ = run_action(
+        &mut light,
+        &mut full,
+        users[0],
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: pair_info,
+        },
+        Vec::new(),
+    );
+
+    let first_amount = 1_000_u64;
+    let first_commitment = execute_deposit_with_zk_checks(
+        &mut light,
+        &mut full,
+        &ctx,
+        users[0],
+        &base_symbol,
+        first_amount,
+    );
+    let first_parsed = decode_commitment(&first_commitment);
+
+    let first_root = *first_parsed
+        .balances_roots
+        .get(&base_symbol)
+        .unwrap_or_else(|| panic!("missing {base_symbol} root after first deposit"));
+    assert!(
+        first_root.as_ref().iter().any(|byte| *byte != 0),
+        "base symbol root should be non-zero after first deposit"
+    );
+    assert!(
+        !first_parsed.balances_roots.contains_key(&quote_symbol),
+        "quote symbol should not appear after first deposit"
+    );
+
+    let second_amount = 2_500_u64;
+    let second_commitment = execute_deposit_with_zk_checks(
+        &mut light,
+        &mut full,
+        &ctx,
+        users[0],
+        &base_symbol,
+        second_amount,
+    );
+    let second_parsed = decode_commitment(&second_commitment);
+
+    let second_root = *second_parsed
+        .balances_roots
+        .get(&base_symbol)
+        .unwrap_or_else(|| panic!("missing {base_symbol} root after second deposit"));
+    assert!(
+        second_root.as_ref().iter().any(|byte| *byte != 0),
+        "base symbol root should remain non-zero after chained deposits"
+    );
+    assert_ne!(
+        first_root, second_root,
+        "root should change after cumulative deposit"
+    );
+    assert!(
+        !second_parsed.balances_roots.contains_key(&quote_symbol),
+        "quote symbol should not appear after chained deposits"
     );
 }
 
@@ -367,7 +629,7 @@ fn test_complex_multi_user_orderbook() {
         add_session_key(&mut light, &mut full, &users, &signers, user);
     }
 
-    run_action(
+    let _ = run_action(
         &mut light,
         &mut full,
         alice,
@@ -380,8 +642,8 @@ fn test_complex_multi_user_orderbook() {
 
     let funded_amount = 10_000_u64;
     for &user in &users {
-        deposit(&mut light, &mut full, user, &base_symbol, funded_amount);
-        deposit(&mut light, &mut full, user, &quote_symbol, funded_amount);
+        let _ = deposit(&mut light, &mut full, user, &base_symbol, funded_amount);
+        let _ = deposit(&mut light, &mut full, user, &quote_symbol, funded_amount);
         apply_balance_deltas(
             &mut expected_balances,
             &[
@@ -803,7 +1065,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
 
     add_session_key(&mut light, &mut full, &users, &signers, user);
 
-    run_action(
+    let _ = run_action(
         &mut light,
         &mut full,
         user,
@@ -814,8 +1076,8 @@ fn test_escape_cancels_orders_and_resets_balances() {
         Vec::new(),
     );
 
-    deposit(&mut light, &mut full, user, &pair.0, 150);
-    deposit(&mut light, &mut full, user, &pair.1, 200);
+    let _ = deposit(&mut light, &mut full, user, &pair.0, 150);
+    let _ = deposit(&mut light, &mut full, user, &pair.1, 200);
 
     let order_specs = [
         ("escape-ask-1", 10, Some(10)),

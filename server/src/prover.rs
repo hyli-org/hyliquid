@@ -127,10 +127,9 @@ impl OrderbookProverModule {
 
                 let execution_events = self
                     .orderbook
-                    .state
-                    .execute_permissionned_action(
-                        user_info.clone(),
-                        orderbook_action.clone(),
+                    .execute_and_update_roots(
+                        &user_info,
+                        &orderbook_action,
                         &permissioned_private_input.private_input,
                     )
                     .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;

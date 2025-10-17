@@ -129,9 +129,6 @@ impl sdk::ZkContract for ZkVmState {
     }
 
     fn commit(&self) -> StateCommitment {
-        let mut order_manager = self.order_manager.clone();
-        order_manager.orders_owner.clear();
-
         StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: self
