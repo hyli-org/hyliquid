@@ -1,0 +1,8 @@
+[package]
+name = "state-example"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+state-core = { path = "../../macros/state-core" }
+state-macros = { path = "../../macros/state-macros" }
