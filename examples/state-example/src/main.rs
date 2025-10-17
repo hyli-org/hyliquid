@@ -1,8 +1,9 @@
 mod generated;
 
-use generated::vapp::{self, WitnessBridge};
+use generated::vapp;
 use generated::AssetInfo;
-use state_core::{ZkWitnessSet, SMT};
+use state_core::SMT;
+use std::collections::HashMap;
 
 fn main() {
     let mut execute = vapp::ExecuteState::default();
@@ -10,26 +11,11 @@ fn main() {
         .assets
         .insert("ETH".into(), AssetInfo { decimals: 18 });
 
-    let user_infos_map = execute.user_infos.clone();
-    let balance_map = execute.balances.clone();
-
     let mut full = vapp::FullState {
         execute_state: execute.clone(),
-        user_infos: SMT::from_map(user_infos_map.clone()),
-        balances: balance_map
-            .iter()
-            .map(|(sym, inner)| (sym.clone(), SMT::from_map(inner.clone())))
-            .collect(),
+        user_infos: SMT::zero(),
+        balances: HashMap::new(),
         assets: execute.assets.clone(),
-    };
-
-    let mut zk_state = vapp::ZkVmState {
-        user_infos: ZkWitnessSet::from_map(user_infos_map),
-        balances: balance_map
-            .into_iter()
-            .map(|(sym, inner)| (sym, ZkWitnessSet::from_map(inner)))
-            .collect(),
-        assets: full.assets.clone(),
     };
 
     let events = execute.compute_events(&vapp::Action::RegisterUser {
@@ -48,10 +34,7 @@ fn main() {
         amount: 100,
     });
 
-    let drained = zk_state.drain_to_execute_state();
-    println!("drained execute: {:?}", drained);
-    zk_state.populate_from_execute_state(drained);
-
+    let zk_state = vapp::ZkVmState::default();
     println!("full: {:?}", full);
     println!("zk: {:?}", zk_state);
 }

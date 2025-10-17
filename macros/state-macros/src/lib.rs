@@ -45,13 +45,9 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut execute_fields: Vec<TokenStream2> = Vec::new();
     let mut full_fields: Vec<TokenStream2> = Vec::new();
     let mut zk_fields: Vec<TokenStream2> = Vec::new();
-    let mut drain_fields: Vec<TokenStream2> = Vec::new();
-    let mut load_statements: Vec<TokenStream2> = Vec::new();
-    let mut field_names: Vec<Ident> = Vec::new();
 
     for field in fields_vec.iter() {
         let field_ident = field.ident.clone().unwrap();
-        field_names.push(field_ident.clone());
         let ty = field.ty.clone();
         execute_fields.push(quote! { pub #field_ident: #ty });
 
@@ -66,8 +62,6 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     let witness_ty = build_witness_type(&ty);
                     full_fields.push(quote! { pub #field_ident: #commit_ty });
                     zk_fields.push(quote! { pub #field_ident: #witness_ty });
-                    drain_fields.push(build_witness_drain(&field_ident, &ty));
-                    load_statements.push(build_witness_load(&field_ident, &ty));
                     field_kind = FieldKind::Commit;
                     break;
                 }
@@ -78,9 +72,6 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                 if args.kind == "borsh" {
                     full_fields.push(quote! { pub #field_ident: #ty });
                     zk_fields.push(quote! { pub #field_ident: #ty });
-                    drain_fields
-                        .push(quote! { #field_ident: ::std::mem::take(&mut self.#field_ident) });
-                    load_statements.push(quote! { self.#field_ident = #field_ident; });
                     field_kind = FieldKind::Ident;
                     break;
                 }
@@ -90,12 +81,8 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
         if matches!(field_kind, FieldKind::Plain) {
             full_fields.push(quote! { pub #field_ident: #ty });
             zk_fields.push(quote! { pub #field_ident: #ty });
-            drain_fields.push(quote! { #field_ident: ::std::mem::take(&mut self.#field_ident) });
-            load_statements.push(quote! { self.#field_ident = #field_ident; });
         }
     }
-
-    let pattern = quote! { ExecuteState { #( #field_names, )* } };
 
     let output = quote! {
         #[allow(non_snake_case)]
@@ -158,24 +145,6 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     events
                 }
             }
-
-            pub trait WitnessBridge {
-                fn drain_to_execute_state(&mut self) -> ExecuteState;
-                fn populate_from_execute_state(&mut self, state: ExecuteState);
-            }
-
-            impl WitnessBridge for ZkVmState {
-                fn drain_to_execute_state(&mut self) -> ExecuteState {
-                    ExecuteState {
-                        #( #drain_fields, )*
-                    }
-                }
-
-                fn populate_from_execute_state(&mut self, state: ExecuteState) {
-                    let #pattern = state;
-                    #( #load_statements )*
-                }
-            }
         }
     };
 
@@ -203,49 +172,6 @@ fn build_witness_type(value_ty: &Type) -> TokenStream2 {
         }
     } else {
         quote! { ::state_core::ZkWitnessSet<#value_ty> }
-    }
-}
-
-fn build_witness_drain(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
-    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
-        if parse_hash_map(&inner_ty).is_some() {
-            quote! {
-                #field_ident: {
-                    let map = ::std::mem::take(&mut self.#field_ident);
-                    map.into_iter()
-                        .map(|(key, mut witness)| {
-                            let inner = witness.take_inner();
-                            (key, inner)
-                        })
-                        .collect()
-                }
-            }
-        } else {
-            quote! { #field_ident: self.#field_ident.take_inner() }
-        }
-    } else {
-        quote! { #field_ident: self.#field_ident.take_inner() }
-    }
-}
-
-fn build_witness_load(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
-    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
-        if parse_hash_map(&inner_ty).is_some() {
-            quote! {
-                self.#field_ident = #field_ident
-                    .into_iter()
-                    .map(|(key, inner)| (key, ::state_core::ZkWitnessSet::from_map(inner)))
-                    .collect();
-            }
-        } else {
-            quote! {
-                self.#field_ident = ::state_core::ZkWitnessSet::from_map(#field_ident);
-            }
-        }
-    } else {
-        quote! {
-            self.#field_ident = ::state_core::ZkWitnessSet::from_map(#field_ident);
-        }
     }
 }
 

@@ -1,7 +1,21 @@
-use state_core::GetHashMapIndex;
+use borsh::{BorshDeserialize, BorshSerialize};
+use sha2::{Digest, Sha256};
+use sparse_merkle_tree::{traits::Value, H256};
+use state_core::{BorshableH256, GetHashMapIndex, GetKey};
 use state_macros::vapp_state;
 
-#[derive(Debug, Clone, Default)]
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    Hash,
+    BorshSerialize,
+    BorshDeserialize,
+)]
 pub struct UserInfo {
     pub username: String,
     pub name: String,
@@ -14,8 +28,104 @@ impl GetHashMapIndex<String> for UserInfo {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Balance(pub i64);
+impl GetKey for UserInfo {
+    fn get_key(&self) -> BorshableH256 {
+        let mut hasher = Sha256::new();
+        hasher.update(self.username.as_bytes());
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        BorshableH256::from(bytes)
+    }
+}
+
+impl Value for UserInfo {
+    fn to_h256(&self) -> H256 {
+        if self.nonce == 0 {
+            return H256::zero();
+        }
+        let serialized = borsh::to_vec(self).expect("failed to serialize user info");
+        let mut hasher = Sha256::new();
+        hasher.update(&serialized);
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        H256::from(bytes)
+    }
+
+    fn zero() -> Self {
+        UserInfo {
+            username: String::new(),
+            name: String::new(),
+            nonce: 0,
+        }
+    }
+}
+
+#[derive(
+    Debug,
+    Clone,
+    Default,
+    Eq,
+    PartialEq,
+    PartialOrd,
+    Ord,
+    Hash,
+    BorshSerialize,
+    BorshDeserialize,
+)]
+pub struct Balance {
+    pub username: String,
+    pub amount: i64,
+}
+
+impl Balance {
+    pub fn new(username: String) -> Self {
+        Balance {
+            username,
+            amount: 0,
+        }
+    }
+}
+
+impl GetHashMapIndex<String> for Balance {
+    fn hash_map_index(&self) -> &String {
+        &self.username
+    }
+}
+
+impl GetKey for Balance {
+    fn get_key(&self) -> BorshableH256 {
+        let mut hasher = Sha256::new();
+        hasher.update(self.username.as_bytes());
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        BorshableH256::from(bytes)
+    }
+}
+
+impl Value for Balance {
+    fn to_h256(&self) -> H256 {
+        if self.amount == 0 {
+            return H256::zero();
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(self.username.as_bytes());
+        hasher.update(self.amount.to_le_bytes());
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        H256::from(bytes)
+    }
+
+    fn zero() -> Self {
+        Balance {
+            username: String::new(),
+            amount: 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default)]
 pub struct AssetInfo {
@@ -114,8 +224,8 @@ impl vapp::Logic for vapp::ExecuteState {
                         .entry(symbol.clone())
                         .or_default()
                         .entry(username.clone())
-                        .or_insert_with(|| Balance(0));
-                    balance.0 += amount;
+                        .or_insert_with(|| Balance::new(username.clone()));
+                    balance.amount += amount;
                 }
             }
         }
