@@ -237,9 +237,10 @@ mod tests {
     use super::*;
     use crate::model::{AssetInfo, Balance, Order, OrderSide, OrderType, UserInfo};
     use crate::order_manager::OrderManager;
-    use crate::zk::{ZkWitnessSet, H256};
+    use crate::zk::{ZkWitnessSet, H256, SMT};
     use borsh::{BorshDeserialize, BorshSerialize};
-    use sdk::{BlockHeight, ContractName, LaneId};
+    use sdk::merkle_utils::BorshableMerkleProof;
+    use sdk::{BlockHeight, ContractName, LaneId, ZkContract};
     use std::collections::{HashMap, HashSet};
     use std::mem::discriminant;
 
@@ -504,6 +505,142 @@ mod tests {
                 && execution_state.order_manager.sell_orders.is_empty()
                 && execution_state.order_manager.orders_owner.is_empty(),
             "execution order manager should be empty after take back"
+        );
+    }
+
+    #[test]
+    fn commit_skips_zero_root_balance_witnesses() {
+        let users_witness = ZkWitnessSet {
+            values: HashSet::new(),
+            proof: Proof::CurrentRootHash(H256::default()),
+        };
+
+        let zero_balance_witness = ZkWitnessSet {
+            values: HashSet::new(),
+            proof: Proof::CurrentRootHash(H256::default()),
+        };
+
+        let mut non_zero_bytes = [0u8; 32];
+        non_zero_bytes[31] = 1;
+        let non_zero_root = H256::from(non_zero_bytes);
+        let non_zero_witness = ZkWitnessSet {
+            values: HashSet::new(),
+            proof: Proof::CurrentRootHash(non_zero_root),
+        };
+
+        let mut balances = HashMap::new();
+        balances.insert("ZERO".to_string(), zero_balance_witness);
+        balances.insert("NONZERO".to_string(), non_zero_witness);
+
+        let lane_id = LaneId::default();
+        let last_block_number = BlockHeight::default();
+        let hashed_secret = [7u8; 32];
+        let order_manager = OrderManager::default();
+        let assets: HashMap<String, AssetInfo> = HashMap::new();
+
+        let zk_state = ZkVmState {
+            users_info: users_witness.clone(),
+            balances,
+            lane_id: lane_id.clone(),
+            hashed_secret,
+            last_block_number: last_block_number.clone(),
+            order_manager: order_manager.clone(),
+            assets: assets.clone(),
+        };
+
+        let commit = zk_state.commit();
+
+        let mut expected_balances = HashMap::new();
+        expected_balances.insert("NONZERO".to_string(), non_zero_root);
+
+        let expected_commitment = StateCommitment(
+            borsh::to_vec(&ParsedStateCommitment {
+                users_info_root: users_witness
+                    .clone()
+                    .compute_root()
+                    .expect("users root"),
+                balances_roots: expected_balances,
+                assets: &assets,
+                orders: order_manager.view(),
+                hashed_secret,
+                lane_id: &lane_id,
+                last_block_number: &last_block_number,
+            })
+            .expect("encode expected commitment"),
+        );
+
+        assert_eq!(
+            commit.0, expected_commitment.0,
+            "commit should drop zero-root balance witnesses"
+        );
+    }
+
+    #[test]
+    fn commit_uses_proof_derived_balance_roots() {
+        let alice = sample_user("alice", 0xAB, 3, None);
+        let user_balance = UserBalance {
+            user_key: alice.get_key(),
+            balance: Balance(50),
+        };
+
+        let mut balance_tree = SMT::zero();
+        balance_tree
+            .update_all(std::iter::once(user_balance.clone()))
+            .expect("update balance tree");
+        let balance_root = balance_tree.root();
+        let balance_proof = balance_tree
+            .merkle_proof([user_balance.clone()].iter())
+            .expect("balance proof");
+
+        let balance_witness = ZkWitnessSet {
+            values: HashSet::from([user_balance.clone()]),
+            proof: Proof::Some(BorshableMerkleProof(balance_proof)),
+        };
+
+        let users_witness = ZkWitnessSet {
+            values: HashSet::from([alice]),
+            proof: Proof::CurrentRootHash(H256::default()),
+        };
+
+        let mut balances = HashMap::new();
+        balances.insert("TOKEN".to_string(), balance_witness.clone());
+
+        let lane_id = LaneId::default();
+        let last_block_number = BlockHeight::default();
+        let hashed_secret = [11u8; 32];
+        let order_manager = OrderManager::default();
+        let assets: HashMap<String, AssetInfo> = HashMap::new();
+
+        let zk_state = ZkVmState {
+            users_info: users_witness.clone(),
+            balances,
+            lane_id: lane_id.clone(),
+            hashed_secret,
+            last_block_number: last_block_number.clone(),
+            order_manager: order_manager.clone(),
+            assets: assets.clone(),
+        };
+
+        let commit = zk_state.commit();
+
+        let expected_commitment = StateCommitment(
+            borsh::to_vec(&ParsedStateCommitment {
+                users_info_root: users_witness
+                    .compute_root()
+                    .expect("users root"),
+                balances_roots: HashMap::from([("TOKEN".to_string(), balance_root)]),
+                assets: &assets,
+                orders: order_manager.view(),
+                hashed_secret,
+                lane_id: &lane_id,
+                last_block_number: &last_block_number,
+            })
+            .expect("encode expected commitment"),
+        );
+
+        assert_eq!(
+            commit.0, expected_commitment.0,
+            "commit should honor roots derived from balance proofs"
         );
     }
 }

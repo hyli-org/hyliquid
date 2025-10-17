@@ -112,16 +112,13 @@ impl FullState {
         users_info: &[UserInfo],
         symbol: &Symbol,
     ) -> Result<(HashMap<UserInfo, Balance>, Proof), String> {
-        let tree_opt = self.balances_mt.get(symbol);
+        let zero_tree = SMT::<UserBalance>::zero();
+        let tree = self.balances_mt.get(symbol).unwrap_or(&zero_tree);
 
         if users_info.is_empty() {
-            let root = tree_opt
-                .map(|tree| tree.root())
-                .unwrap_or_else(|| SMT::<UserBalance>::zero().root());
-            return Ok((HashMap::new(), Proof::CurrentRootHash(root)));
+            let root = &tree.root();
+            return Ok((HashMap::new(), Proof::CurrentRootHash(*root)));
         }
-
-        let tree = tree_opt.ok_or_else(|| format!("No balances tree found for {symbol}"))?;
 
         let mut balances_map = HashMap::new();
         for user_info in users_info {

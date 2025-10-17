@@ -5,6 +5,7 @@ use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::{BlockHeight, LaneId, StateCommitment};
 use sha2::Sha256;
 use sha3::Digest;
+use sparse_merkle_tree::traits::Value;
 
 use crate::model::{AssetInfo, ExecuteState, Symbol, UserInfo};
 use crate::order_manager::{OrderManager, OrderManagerView};
@@ -140,7 +141,14 @@ impl FullState {
     pub fn balance_roots(&self) -> HashMap<Symbol, H256> {
         self.balances_mt
             .iter()
-            .map(|(symb, user_balances)| (symb.clone(), user_balances.root()))
+            .filter_map(|(symb, user_balances)| {
+                let root = user_balances.root();
+                if root == H256::zero() {
+                    None
+                } else {
+                    Some((symb.clone(), root))
+                }
+            })
             .collect()
     }
 
