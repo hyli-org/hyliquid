@@ -540,7 +540,7 @@ mod tests {
             balances,
             lane_id: lane_id.clone(),
             hashed_secret,
-            last_block_number: last_block_number.clone(),
+            last_block_number,
             order_manager: order_manager.clone(),
             assets: assets.clone(),
         };
@@ -610,7 +610,7 @@ mod tests {
             balances,
             lane_id: lane_id.clone(),
             hashed_secret,
-            last_block_number: last_block_number.clone(),
+            last_block_number,
             order_manager: order_manager.clone(),
             assets: assets.clone(),
         };
