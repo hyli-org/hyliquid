@@ -10,16 +10,26 @@ fn main() {
         .assets
         .insert("ETH".into(), AssetInfo { decimals: 18 });
 
+    let user_infos_map = execute.user_infos.clone();
+    let balance_map = execute.balances.clone();
+
     let mut full = vapp::FullState {
         execute_state: execute.clone(),
-        user_infos_smt: SMT::default(),
-        balances_smt: SMT::default(),
+        user_infos: SMT::from_map(user_infos_map.clone()),
+        balances: balance_map
+            .iter()
+            .map(|(sym, inner)| (sym.clone(), SMT::from_map(inner.clone())))
+            .collect(),
+        assets: execute.assets.clone(),
     };
 
     let mut zk_state = vapp::ZkVmState {
-        user_infos: ZkWitnessSet::default(),
-        balances: ZkWitnessSet::default(),
-        assets: execute.assets.clone(),
+        user_infos: ZkWitnessSet::from_map(user_infos_map),
+        balances: balance_map
+            .into_iter()
+            .map(|(sym, inner)| (sym, ZkWitnessSet::from_map(inner)))
+            .collect(),
+        assets: full.assets.clone(),
     };
 
     let events = execute.compute_events(&vapp::Action::RegisterUser {

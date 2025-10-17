@@ -1,73 +1,53 @@
-#[derive(Debug, Clone)]
-pub struct SMT<T> {
-    inner: T,
-}
+use std::collections::HashMap;
+use std::mem;
 
-impl<T: Default> Default for SMT<T> {
-    fn default() -> Self {
-        Self {
-            inner: T::default(),
-        }
-    }
+#[derive(Debug, Clone, Default)]
+pub struct SMT<T> {
+    inner: HashMap<String, T>,
 }
 
 impl<T> SMT<T> {
-    pub fn new(inner: T) -> Self {
-        Self { inner }
+    pub fn from_map(map: HashMap<String, T>) -> Self {
+        Self { inner: map }
     }
 
-    pub fn into_inner(self) -> T {
+    pub fn into_map(self) -> HashMap<String, T> {
         self.inner
     }
 
-    pub fn inner(&self) -> &T {
+    pub fn take_inner(&mut self) -> HashMap<String, T> {
+        mem::take(&mut self.inner)
+    }
+
+    pub fn inner(&self) -> &HashMap<String, T> {
         &self.inner
     }
 
-    pub fn inner_mut(&mut self) -> &mut T {
+    pub fn inner_mut(&mut self) -> &mut HashMap<String, T> {
         &mut self.inner
     }
-
-    pub fn set_inner(&mut self, inner: T) {
-        self.inner = inner;
-    }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ZkWitnessSet<T> {
-    inner: T,
-}
-
-impl<T: Default> Default for ZkWitnessSet<T> {
-    fn default() -> Self {
-        Self {
-            inner: T::default(),
-        }
-    }
+    inner: HashMap<String, T>,
 }
 
 impl<T> ZkWitnessSet<T> {
-    pub fn new(inner: T) -> Self {
-        Self { inner }
+    pub fn from_map(map: HashMap<String, T>) -> Self {
+        Self { inner: map }
     }
 
-    pub fn from(inner: T) -> Self {
-        Self::new(inner)
+    pub fn take_inner(&mut self) -> HashMap<String, T> {
+        mem::take(&mut self.inner)
     }
 
-    pub fn into_inner(self) -> T {
-        self.inner
+    pub fn inner(&self) -> &HashMap<String, T> {
+        &self.inner
     }
 
-    pub fn take_inner(&mut self) -> T
-    where
-        T: Default,
-    {
-        std::mem::take(&mut self.inner)
-    }
-
-    pub fn set_inner(&mut self, inner: T) {
-        self.inner = inner;
+    pub fn set_inner(&mut self, map: HashMap<String, T>) {
+        self.inner = map;
     }
 }
 

@@ -1,15 +1,18 @@
-#[derive(Clone)]
+use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::quote;
+use syn::parse::{Parse, ParseStream};
+use syn::{
+    AngleBracketedGenericArguments, Error, Fields, Ident, ItemStruct, PathArguments, Result, Token,
+    Type, TypePath,
+};
+
+#[derive(Clone, Copy)]
 enum FieldKind {
     Commit,
     Ident,
     Plain,
 }
-
-use proc_macro::TokenStream;
-use proc_macro2::{Span, TokenStream as TokenStream2};
-use quote::{format_ident, quote};
-use syn::parse::{Parse, ParseStream};
-use syn::{Error, Fields, Ident, ItemStruct, Result, Token, Type};
 
 #[proc_macro_attribute]
 pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
@@ -25,8 +28,8 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     let vis = input.vis;
     let ident = input.ident;
-    let fields = match input.fields {
-        Fields::Named(named) => named.named,
+    let fields_vec: Vec<_> = match input.fields {
+        Fields::Named(named) => named.named.into_iter().collect(),
         _ => {
             return Error::new(Span::call_site(), "vapp_state requires named fields")
                 .to_compile_error()
@@ -39,71 +42,60 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     let action_ty = args.action;
     let event_ty = args.event;
 
-    let execute_fields: Vec<_> = fields
-        .iter()
-        .map(|field| {
-            let field_ident = field.ident.clone().unwrap();
-            let ty = field.ty.clone();
-            quote! { pub #field_ident: #ty }
-        })
-        .collect();
-
-    let mut commit_fields: Vec<TokenStream2> = Vec::new();
+    let mut execute_fields: Vec<TokenStream2> = Vec::new();
+    let mut full_fields: Vec<TokenStream2> = Vec::new();
     let mut zk_fields: Vec<TokenStream2> = Vec::new();
+    let mut drain_fields: Vec<TokenStream2> = Vec::new();
+    let mut load_statements: Vec<TokenStream2> = Vec::new();
+    let mut field_names: Vec<Ident> = Vec::new();
 
-    let mut field_meta = Vec::new();
-
-    for field in fields.iter() {
+    for field in fields_vec.iter() {
         let field_ident = field.ident.clone().unwrap();
+        field_names.push(field_ident.clone());
         let ty = field.ty.clone();
-        let mut field_kind = FieldKind::Plain;
+        execute_fields.push(quote! { pub #field_ident: #ty });
 
+        let mut field_kind = FieldKind::Plain;
         for attr in &field.attrs {
             if attr.path().is_ident("commit") {
                 let args = attr
                     .parse_args::<CommitArgs>()
                     .unwrap_or_else(|err| panic!("invalid commit attribute on field: {}", err));
                 if args.kind == "SMT" {
-                    let commit_ident = format_ident!("{}_smt", field_ident);
-                    commit_fields.push(quote! { pub #commit_ident: ::state_core::SMT<#ty> });
-                    zk_fields.push(quote! { pub #field_ident: ::state_core::ZkWitnessSet<#ty> });
+                    let commit_ty = build_commit_type(&ty);
+                    let witness_ty = build_witness_type(&ty);
+                    full_fields.push(quote! { pub #field_ident: #commit_ty });
+                    zk_fields.push(quote! { pub #field_ident: #witness_ty });
+                    drain_fields.push(build_witness_drain(&field_ident, &ty));
+                    load_statements.push(build_witness_load(&field_ident, &ty));
                     field_kind = FieldKind::Commit;
+                    break;
                 }
             } else if attr.path().is_ident("ident") {
                 let args = attr
                     .parse_args::<IdentArgs>()
                     .unwrap_or_else(|err| panic!("invalid ident attribute on field: {}", err));
                 if args.kind == "borsh" {
+                    full_fields.push(quote! { pub #field_ident: #ty });
                     zk_fields.push(quote! { pub #field_ident: #ty });
-                    if !matches!(field_kind, FieldKind::Commit) {
-                        field_kind = FieldKind::Ident;
-                    }
+                    drain_fields
+                        .push(quote! { #field_ident: ::std::mem::take(&mut self.#field_ident) });
+                    load_statements.push(quote! { self.#field_ident = #field_ident; });
+                    field_kind = FieldKind::Ident;
+                    break;
                 }
             }
         }
 
-        field_meta.push((field_ident.clone(), field_kind));
+        if matches!(field_kind, FieldKind::Plain) {
+            full_fields.push(quote! { pub #field_ident: #ty });
+            zk_fields.push(quote! { pub #field_ident: #ty });
+            drain_fields.push(quote! { #field_ident: ::std::mem::take(&mut self.#field_ident) });
+            load_statements.push(quote! { self.#field_ident = #field_ident; });
+        }
     }
 
-    let drain_fields: Vec<TokenStream2> = field_meta
-        .iter()
-        .map(|(ident, kind)| match kind {
-            FieldKind::Commit => quote! { #ident: self.#ident.take_inner() },
-            FieldKind::Ident => quote! { #ident: ::std::mem::take(&mut self.#ident) },
-            FieldKind::Plain => quote! { #ident: Default::default() },
-        })
-        .collect();
-
-    let load_statements: Vec<TokenStream2> = field_meta
-        .iter()
-        .map(|(ident, kind)| match kind {
-            FieldKind::Commit => {
-                quote! { self.#ident = ::state_core::ZkWitnessSet::from(state.#ident); }
-            }
-            FieldKind::Ident => quote! { self.#ident = state.#ident; },
-            FieldKind::Plain => quote! { let _ = state.#ident; },
-        })
-        .collect();
+    let pattern = quote! { ExecuteState { #( #field_names, )* } };
 
     let output = quote! {
         #[allow(non_snake_case)]
@@ -118,7 +110,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
             #[derive(Debug, Default, Clone)]
             pub struct FullState {
                 pub execute_state: ExecuteState,
-                #( #commit_fields, )*
+                #( #full_fields, )*
             }
 
             #[derive(Debug, Default, Clone)]
@@ -179,7 +171,8 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     }
                 }
 
-                fn populate_from_execute_state(&mut self, mut state: ExecuteState) {
+                fn populate_from_execute_state(&mut self, state: ExecuteState) {
+                    let #pattern = state;
                     #( #load_statements )*
                 }
             }
@@ -187,6 +180,98 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     output.into()
+}
+
+fn build_commit_type(value_ty: &Type) -> TokenStream2 {
+    if let Some((key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if let Some((_inner_key, inner_value_ty)) = parse_hash_map(&inner_ty) {
+            quote! { ::std::collections::HashMap<#key_ty, ::state_core::SMT<#inner_value_ty>> }
+        } else {
+            quote! { ::state_core::SMT<#inner_ty> }
+        }
+    } else {
+        quote! { ::state_core::SMT<#value_ty> }
+    }
+}
+
+fn build_witness_type(value_ty: &Type) -> TokenStream2 {
+    if let Some((key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if let Some((_inner_key, inner_value_ty)) = parse_hash_map(&inner_ty) {
+            quote! { ::std::collections::HashMap<#key_ty, ::state_core::ZkWitnessSet<#inner_value_ty>> }
+        } else {
+            quote! { ::state_core::ZkWitnessSet<#inner_ty> }
+        }
+    } else {
+        quote! { ::state_core::ZkWitnessSet<#value_ty> }
+    }
+}
+
+fn build_witness_drain(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
+    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if parse_hash_map(&inner_ty).is_some() {
+            quote! {
+                #field_ident: {
+                    let map = ::std::mem::take(&mut self.#field_ident);
+                    map.into_iter()
+                        .map(|(key, mut witness)| {
+                            let inner = witness.take_inner();
+                            (key, inner)
+                        })
+                        .collect()
+                }
+            }
+        } else {
+            quote! { #field_ident: self.#field_ident.take_inner() }
+        }
+    } else {
+        quote! { #field_ident: self.#field_ident.take_inner() }
+    }
+}
+
+fn build_witness_load(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
+    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if parse_hash_map(&inner_ty).is_some() {
+            quote! {
+                self.#field_ident = #field_ident
+                    .into_iter()
+                    .map(|(key, inner)| (key, ::state_core::ZkWitnessSet::from_map(inner)))
+                    .collect();
+            }
+        } else {
+            quote! {
+                self.#field_ident = ::state_core::ZkWitnessSet::from_map(#field_ident);
+            }
+        }
+    } else {
+        quote! {
+            self.#field_ident = ::state_core::ZkWitnessSet::from_map(#field_ident);
+        }
+    }
+}
+
+fn parse_hash_map(ty: &Type) -> Option<(Type, Type)> {
+    if let Type::Path(TypePath { path, .. }) = ty {
+        if let Some(last) = path.segments.last() {
+            if last.ident == "HashMap" {
+                if let PathArguments::AngleBracketed(AngleBracketedGenericArguments {
+                    args, ..
+                }) = &last.arguments
+                {
+                    let mut iter = args.iter();
+                    let key_ty = match iter.next()? {
+                        syn::GenericArgument::Type(t) => t.clone(),
+                        _ => return None,
+                    };
+                    let value_ty = match iter.next()? {
+                        syn::GenericArgument::Type(t) => t.clone(),
+                        _ => return None,
+                    };
+                    return Some((key_ty, value_ty));
+                }
+            }
+        }
+    }
+    None
 }
 
 struct MacroArgs {
