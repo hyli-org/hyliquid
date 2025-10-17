@@ -12,6 +12,9 @@ declare global {
             WALLET_SERVER_BASE_URL?: string;
             WALLET_WEBSOCKET_URL?: string;
             GOOGLE_CLIENT_ID?: string;
+            ETH_COLLATERAL_TOKEN_ADDRESS?: string;
+            HYLI_VAULT_ADDRESS?: string;
+            COLLATERAL_NETWORKS?: string;
         };
     }
 }
@@ -37,3 +40,74 @@ export const WEBSOCKET_URL =
 
 export const GOOGLE_CLIENT_ID =
     window.__CONFIG__?.GOOGLE_CLIENT_ID || import.meta.env.VITE_GOOGLE_CLIENT_ID || undefined;
+
+export const ETH_COLLATERAL_TOKEN_ADDRESS =
+    window.__CONFIG__?.ETH_COLLATERAL_TOKEN_ADDRESS || import.meta.env.VITE_ETH_COLLATERAL_TOKEN_ADDRESS || "";
+
+export const HYLI_VAULT_ADDRESS =
+    window.__CONFIG__?.HYLI_VAULT_ADDRESS || import.meta.env.VITE_HYLI_VAULT_ADDRESS || "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65";
+
+export interface CollateralNetworkConfig {
+    id: string;
+    name: string;
+    chainId: string;
+    tokenAddress: string;
+    vaultAddress: string;
+    rpcUrl?: string;
+    blockExplorerUrl?: string;
+}
+
+const DEFAULT_COLLATERAL_NETWORKS: CollateralNetworkConfig[] = [
+    {
+        id: "local-anvil",
+        name: "Local (Anvil)",
+        chainId: "0x7a69",
+        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS || "0x5FbDB2315678afecb367f032d93F642f64180aa3",
+        vaultAddress: HYLI_VAULT_ADDRESS || "0x15d34aaf54267db7d7c367839aaf71a00a2c6a65",
+        rpcUrl: "http://localhost:8545",
+    },
+    {
+        id: "ethereum-mainnet",
+        name: "Ethereum Mainnet",
+        chainId: "0x1",
+        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS,
+        vaultAddress: HYLI_VAULT_ADDRESS,
+    },
+    {
+        id: "arbitrum-one",
+        name: "Arbitrum One",
+        chainId: "0xa4b1",
+        tokenAddress: ETH_COLLATERAL_TOKEN_ADDRESS,
+        vaultAddress: HYLI_VAULT_ADDRESS,
+    },
+];
+
+const parseCollateralNetworks = (): CollateralNetworkConfig[] => {
+    const raw =
+        window.__CONFIG__?.COLLATERAL_NETWORKS || import.meta.env.VITE_COLLATERAL_NETWORKS || undefined;
+    if (!raw) {
+        return DEFAULT_COLLATERAL_NETWORKS;
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+            return parsed.filter(
+                (network): network is CollateralNetworkConfig =>
+                    typeof network === "object" &&
+                    network !== null &&
+                    typeof network.id === "string" &&
+                    typeof network.name === "string" &&
+                    typeof network.chainId === "string" &&
+                    typeof network.tokenAddress === "string" &&
+                    typeof network.vaultAddress === "string",
+            );
+        }
+    } catch (error) {
+        console.warn("Failed to parse COLLATERAL_NETWORKS config", error);
+    }
+
+    return DEFAULT_COLLATERAL_NETWORKS;
+};
+
+export const COLLATERAL_NETWORKS = parseCollateralNetworks();
