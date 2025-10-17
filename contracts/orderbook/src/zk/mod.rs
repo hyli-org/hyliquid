@@ -138,7 +138,7 @@ impl FullState {
 
     pub fn commit(&self) -> StateCommitment {
         StateCommitment(
-            borsh::to_vec(&ParsedCommitment {
+            borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: self.users_info_mt.root(),
                 balances_roots: self.balance_roots(),
                 assets: &self.state.assets_info,
@@ -154,7 +154,7 @@ impl FullState {
 
 // Committed state
 #[derive(Debug, BorshSerialize, Eq, PartialEq)]
-pub struct ParsedCommitment<'a> {
+pub struct ParsedStateCommitment<'a> {
     pub users_info_root: H256,
     pub balances_roots: HashMap<Symbol, H256>,
     pub assets: &'a HashMap<Symbol, AssetInfo>,

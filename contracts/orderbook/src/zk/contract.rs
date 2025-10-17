@@ -12,7 +12,7 @@ use crate::{
     },
     zk::{
         smt::{BorshableH256 as H256, GetKey, UserBalance},
-        ParsedCommitment, ZkVmState,
+        ParsedStateCommitment, ZkVmState,
     },
 };
 
@@ -132,7 +132,7 @@ impl sdk::ZkContract for ZkVmState {
         order_manager.orders_owner.clear();
 
         StateCommitment(
-            borsh::to_vec(&ParsedCommitment {
+            borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: self
                     .users_info
                     .compute_root()
