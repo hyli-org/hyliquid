@@ -83,6 +83,8 @@ export function useEthereumBridge() {
     const claimStatusLoading = ref(false);
     const claimStatusError = ref<string | null>(null);
     const claimAddress = ref<string | null>(null);
+    const isWrongNetwork = ref(false);
+    const switchNetworkError = ref<string | null>(null);
 
     const setClaimState = ({ claimed, address }: { claimed: boolean; address?: string | null }) => {
         bridgeClaimed.value = claimed;
@@ -112,7 +114,7 @@ export function useEthereumBridge() {
         return availableNetworks.find((network) => network.id === selectedNetworkId.value) ?? null;
     });
 
-    const setSelectedNetwork = (networkId: string) => {
+    const setSelectedNetwork = async (networkId: string) => {
         if (selectedNetworkId.value === networkId) {
             return;
         }
@@ -122,6 +124,10 @@ export function useEthereumBridge() {
             networkError.value = null;
             depositError.value = null;
             txHash.value = null;
+            switchNetworkError.value = null;
+            
+            // Check if the wallet is on the correct network
+            await checkNetworkMatch();
         }
     };
 
@@ -181,6 +187,111 @@ export function useEthereumBridge() {
             throw new Error("Ethereum provider not detected");
         }
         return window.ethereum as EthereumProvider;
+    };
+
+    const getCurrentChainId = async (): Promise<string | null> => {
+        try {
+            const provider = getProvider();
+            const chainId = await provider.request<string>({ method: "eth_chainId" });
+            return chainId;
+        } catch (error) {
+            console.warn("Failed to get current chain ID:", error);
+            return null;
+        }
+    };
+
+    const checkNetworkMatch = async () => {
+        if (!selectedNetwork.value) {
+            isWrongNetwork.value = false;
+            return;
+        }
+
+        const chainId = await getCurrentChainId();
+        isWrongNetwork.value = chainId !== null && chainId !== selectedNetwork.value.chainId;
+    };
+
+    const switchToSelectedNetwork = async () => {
+        const network = requireSelectedNetwork("Please select a network to switch to");
+        
+        isSwitchingNetwork.value = true;
+        switchNetworkError.value = null;
+        
+        try {
+            const provider = getProvider();
+            
+            // Try to switch to the network
+            await provider.request({
+                method: "wallet_switchEthereumChain",
+                params: [{ chainId: network.chainId }],
+            });
+            
+            // Update current chain ID and check match
+            await checkNetworkMatch();
+            
+        } catch (switchError: any) {
+            // If the network is not added to MetaMask, try to add it
+            if (switchError.code === 4902) {
+                try {
+                    const provider = getProvider();
+                    await provider.request({
+                        method: "wallet_addEthereumChain",
+                        params: [{
+                            chainId: network.chainId,
+                            chainName: network.name,
+                            rpcUrls: [network.rpcUrl],
+                            blockExplorerUrls: [network.blockExplorerUrl],
+                            nativeCurrency: {
+                                name: "ETH",
+                                symbol: "ETH",
+                                decimals: 18,
+                            },
+                        }],
+                    });
+                    
+                    // After adding, try to switch again
+                    const providerAfterAdd = getProvider();
+                    await providerAfterAdd.request({
+                        method: "wallet_switchEthereumChain",
+                        params: [{ chainId: network.chainId }],
+                    });
+                    
+                    await checkNetworkMatch();
+                    
+                } catch (addError) {
+                    switchNetworkError.value = addError instanceof Error 
+                        ? addError.message 
+                        : "Failed to add network to MetaMask";
+                    throw addError;
+                }
+            } else {
+                switchNetworkError.value = switchError instanceof Error 
+                    ? switchError.message 
+                    : "Failed to switch network";
+                throw switchError;
+            }
+        } finally {
+            isSwitchingNetwork.value = false;
+        }
+    };
+
+    const setupNetworkListener = () => {
+        if (!providerAvailable.value || !window.ethereum?.on) return;
+        
+        const handleChainChanged = (...args: unknown[]) => {
+            const chainId = args[0] as string;
+            if (selectedNetwork.value) {
+                isWrongNetwork.value = chainId !== selectedNetwork.value.chainId;
+            }
+        };
+        
+        window.ethereum.on("chainChanged", handleChainChanged);
+        
+        // Cleanup function
+        return () => {
+            if (window.ethereum?.removeListener) {
+                window.ethereum.removeListener("chainChanged", handleChainChanged);
+            }
+        };
     };
 
     const checkBridgeClaimStatus = async () => {
@@ -327,6 +438,11 @@ export function useEthereumBridge() {
         }
 
         await checkBridgeClaimStatus();
+        
+        // Also check network match when refreshing association
+        if (selectedNetwork.value) {
+            await checkNetworkMatch();
+        }
     };
 
     const requestManualAssociation = async () => {
@@ -394,8 +510,13 @@ export function useEthereumBridge() {
             isSendingTransaction.value = true;
 
             const provider = getProvider();
-            isSwitchingNetwork.value = true;
             networkError.value = null;
+            
+            // Check if we're on the correct network
+            await checkNetworkMatch();
+            if (isWrongNetwork.value) {
+                throw new Error(`Please switch to ${network.name} network first`);
+            }
 
             let signerAccount: string;
             try {
@@ -457,10 +578,16 @@ export function useEthereumBridge() {
         availableNetworks,
         selectedNetwork,
         selectedNetworkId,
+        isWrongNetwork,
+        switchNetworkError,
         setSelectedNetwork,
         checkBridgeClaimStatus,
         refreshAssociation,
         requestManualAssociation,
         sendDepositTransaction,
+        getCurrentChainId,
+        checkNetworkMatch,
+        switchToSelectedNetwork,
+        setupNetworkListener,
     };
 }

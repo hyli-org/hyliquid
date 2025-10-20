@@ -19,6 +19,7 @@ const activeTab = ref<DepositTab>("hyli");
 const hyliAmount = ref<number>(0);
 const hyliAsset = ref<string>("");
 const tokenAmount = ref<number>(0);
+let networkListenerCleanup: (() => void) | undefined = undefined;
 
 const { wallet } = useWallet();
 
@@ -47,6 +48,8 @@ const {
     availableNetworks,
     selectedNetwork,
     selectedNetworkId,
+    isWrongNetwork,
+    switchNetworkError,
     setSelectedNetwork,
     needsBridgeClaim,
     hasBridgeIdentity,
@@ -56,6 +59,9 @@ const {
     refreshAssociation,
     requestManualAssociation,
     sendDepositTransaction,
+    checkNetworkMatch,
+    switchToSelectedNetwork,
+    setupNetworkListener,
 } = useEthereumBridge();
 
 const resetFormState = () => {
@@ -72,17 +78,30 @@ const resetFormState = () => {
     depositError.value = null;
     networkError.value = null;
     claimStatusError.value = null;
+    switchNetworkError.value = null;
 };
 
 watch(
     () => props.isOpen,
-    (open) => {
+    async (open) => {
         if (open) {
             if (hasNetworks.value && !selectedNetwork.value) {
-                setSelectedNetwork(availableNetworks[0]!.id);
+                await setSelectedNetwork(availableNetworks[0]!.id);
             }
             resetFormState();
             refreshAssociation();
+
+            // Check network match when modal opens
+            await checkNetworkMatch();
+
+            // Setup network change listener
+            networkListenerCleanup = setupNetworkListener();
+        } else {
+            // Cleanup network listener when modal closes
+            if (networkListenerCleanup) {
+                networkListenerCleanup();
+                networkListenerCleanup = undefined;
+            }
         }
     },
 );
@@ -149,7 +168,8 @@ const canSendTokenDeposit = computed(() => {
         !needsManualAssociation.value &&
         bridgeClaimed.value &&
         !claimStatusLoading.value &&
-        !isSwitchingNetwork.value
+        !isSwitchingNetwork.value &&
+        !isWrongNetwork.value
     );
 });
 
@@ -305,6 +325,37 @@ const handleEthereumDeposit = async () => {
                                         {{ networkVaultAddress || "Configure in env" }}
                                     </span>
                                 </p>
+                            </div>
+                        </div>
+
+                        <!-- Network mismatch warning and switch button -->
+                        <div
+                            v-if="isWrongNetwork && selectedNetwork"
+                            class="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm space-y-3"
+                        >
+                            <div class="text-amber-200">
+                                <p class="font-semibold">Wrong network detected</p>
+                                <p class="text-xs mt-1">
+                                    Your wallet is connected to a different network. Please switch to
+                                    {{ selectedNetwork.name }} to continue.
+                                </p>
+                            </div>
+
+                            <button
+                                type="button"
+                                class="w-full rounded bg-amber-600 px-3 py-2 text-sm font-semibold text-neutral-100 transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
+                                :disabled="isSwitchingNetwork || !providerAvailable"
+                                @click="switchToSelectedNetwork"
+                            >
+                                <span v-if="isSwitchingNetwork">Switching network…</span>
+                                <span v-else>Switch to {{ selectedNetwork.name }}</span>
+                            </button>
+
+                            <div
+                                v-if="switchNetworkError"
+                                class="rounded border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200"
+                            >
+                                {{ switchNetworkError }}
                             </div>
                         </div>
                     </div>
