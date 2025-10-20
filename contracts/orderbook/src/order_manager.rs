@@ -1,8 +1,7 @@
-use crate::smt_values::BorshableH256 as H256;
+use crate::model::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
+use crate::zk::H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::{BTreeMap, VecDeque};
-
-use crate::orderbook::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
 
 trait OrderList {
     fn pop_best(&mut self, side: &OrderSide) -> Option<(u64, VecDeque<OrderId>)>;
@@ -17,7 +16,7 @@ impl OrderList for BTreeMap<u64, VecDeque<OrderId>> {
     }
 }
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq)]
+#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct OrderManager {
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,
@@ -27,7 +26,14 @@ pub struct OrderManager {
     pub sell_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
 
     // Mapping of order IDs to their owners
-    // This field will not be commited.
+    pub orders_owner: BTreeMap<OrderId, H256>,
+}
+
+#[derive(BorshSerialize, Debug, Clone, PartialEq, Eq)]
+pub struct OrderManagerView<'a> {
+    pub orders: &'a BTreeMap<OrderId, Order>,
+    pub buy_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+    pub sell_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
     pub orders_owner: BTreeMap<OrderId, H256>,
 }
 
@@ -37,6 +43,15 @@ mod tests;
 impl OrderManager {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn view<'a>(&'a self) -> OrderManagerView<'a> {
+        OrderManagerView {
+            orders: &self.orders,
+            buy_orders: &self.buy_orders,
+            sell_orders: &self.sell_orders,
+            orders_owner: Default::default(),
+        }
     }
 
     pub fn count_buy_orders(&self, pair: &Pair) -> usize {

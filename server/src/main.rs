@@ -16,9 +16,9 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
-use orderbook::orderbook::OrderbookEvent;
+use orderbook::model::OrderbookEvent;
 use prometheus::Registry;
-use sdk::{api::NodeInfo, info, ProgramId, ZkContract};
+use sdk::{api::NodeInfo, info};
 use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
@@ -271,8 +271,8 @@ async fn actual_main() -> Result<()> {
 
     let contracts = vec![server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
-        program_id: ProgramId(ORDERBOOK_VK.to_vec()),
-        initial_state: light_state.commit(),
+        program_id: ORDERBOOK_VK.into(),
+        initial_state: full_state.commit(),
     }];
 
     match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {

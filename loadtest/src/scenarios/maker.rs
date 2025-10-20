@@ -1,5 +1,5 @@
 use goose::prelude::*;
-use orderbook::orderbook::{OrderSide, OrderType};
+use orderbook::model::{OrderSide, OrderType};
 use tracing::{debug, info, warn};
 
 use crate::http_client::{build_order, OrderbookClient};

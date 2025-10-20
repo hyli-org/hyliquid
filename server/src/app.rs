@@ -20,12 +20,13 @@ use hyli_modules::{
 };
 use hyli_smt_token::SmtTokenAction;
 use orderbook::{
-    orderbook::{
-        AssetInfo, Order, Orderbook, OrderbookEvent, Pair, PairInfo, ORDERBOOK_ACCOUNT_IDENTITY,
+    model::{AssetInfo, Order, OrderbookEvent, Pair, PairInfo, UserInfo},
+    transaction::{
+        AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
+        OrderbookAction, PermissionnedOrderbookAction, WithdrawPrivateInput,
     },
-    smt_values::UserInfo,
-    AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
-    PermissionnedOrderbookAction, WithdrawPrivateInput,
+    zk::smt::GetKey,
+    ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::StatusCode;
 use sdk::{
@@ -65,7 +66,7 @@ pub struct OrderbookModuleCtx {
     pub api: Arc<BuildApiContextInner>,
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
-    pub default_state: Orderbook,
+    pub default_state: orderbook::model::ExecuteState,
     pub client: Arc<NodeApiHttpClient>,
     pub asset_service: Arc<RwLock<AssetService>>,
 }
@@ -370,8 +371,8 @@ impl OrderbookModule {
 struct RouterCtx {
     pub bus: RouterBusClient,
     pub orderbook_cn: ContractName,
-    pub default_state: Orderbook,
-    pub orderbook: Arc<Mutex<Orderbook>>,
+    pub default_state: orderbook::model::ExecuteState,
+    pub orderbook: Arc<Mutex<orderbook::model::ExecuteState>>,
     pub lane_id: LaneId,
     pub asset_service: Arc<RwLock<AssetService>>,
     pub client: Arc<NodeApiHttpClient>,

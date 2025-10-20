@@ -1,15 +1,19 @@
 use anyhow::{bail, Result};
+use borsh::BorshDeserialize;
 use client_sdk::{
     contract_indexer::AppError,
     rest_client::{NodeApiClient, NodeApiHttpClient},
 };
 use orderbook::{
-    orderbook::{AssetInfo, ExecutionMode, Orderbook, Pair, PairInfo, Symbol},
-    smt_values::{Balance, BorshableH256, UserInfo},
+    model::{
+        AssetInfo, Balance as OrderbookBalance, ExecuteState, Pair, PairInfo, Symbol, UserInfo,
+    },
+    order_manager::OrderManager,
+    zk::{smt::GetKey, FullState, H256},
 };
 use reqwest::StatusCode;
 use sdk::{
-    api::APIRegisterContract, info, ContractName, LaneId, ProgramId, StateCommitment, ZkContract,
+    api::APIRegisterContract, info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -102,7 +106,7 @@ pub async fn init_orderbook_from_database(
     book_service: Arc<RwLock<BookService>>,
     node: &NodeApiHttpClient,
     check_commitment: bool,
-) -> Result<(Orderbook, Orderbook), AppError> {
+) -> Result<(ExecuteState, FullState), AppError> {
     let asset_service = asset_service.read().await;
     let user_service = user_service.read().await;
     let book_service = book_service.read().await;
@@ -149,15 +153,16 @@ pub async fn init_orderbook_from_database(
     }
 
     let users_info: HashMap<String, UserInfo> = user_service.get_all_users().await;
-    let mut balances: HashMap<Symbol, HashMap<BorshableH256, Balance>> = HashMap::new();
+    let mut balances: HashMap<Symbol, HashMap<orderbook::zk::H256, OrderbookBalance>> =
+        HashMap::new();
 
     for user in users_info.values() {
-        let balance = user_service.get_balances(&user.user).await?;
-        for balance in balance.balances {
+        let user_balances = user_service.get_balances(&user.user).await?;
+        for balance in user_balances.balances {
             balances
                 .entry(balance.symbol.clone())
                 .or_default()
-                .insert(user.get_key(), Balance(balance.total as u64));
+                .insert(user.get_key(), OrderbookBalance(balance.total as u64));
         }
     }
 
@@ -185,35 +190,16 @@ pub async fn init_orderbook_from_database(
     // TODO: load properly the value
     let last_block_height = sdk::BlockHeight(0);
 
-    let light_orderbook = Orderbook::from_data(
-        lane_id.clone(),
-        ExecutionMode::Light,
-        secret.clone(),
-        pairs_info.clone().into_iter().collect(),
+    let light_orderbook = orderbook::model::ExecuteState::from_data(
+        pairs_info.clone(),
         order_manager.clone(),
         users_info.clone(),
         balances.clone(),
-        last_block_height,
-    )
-    .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-    let full_orderbook = Orderbook::from_data(
-        lane_id,
-        ExecutionMode::Full,
-        secret,
-        pairs_info,
-        order_manager,
-        users_info,
-        balances,
-        last_block_height,
     )
     .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
-    if light_orderbook.commit() != full_orderbook.commit() {
-        return Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            anyhow::anyhow!("Business logic error: Light and full orderbook commitments mismatch"),
-        ));
-    }
+    let full_orderbook = FullState::from_data(&light_orderbook, secret, lane_id, last_block_height)
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
     if !check_commitment {
         info!("🔍 Checking commitment is disabled, skipping");
@@ -221,9 +207,10 @@ pub async fn init_orderbook_from_database(
     }
 
     if let Ok(existing) = node.get_contract(ContractName::from("orderbook")).await {
-        let onchain = Orderbook::from(existing.state_commitment.clone());
+        let onchain = DebugStateCommitment::from(existing.state_commitment.clone());
         // Log existing & new orderbook and spot diff
-        let diff = onchain.diff(&light_orderbook);
+        let derived_onchain_state = DebugStateCommitment::from(full_orderbook.commit());
+        let diff = onchain.diff(&derived_onchain_state);
         if !diff.is_empty() {
             warn!("⚠️ Differences (onchain vs db):");
             for (key, value) in diff.iter() {
@@ -237,8 +224,7 @@ pub async fn init_orderbook_from_database(
         }
         info!("✅ No differences found between onchain and db");
 
-        let commit = light_orderbook.commit();
-        if commit != existing.state_commitment {
+        if derived_onchain_state != onchain {
             error!("No differences found, but commitment mismatch! Diff algo is broken!");
             return Err(AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -251,4 +237,97 @@ pub async fn init_orderbook_from_database(
     }
 
     Ok((light_orderbook, full_orderbook))
+}
+
+#[derive(Debug, BorshDeserialize, Eq, PartialEq)]
+pub struct DebugStateCommitment {
+    pub users_info_root: H256,
+    pub balances_roots: HashMap<Symbol, H256>,
+    pub assets: HashMap<Symbol, AssetInfo>,
+    pub orders: OrderManager,
+    pub hashed_secret: [u8; 32],
+    pub lane_id: LaneId,
+    pub last_block_number: BlockHeight,
+}
+
+impl From<StateCommitment> for DebugStateCommitment {
+    fn from(value: StateCommitment) -> Self {
+        borsh::from_slice(&value.0).expect("Failed to deser DebugStateCommitment")
+    }
+}
+
+impl DebugStateCommitment {
+    // Implementation of functions that are only used by the server.
+    // Detects differences between two orderbooks
+    // It is used to detect differences between on-chain and db orderbooks
+    pub fn diff(&self, other: &DebugStateCommitment) -> BTreeMap<String, String> {
+        let mut diff = BTreeMap::new();
+        if self.hashed_secret != other.hashed_secret {
+            diff.insert(
+                "hashed_secret".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(self.hashed_secret.as_slice()),
+                    hex::encode(other.hashed_secret.as_slice())
+                ),
+            );
+        }
+
+        if self.assets != other.assets {
+            let mut mismatches = Vec::new();
+
+            for (symbol, info) in &self.assets {
+                match other.assets.get(symbol) {
+                    Some(other_info) if other_info == info => {}
+                    Some(other_info) => {
+                        mismatches.push(format!("{symbol}: {info:?} != {other_info:?}"))
+                    }
+                    None => mismatches.push(format!("{symbol}: present only on self: {info:?}")),
+                }
+            }
+
+            for (symbol, info) in &other.assets {
+                if !self.assets.contains_key(symbol) {
+                    mismatches.push(format!("{symbol}: present only on other: {info:?}"));
+                }
+            }
+
+            diff.insert("symbols_info".to_string(), mismatches.join("; "));
+        }
+
+        if self.lane_id != other.lane_id {
+            diff.insert(
+                "lane_id".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(&self.lane_id.0 .0),
+                    hex::encode(&other.lane_id.0 .0)
+                ),
+            );
+        }
+
+        if self.balances_roots != other.balances_roots {
+            diff.insert(
+                "balances_merkle_roots".to_string(),
+                format!("{:?} != {:?}", self.balances_roots, other.balances_roots),
+            );
+        }
+
+        if self.users_info_root != other.users_info_root {
+            diff.insert(
+                "users_info_merkle_root".to_string(),
+                format!(
+                    "{} != {}",
+                    hex::encode(self.users_info_root.as_slice()),
+                    hex::encode(other.users_info_root.as_slice())
+                ),
+            );
+        }
+
+        if self.orders != other.orders {
+            diff.extend(self.orders.diff(&other.orders));
+        }
+
+        diff
+    }
 }

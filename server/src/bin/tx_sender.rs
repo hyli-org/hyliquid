@@ -5,7 +5,7 @@ use k256::{
     ecdsa::{signature::DigestSigner, Signature, SigningKey},
     SecretKey,
 };
-use orderbook::orderbook::{Order, OrderSide, OrderType};
+use orderbook::model::{Order, OrderSide, OrderType};
 use reqwest::Client;
 use server::{
     app::{CancelOrderRequest, CreatePairRequest, DepositRequest},

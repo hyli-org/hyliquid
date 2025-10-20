@@ -8,9 +8,10 @@ use hyli_modules::{
     modules::Module,
 };
 use orderbook::{
-    orderbook::{Orderbook, OrderbookEvent, ORDERBOOK_ACCOUNT_IDENTITY},
-    smt_values::UserInfo,
-    OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput,
+    model::{OrderbookEvent, UserInfo},
+    transaction::{OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput},
+    zk::FullState,
+    ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
 use tracing::{debug, error, info};
@@ -49,14 +50,14 @@ pub struct OrderbookProverCtx {
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
     pub node_client: Arc<dyn NodeApiClient + Send + Sync>,
-    pub initial_orderbook: Orderbook,
+    pub initial_orderbook: FullState,
 }
 
 pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
     pending_txs: BTreeMap<TxHash, PendingTx>,
-    orderbook: Orderbook,
+    orderbook: FullState,
 }
 
 impl Module for OrderbookProverModule {
@@ -126,9 +127,9 @@ impl OrderbookProverModule {
 
                 let execution_events = self
                     .orderbook
-                    .execute_permissionned_action(
-                        user_info.clone(),
-                        orderbook_action.clone(),
+                    .execute_and_update_roots(
+                        &user_info,
+                        &orderbook_action,
                         &permissioned_private_input.private_input,
                     )
                     .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;

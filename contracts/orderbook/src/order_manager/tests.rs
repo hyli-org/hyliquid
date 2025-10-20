@@ -2,12 +2,24 @@ use super::*;
 
 use std::collections::BTreeMap;
 
-use crate::orderbook::{
-    AssetInfo, ExecutionMode, ExecutionState, Order, OrderSide, OrderType, Orderbook,
-    OrderbookEvent, Pair, PairInfo,
+use borsh::BorshSerialize;
+use k256::ecdsa::signature::DigestSigner;
+use k256::ecdsa::{Signature, SigningKey};
+use sha3::{Digest, Sha3_256};
+
+use crate::zk::smt::GetKey;
+use crate::{
+    model::{
+        AssetInfo, Balance, ExecuteState, Order, OrderSide, OrderType, OrderbookEvent, Pair,
+        PairInfo, UserInfo,
+    },
+    transaction::{
+        AddSessionKeyPrivateInput, CreateOrderPrivateInput, PermissionnedOrderbookAction,
+        WithdrawPrivateInput,
+    },
+    zk::FullState,
 };
-use crate::smt_values::{Balance, UserInfo};
-use sdk::{ContractName, LaneId};
+use sdk::{BlockHeight, ContractName, LaneId};
 
 fn test_user(name: &str) -> UserInfo {
     UserInfo::new(name.to_string(), name.as_bytes().to_vec())
@@ -24,8 +36,15 @@ fn make_pair_info(pair: &Pair, base_scale: u64, quote_scale: u64) -> PairInfo {
     }
 }
 
-fn build_orderbook() -> Orderbook {
-    Orderbook::init(LaneId::default(), ExecutionMode::Full, b"secret".to_vec()).unwrap()
+fn build_orderbook() -> FullState {
+    let light = ExecuteState::default();
+    FullState::from_data(
+        &light,
+        b"secret".to_vec(),
+        LaneId::default(),
+        BlockHeight(0),
+    )
+    .expect("Failed to create FullState in test")
 }
 
 fn make_limit_order(id: &str, side: OrderSide, price: u64, quantity: u64) -> Order {
@@ -50,17 +69,100 @@ fn make_market_order(id: &str, side: OrderSide, quantity: u64) -> Order {
     }
 }
 
+struct TestSigner {
+    signing_key: SigningKey,
+    public_key: Vec<u8>,
+}
+
+impl TestSigner {
+    fn new(seed: u8) -> Self {
+        let field_bytes = k256::FieldBytes::from([seed; 32]);
+        let signing_key = SigningKey::from_bytes(&field_bytes).expect("signing key");
+        let public_key = signing_key
+            .verifying_key()
+            .to_encoded_point(false)
+            .as_bytes()
+            .to_vec();
+        Self {
+            signing_key,
+            public_key,
+        }
+    }
+
+    fn sign(&self, msg: &str) -> Vec<u8> {
+        let mut hasher = Sha3_256::new();
+        hasher.update(msg.as_bytes());
+        let signature: Signature = self.signing_key.sign_digest(hasher);
+        signature.to_vec()
+    }
+}
+
+fn serialize<T: BorshSerialize>(value: &T) -> Vec<u8> {
+    borsh::to_vec(value).expect("serialize private input")
+}
+
+fn apply_user_updates(orderbook: &mut FullState, user: &mut UserInfo, events: &[OrderbookEvent]) {
+    for event in events {
+        match event {
+            OrderbookEvent::SessionKeyAdded { session_keys, .. } => {
+                user.session_keys = session_keys.clone();
+            }
+            OrderbookEvent::NonceIncremented { nonce, .. } => {
+                user.nonce = *nonce;
+            }
+            _ => {}
+        }
+    }
+
+    orderbook
+        .state
+        .users_info
+        .insert(user.user.clone(), user.clone());
+}
+
+fn execute_action_ok(
+    orderbook: &mut FullState,
+    user: &mut UserInfo,
+    action: PermissionnedOrderbookAction,
+    private_input: Vec<u8>,
+) -> Vec<OrderbookEvent> {
+    let events = orderbook
+        .execute_and_update_roots(user, &action, &private_input)
+        .expect("action should succeed");
+    apply_user_updates(orderbook, user, &events);
+    events
+}
+
+fn execute_action_err(
+    orderbook: &mut FullState,
+    user: &UserInfo,
+    action: PermissionnedOrderbookAction,
+    private_input: Vec<u8>,
+) -> String {
+    orderbook
+        .execute_and_update_roots(user, &action, &private_input)
+        .expect_err("action should fail")
+}
+
 #[test]
 fn add_session_key_registers_new_key() {
     let mut orderbook = build_orderbook();
-    let user = test_user("alice");
-    let key = vec![1, 2, 3, 4];
+    let mut user = test_user("alice");
+    let signer = TestSigner::new(1);
+    let key = signer.public_key.clone();
 
-    let events = orderbook
-        .add_session_key(user, &key)
-        .expect("should add session key");
+    let private_input = serialize(&AddSessionKeyPrivateInput {
+        new_public_key: key.clone(),
+    });
+    let events = execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::AddSessionKey,
+        private_input,
+    );
 
     let user = orderbook
+        .state
         .get_user_info("alice")
         .expect("user should exist after adding session key");
 
@@ -72,7 +174,13 @@ fn add_session_key_registers_new_key() {
     ));
 
     let err = orderbook
-        .add_session_key(user, &key)
+        .execute_and_update_roots(
+            &user,
+            &PermissionnedOrderbookAction::AddSessionKey,
+            &serialize(&AddSessionKeyPrivateInput {
+                new_public_key: key,
+            }),
+        )
         .expect_err("duplicate keys must fail");
     assert!(err.contains("already exists"));
 }
@@ -80,14 +188,22 @@ fn add_session_key_registers_new_key() {
 #[test]
 fn create_pair_initializes_balances() {
     let mut orderbook = build_orderbook();
+    let mut user = test_user("alice");
     let pair = sample_pair();
     let info = make_pair_info(&pair, 3, 2);
 
-    let events = orderbook
-        .create_pair(&pair, &info)
-        .expect("pair creation should succeed");
+    let events = execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: info.clone(),
+        },
+        Vec::new(),
+    );
 
     let base_symbol_info = orderbook
+        .state
         .assets_info
         .get(&pair.0)
         .expect("base symbol must be registered");
@@ -95,19 +211,16 @@ fn create_pair_initializes_balances() {
     assert_eq!(base_symbol_info.contract_name, info.base.contract_name);
 
     let quote_symbol_info = orderbook
+        .state
         .assets_info
         .get(&pair.1)
         .expect("quote symbol must be registered");
     assert_eq!(quote_symbol_info.scale, info.quote.scale);
     assert_eq!(quote_symbol_info.contract_name, info.quote.contract_name);
 
-    match &orderbook.execution_state {
-        ExecutionState::Full(state) => {
-            assert!(state.balances_mt.contains_key(&pair.0));
-            assert!(state.balances_mt.contains_key(&pair.1));
-        }
-        _ => panic!("Orderbook should be in full execution mode for this test"),
-    }
+    assert!(orderbook.balances_mt.contains_key(&pair.0));
+    assert!(orderbook.balances_mt.contains_key(&pair.1));
+
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
@@ -121,54 +234,93 @@ fn create_pair_initializes_balances() {
 #[test]
 fn create_pair_rejects_conflicting_symbol_registration() {
     let mut orderbook = build_orderbook();
+    let mut user = test_user("alice");
     let pair = sample_pair();
     let info = make_pair_info(&pair, 3, 2);
 
-    orderbook
-        .create_pair(&pair, &info)
-        .expect("initial pair creation should succeed");
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: info.clone(),
+        },
+        Vec::new(),
+    );
 
     let mut conflicting_info = make_pair_info(&pair, 3, 2);
     conflicting_info.base.contract_name = ContractName("alt-base".to_string());
 
-    let err = orderbook
-        .create_pair(&pair, &conflicting_info)
-        .expect_err("conflicting symbol info must be rejected");
+    let err = execute_action_err(
+        &mut orderbook,
+        &user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair,
+            info: conflicting_info,
+        },
+        Vec::new(),
+    );
     assert!(err.contains("already registered"));
 }
 
 #[test]
 fn create_pair_merges_metadata_without_overrides() {
     let mut orderbook = build_orderbook();
+    let mut user = test_user("alice");
     let pair = sample_pair();
 
     let first_info = make_pair_info(&pair, 3, 2);
 
-    orderbook
-        .create_pair(&pair, &first_info)
-        .expect("initial registration should succeed");
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: first_info.clone(),
+        },
+        Vec::new(),
+    );
 
     let second_info = make_pair_info(&pair, 3, 2);
 
-    orderbook
-        .create_pair(&pair, &second_info)
-        .expect("metadata merge should succeed");
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair,
+            info: second_info,
+        },
+        Vec::new(),
+    );
 }
 
 #[test]
 fn deposit_updates_balance_and_event() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
-    orderbook
-        .create_pair(&pair, &make_pair_info(&pair, 3, 2))
-        .unwrap();
-    let user = test_user("bob");
+    let mut user = test_user("bob");
 
-    let events = orderbook
-        .deposit(&pair.1, 500, &user)
-        .expect("deposit should succeed");
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: make_pair_info(&pair, 3, 2),
+        },
+        Vec::new(),
+    );
 
-    assert_eq!(orderbook.get_balance(&user, &pair.1).0, 500);
+    let events = execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::Deposit {
+            symbol: pair.1.clone(),
+            amount: 500,
+        },
+        Vec::new(),
+    );
+
+    assert_eq!(orderbook.state.get_balance(&user, &pair.1).0, 500);
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
@@ -181,28 +333,77 @@ fn deposit_updates_balance_and_event() {
 fn withdraw_deducts_balance() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
-    orderbook
-        .create_pair(&pair, &make_pair_info(&pair, 3, 2))
-        .unwrap();
-    let user = test_user("carol");
+    let mut user = test_user("carol");
+    let signer = TestSigner::new(2);
+    let session_key = signer.public_key.clone();
 
-    orderbook.deposit(&pair.1, 1_000, &user).unwrap();
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::AddSessionKey,
+        serialize(&AddSessionKeyPrivateInput {
+            new_public_key: session_key.clone(),
+        }),
+    );
 
-    let events = orderbook
-        .withdraw(&pair.1, &400, &user)
-        .expect("withdraw should succeed");
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: make_pair_info(&pair, 3, 2),
+        },
+        Vec::new(),
+    );
 
-    assert_eq!(orderbook.get_balance(&user, &pair.1).0, 600);
-    assert_eq!(events.len(), 2);
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::Deposit {
+            symbol: pair.1.clone(),
+            amount: 1_000,
+        },
+        Vec::new(),
+    );
+
+    let destination = "dest-address".to_string();
+    let withdraw_message = format!("{}:{}:withdraw:{}:{}", user.user, user.nonce, pair.1, 400);
+    let withdraw_events = execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::Withdraw {
+            symbol: pair.1.clone(),
+            amount: 400,
+            destination_address: destination.clone(),
+        },
+        serialize(&WithdrawPrivateInput {
+            signature: signer.sign(&withdraw_message),
+            public_key: session_key.clone(),
+        }),
+    );
+
+    assert_eq!(orderbook.state.get_balance(&user, &pair.1).0, 600);
+    assert_eq!(withdraw_events.len(), 2);
     assert!(matches!(
-        events[0],
+        withdraw_events[0],
         OrderbookEvent::BalanceUpdated { ref user, ref symbol, amount }
             if user == "carol" && symbol == &pair.1 && amount == 600
     ));
 
-    let err = orderbook
-        .withdraw(&pair.1, &700, &user)
-        .expect_err("should reject overdraft");
+    let overdraft_message = format!("{}:{}:withdraw:{}:{}", user.user, user.nonce, pair.1, 700);
+    let err = execute_action_err(
+        &mut orderbook,
+        &user,
+        PermissionnedOrderbookAction::Withdraw {
+            symbol: pair.1.clone(),
+            amount: 700,
+            destination_address: destination,
+        },
+        serialize(&WithdrawPrivateInput {
+            signature: signer.sign(&overdraft_message),
+            public_key: session_key,
+        }),
+    );
     assert!(err.contains("Insufficient balance"));
 }
 
@@ -210,13 +411,37 @@ fn withdraw_deducts_balance() {
 fn cancel_order_refunds_and_removes() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
+    let mut user = test_user("dan");
+    let signer = TestSigner::new(3);
+    let session_key = signer.public_key.clone();
+
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::AddSessionKey,
+        serialize(&AddSessionKeyPrivateInput {
+            new_public_key: session_key.clone(),
+        }),
+    );
+
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: make_pair_info(&pair, 3, 2),
+        },
+        Vec::new(),
+    );
+
     orderbook
-        .create_pair(&pair, &make_pair_info(&pair, 3, 2))
-        .unwrap();
-    let user = test_user("dan");
+        .state
+        .users_info
+        .insert(user.user.clone(), user.clone());
     let order = make_limit_order("order-1", OrderSide::Bid, 100, 10);
 
     orderbook
+        .state
         .order_manager
         .insert_order(&order, &user.get_key())
         .expect("order insertion should succeed");
@@ -224,14 +449,23 @@ fn cancel_order_refunds_and_removes() {
     let mut balances = BTreeMap::new();
     balances.insert(user.clone(), Balance(0));
 
-    let events = orderbook
-        .cancel_order(order.order_id.clone(), &user)
-        .expect("cancellation should succeed");
+    let cancel_message = format!("{}:{}:cancel:{}", user.user, user.nonce, order.order_id);
+    let events = execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::Cancel {
+            order_id: order.order_id.clone(),
+        },
+        serialize(&CreateOrderPrivateInput {
+            signature: signer.sign(&cancel_message),
+            public_key: session_key,
+        }),
+    );
 
-    assert!(orderbook.order_manager.orders.is_empty());
-    assert_eq!(orderbook.order_manager.count_buy_orders(&pair), 0);
-    assert_eq!(orderbook.order_manager.count_sell_orders(&pair), 0);
-    assert_eq!(orderbook.get_balance(&user, &pair.1).0, 10);
+    assert!(orderbook.state.order_manager.orders.is_empty());
+    assert_eq!(orderbook.state.order_manager.count_buy_orders(&pair), 0);
+    assert_eq!(orderbook.state.order_manager.count_sell_orders(&pair), 0);
+    assert_eq!(orderbook.state.get_balance(&user, &pair.1).0, 10);
 
     assert!(events.iter().any(|event| matches!(
         event,

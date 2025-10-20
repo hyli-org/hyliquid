@@ -1,19 +1,26 @@
+use std::marker::PhantomData;
+
 use borsh::{BorshDeserialize, BorshSerialize};
-use serde::{Deserialize, Serialize};
+use sdk::merkle_utils::SHA256Hasher;
 use sha2::{Digest, Sha256};
-use sparse_merkle_tree::{traits::Value, H256};
+use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkleTree, H256};
+
+use crate::model::{Balance, UserInfo};
 
 #[derive(
-    Debug, Default, Clone, PartialEq, BorshDeserialize, BorshSerialize, Serialize, Deserialize,
+    Debug, Default, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq, PartialOrd, Ord, Hash,
 )]
-pub struct Balance(pub u64);
+pub struct UserBalance {
+    pub user_key: BorshableH256,
+    pub balance: Balance,
+}
 
-impl Value for Balance {
+impl Value for UserBalance {
     fn to_h256(&self) -> H256 {
-        if self.0 == 0 {
+        if self.balance.0 == 0 {
             return H256::zero();
         }
-        let serialized = borsh::to_vec(self).unwrap();
+        let serialized = borsh::to_vec(&self.balance).unwrap();
         let mut hasher = Sha256::new();
         hasher.update(&serialized);
         let result = hasher.finalize();
@@ -23,18 +30,17 @@ impl Value for Balance {
     }
 
     fn zero() -> Self {
-        Balance(0)
+        UserBalance {
+            user_key: BorshableH256(H256::zero()),
+            balance: Balance(0),
+        }
     }
 }
 
-#[derive(
-    BorshSerialize, BorshDeserialize, Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd,
-)]
-pub struct UserInfo {
-    pub user: String,
-    pub salt: Vec<u8>,
-    pub nonce: u32,
-    pub session_keys: Vec<Vec<u8>>,
+impl GetKey for UserBalance {
+    fn get_key(&self) -> BorshableH256 {
+        self.user_key
+    }
 }
 
 impl std::hash::Hash for UserInfo {
@@ -57,8 +63,14 @@ impl UserInfo {
             session_keys: Vec::new(),
         }
     }
+}
 
-    pub fn get_key(&self) -> BorshableH256 {
+pub trait GetKey {
+    fn get_key(&self) -> BorshableH256;
+}
+
+impl GetKey for UserInfo {
+    fn get_key(&self) -> BorshableH256 {
         let mut hasher = Sha256::new();
         hasher.update(self.user.as_bytes());
         hasher.update(&self.salt);
@@ -66,6 +78,12 @@ impl UserInfo {
         let mut h = [0u8; 32];
         h.copy_from_slice(&result);
         BorshableH256::from(h)
+    }
+}
+
+impl<T: GetKey> GetKey for &T {
+    fn get_key(&self) -> BorshableH256 {
+        (*self).get_key()
     }
 }
 
@@ -190,5 +208,68 @@ impl From<H256> for BorshableH256 {
 impl From<BorshableH256> for H256 {
     fn from(h: BorshableH256) -> Self {
         h.0
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct SMT<T: Value + Clone>(
+    SparseMerkleTree<SHA256Hasher, H256, DefaultStore<H256>>,
+    PhantomData<T>,
+);
+
+impl<T> SMT<T>
+where
+    T: Value + Clone,
+{
+    pub fn zero() -> Self {
+        SMT(
+            SparseMerkleTree::new(sparse_merkle_tree::H256::zero(), Default::default()),
+            PhantomData,
+        )
+    }
+
+    pub fn from_store(root: BorshableH256, store: DefaultStore<H256>) -> Self {
+        SMT(SparseMerkleTree::new(root.into(), store), PhantomData)
+    }
+
+    pub fn update_all_from_ref<'a, I>(
+        &mut self,
+        leaves: I,
+    ) -> sparse_merkle_tree::error::Result<BorshableH256>
+    where
+        I: Iterator<Item = &'a T>,
+        T: Value + GetKey + 'a,
+    {
+        let h256_leaves = leaves.map(|el| (el.get_key().0, el.to_h256())).collect();
+        self.0.update_all(h256_leaves).map(|r| BorshableH256(*r))
+    }
+
+    pub fn update_all<I>(&mut self, leaves: I) -> sparse_merkle_tree::error::Result<BorshableH256>
+    where
+        I: Iterator<Item = T>,
+        T: Value + GetKey,
+    {
+        let h256_leaves = leaves.map(|el| (el.get_key().0, el.to_h256())).collect();
+        self.0.update_all(h256_leaves).map(|r| BorshableH256(*r))
+    }
+
+    pub fn root(&self) -> BorshableH256 {
+        BorshableH256(*self.0.root())
+    }
+
+    pub fn store(&self) -> &DefaultStore<H256> {
+        self.0.store()
+    }
+
+    pub fn merkle_proof<'a, I, V>(
+        &self,
+        keys: I,
+    ) -> sparse_merkle_tree::error::Result<sparse_merkle_tree::merkle_proof::MerkleProof>
+    where
+        I: Iterator<Item = &'a V>,
+        V: Value + GetKey + 'a,
+    {
+        self.0
+            .merkle_proof(keys.map(|v| v.get_key().0).collect::<Vec<_>>())
     }
 }

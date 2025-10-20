@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use goose::prelude::*;
-use orderbook::orderbook::{Order, OrderSide, OrderType};
+use orderbook::model::{Order, OrderSide, OrderType};
 use serde::{Deserialize, Serialize};
 use server::app::{CancelOrderRequest, CreatePairRequest, DepositRequest};
 use std::time::Duration;

@@ -8,7 +8,7 @@ use hyli_modules::{
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use orderbook::orderbook::OrderbookEvent;
+use orderbook::model::OrderbookEvent;
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
