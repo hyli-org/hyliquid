@@ -84,49 +84,6 @@ impl EthClient {
 }
 
 /// Small wrapper to listen to an Ethereum contract with Alloy.
-///
-/// # Usage Examples
-///
-/// ## Listen to all contract events
-/// ```rust
-/// use alloy::primitives::Address;
-/// use std::str::FromStr;
-///
-/// # async fn example() -> anyhow::Result<()> {
-/// let contract_address = Address::from_str("0x...")?;
-/// let listener = EthListener::connect("wss://mainnet.infura.io/ws/v3/YOUR_KEY", contract_address, 18000000).await?;
-///
-/// let mut stream = listener.event_stream().await?;
-/// while let Some(result) = stream.next().await {
-///     match result {
-///         Ok(log) => println!("New event: {:?}", log),
-///         Err(e) => eprintln!("Error: {}", e),
-///     }
-/// }
-/// # Ok(())
-/// # }
-/// ```
-///
-/// ## Listen to specific events
-/// ```rust
-/// # async fn example_specific_events() -> anyhow::Result<()> {
-/// let contract_address = Address::from_str("0x...")?;
-/// let listener = EthListener::connect("wss://mainnet.infura.io/ws/v3/YOUR_KEY", contract_address, 18000000).await?;
-///
-/// let mut stream = listener.event_stream_by_signatures(vec![
-///     "Transfer(address,address,uint256)",
-///     "Approval(address,address,uint256)"
-/// ]).await?;
-///
-/// while let Some(result) = stream.next().await {
-///     match result {
-///         Ok(log) => println!("Transfer or Approval: {:?}", log),
-///         Err(e) => eprintln!("Error: {}", e),
-///     }
-/// }
-/// # Ok(())
-/// # }
-/// ```
 pub struct EthListener {
     provider: Arc<dyn Provider>,
     contract: Address,
@@ -152,17 +109,6 @@ impl EthListener {
     /// # Arguments
     /// * `topics` - Optional, vector of topics to filter specific events.
     ///   Each topic is a `Vec<Option<[u8; 32]>>` representing event signatures.
-    ///
-    /// Usage example:
-    /// ```rust
-    /// // Listen to all events
-    /// let mut stream = listener.event_stream_with_topics(None).await?;
-    ///
-    /// // Listen to only a specific event (e.g.: Transfer)
-    /// let transfer_topic = keccak256("Transfer(address,address,uint256)");
-    /// let topics = vec![Some(transfer_topic)];
-    /// let mut stream = listener.event_stream_with_topics(Some(topics)).await?;
-    /// ```
     pub async fn event_stream_with_topics(
         &self,
         topics: Option<Vec<Option<[u8; 32]>>>,
@@ -213,11 +159,6 @@ impl EthListener {
     ///
     /// # Arguments
     /// * `signature` - The event signature (e.g.: "Transfer(address,address,uint256)")
-    ///
-    /// # Example
-    /// ```rust
-    /// let transfer_topic = EthListener::create_event_topic("Transfer(address,address,uint256)");
-    /// ```
     pub fn create_event_topic(signature: &str) -> [u8; 32] {
         keccak256(signature.as_bytes()).into()
     }
@@ -226,12 +167,6 @@ impl EthListener {
     ///
     /// # Arguments
     /// * `address` - The address to convert
-    ///
-    /// # Example
-    /// ```rust
-    /// let address = Address::from_str("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65")?;
-    /// let topic = EthListener::address_to_topic(address);
-    /// ```
     pub fn address_to_topic(address: Address) -> [u8; 32] {
         let mut topic = [0u8; 32];
         topic[12..].copy_from_slice(address.as_slice());
@@ -253,12 +188,6 @@ impl EthListener {
     ///
     /// # Arguments
     /// * `target_address` - The target address to filter
-    ///
-    /// # Example
-    /// ```rust
-    /// let vault_address = Address::from_str("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65")?;
-    /// let mut stream = listener.stream_transfers_to(vault_address).await?;
-    /// ```
     pub async fn stream_transfers_to(
         &self,
         target_address: Address,
