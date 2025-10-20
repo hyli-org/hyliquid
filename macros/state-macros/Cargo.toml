@@ -10,3 +10,9 @@ proc-macro = true
 proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full"] }
+
+[dev-dependencies]
+borsh = "1.5.7"
+sha2 = "0.10.8"
+sparse-merkle-tree = { version = "0.6.1", default-features = false }
+state-core = { path = "../state-core" }

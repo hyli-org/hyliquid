@@ -7553,8 +7553,12 @@ dependencies = [
 name = "state-macros"
 version = "0.1.0"
 dependencies = [
+ "borsh",
  "proc-macro2",
  "quote",
+ "sha2",
+ "sparse-merkle-tree",
+ "state-core",
  "syn 2.0.106",
 ]
 

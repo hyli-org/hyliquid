@@ -98,29 +98,14 @@ impl Default for Proof {
 
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkWitnessSet<
-    T: BorshDeserialize
-        + BorshSerialize
-        + Default
-        + Value
-        + GetKey
-        + Ord
-        + Hash
-        + Clone,
+    T: BorshDeserialize + BorshSerialize + Default + Value + GetKey + Ord + Hash + Clone,
 > {
     pub values: HashSet<T>,
     pub proof: Proof,
 }
 
-impl<
-        T: BorshDeserialize
-            + BorshSerialize
-            + Default
-            + Value
-            + GetKey
-            + Ord
-            + Hash
-            + Clone,
-    > Default for ZkWitnessSet<T>
+impl<T: BorshDeserialize + BorshSerialize + Default + Value + GetKey + Ord + Hash + Clone> Default
+    for ZkWitnessSet<T>
 {
     fn default() -> Self {
         Self {
@@ -130,16 +115,8 @@ impl<
     }
 }
 
-impl<
-        T: BorshDeserialize
-            + BorshSerialize
-            + Default
-            + Value
-            + GetKey
-            + Ord
-            + Hash
-            + Clone,
-    > ZkWitnessSet<T>
+impl<T: BorshDeserialize + BorshSerialize + Default + Value + GetKey + Ord + Hash + Clone>
+    ZkWitnessSet<T>
 {
     pub fn compute_root(&self) -> Result<H256, String> {
         match &self.proof {

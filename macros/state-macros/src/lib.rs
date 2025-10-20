@@ -46,6 +46,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut full_fields: Vec<TokenStream2> = Vec::new();
     let mut zk_fields: Vec<TokenStream2> = Vec::new();
     let mut sync_statements: Vec<TokenStream2> = Vec::new();
+    let mut witness_fields: Vec<TokenStream2> = Vec::new();
 
     for field in fields_vec.iter() {
         let field_ident = field.ident.clone().unwrap();
@@ -53,6 +54,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
         execute_fields.push(quote! { pub #field_ident: #ty });
 
         let mut field_kind = FieldKind::Plain;
+        let mut witness_expr: Option<TokenStream2> = None;
         for attr in &field.attrs {
             if attr.path().is_ident("commit") {
                 let args = attr
@@ -64,6 +66,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     full_fields.push(quote! { pub #field_ident: #commit_ty });
                     zk_fields.push(quote! { pub #field_ident: #witness_ty });
                     sync_statements.push(build_commit_sync(&field_ident, &ty));
+                    witness_expr = Some(build_commit_witness_expr(&field_ident, &ty));
                     field_kind = FieldKind::Commit;
                     break;
                 }
@@ -84,6 +87,11 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
             full_fields.push(quote! { pub #field_ident: #ty });
             zk_fields.push(quote! { pub #field_ident: #ty });
         }
+
+        let field_witness = witness_expr.unwrap_or_else(|| {
+            quote! { self.execute_state.#field_ident.clone() }
+        });
+        witness_fields.push(quote! { #field_ident: #field_witness });
     }
 
     let output = quote! {
@@ -149,6 +157,12 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 pub fn sync_commitments(&mut self) {
                     #( #sync_statements )*
+                }
+
+                pub fn build_witness_state(&self, _events: &[Event]) -> ZkVmState {
+                    ZkVmState {
+                        #( #witness_fields, )*
+                    }
                 }
             }
 
@@ -273,6 +287,61 @@ fn build_commit_sync(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
                 );
             }
             self.#field_ident = tree;
+        }
+    }
+}
+
+fn build_commit_witness_expr(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
+    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if parse_hash_map(&inner_ty).is_some() {
+            quote! {
+                self
+                    .execute_state
+                    .#field_ident
+                    .iter()
+                    .map(|(outer_key, inner_map)| {
+                        let values = inner_map
+                            .values()
+                            .cloned()
+                            .collect::<::std::collections::HashSet<_>>();
+                        let proof = self
+                            .#field_ident
+                            .get(outer_key)
+                            .map(|tree| ::state_core::Proof::CurrentRootHash(tree.root()))
+                            .unwrap_or_default();
+                        (
+                            outer_key.clone(),
+                            ::state_core::ZkWitnessSet {
+                                values,
+                                proof,
+                            },
+                        )
+                    })
+                    .collect::<::std::collections::HashMap<_, _>>()
+            }
+        } else {
+            quote! {
+                ::state_core::ZkWitnessSet {
+                    values: self
+                        .execute_state
+                        .#field_ident
+                        .values()
+                        .cloned()
+                        .collect::<::std::collections::HashSet<_>>(),
+                    proof: ::state_core::Proof::CurrentRootHash(self.#field_ident.root()),
+                }
+            }
+        }
+    } else {
+        quote! {
+            {
+                let mut set = ::std::collections::HashSet::new();
+                set.insert(self.execute_state.#field_ident.clone());
+                ::state_core::ZkWitnessSet {
+                    values: set,
+                    proof: ::state_core::Proof::CurrentRootHash(self.#field_ident.root()),
+                }
+            }
         }
     }
 }
