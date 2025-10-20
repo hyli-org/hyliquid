@@ -151,8 +151,8 @@ pub struct Vapp {
     pub assets: std::collections::HashMap<String, AssetInfo>,
 }
 
-impl vapp::ExecuteState {
-    pub fn compute_events_logic(&self, action: &vapp::Action) -> Vec<vapp::Event> {
+impl vapp::Logic for vapp::ExecuteState {
+    fn compute_events(&self, action: &vapp::Action) -> Vec<vapp::Event> {
         match action {
             vapp::Action::RegisterUser { username, name } => {
                 if self.user_infos.contains_key(username) {
@@ -183,7 +183,7 @@ impl vapp::ExecuteState {
         }
     }
 
-    pub fn apply_events_logic(&mut self, events: &[vapp::Event]) {
+    fn apply_events(&mut self, events: &[vapp::Event]) {
         for event in events {
             match event {
                 vapp::Event::UserRegistered(user) => {

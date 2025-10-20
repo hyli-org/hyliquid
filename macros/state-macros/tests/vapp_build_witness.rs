@@ -78,13 +78,14 @@ struct TestApp {
     level: u8,
 }
 
-#[allow(dead_code)]
-impl testapp::ExecuteState {
-    pub fn compute_events_logic(&self, _action: &testapp::Action) -> Vec<testapp::Event> {
+impl testapp::Logic for testapp::ExecuteState {
+    fn compute_events(&self, _action: &testapp::Action) -> Vec<testapp::Event> {
         Vec::new()
     }
 
-    pub fn apply_events_logic(&mut self, _events: &[testapp::Event]) {}
+    fn apply_events(&mut self, _events: &[testapp::Event]) {
+        // No-op for tests
+    }
 }
 
 #[vapp_state(action = Action, event = Event)]
@@ -93,17 +94,20 @@ struct NestedApp {
     buckets: HashMap<String, HashMap<String, DummyLeaf>>,
 }
 
-#[allow(dead_code)]
-impl nestedapp::ExecuteState {
-    pub fn compute_events_logic(&self, _action: &nestedapp::Action) -> Vec<nestedapp::Event> {
+impl nestedapp::Logic for nestedapp::ExecuteState {
+    fn compute_events(&self, _action: &nestedapp::Action) -> Vec<nestedapp::Event> {
         Vec::new()
     }
 
-    pub fn apply_events_logic(&mut self, _events: &[nestedapp::Event]) {}
+    fn apply_events(&mut self, _events: &[nestedapp::Event]) {
+        // No-op for tests
+    }
 }
 
 #[test]
 fn build_witness_state_collects_single_commit_field() {
+    use testapp::Logic as TestLogic;
+
     let mut full = testapp::FullState {
         execute_state: testapp::ExecuteState::default(),
         records: SMT::zero(),
@@ -126,7 +130,7 @@ fn build_witness_state_collects_single_commit_field() {
 
     full.execute_state.level = 7;
 
-    full.sync_commitments();
+    full.apply_events(&[]);
 
     let zk_state = full.build_witness_state(&[]);
 
@@ -145,6 +149,8 @@ fn build_witness_state_collects_single_commit_field() {
 
 #[test]
 fn build_witness_state_collects_nested_commit_fields() {
+    use nestedapp::Logic as NestedLogic;
+
     let mut full = nestedapp::FullState::default();
 
     let eth_alice = DummyLeaf::new("alice", 50);
@@ -162,7 +168,7 @@ fn build_witness_state_collects_nested_commit_fields() {
         balances.insert(sol_carla.key.clone(), sol_carla.clone());
     }
 
-    full.sync_commitments();
+    full.apply_events(&[]);
 
     let zk_state = full.build_witness_state(&[]);
 

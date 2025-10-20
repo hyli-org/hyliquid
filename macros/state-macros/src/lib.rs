@@ -121,6 +121,12 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
             pub trait Logic {
                 fn compute_events(&self, action: &Action) -> Vec<Event>;
                 fn apply_events(&mut self, events: &[Event]);
+
+                fn apply_action(&mut self, action: &Action) -> Vec<Event> {
+                    let events = self.compute_events(action);
+                    self.apply_events(&events);
+                    events
+                }
             }
 
             #[allow(dead_code)]
@@ -150,13 +156,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                 where
                     Self: Logic,
                 {
-                    let events = <Self as Logic>::compute_events(self, action);
-                    <Self as Logic>::apply_events(self, &events);
-                    events
-                }
-
-                pub fn sync_commitments(&mut self) {
-                    #( #sync_statements )*
+                    <Self as Logic>::apply_action(self, action)
                 }
 
                 pub fn build_witness_state(&self, _events: &[Event]) -> ZkVmState {
@@ -166,49 +166,14 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
             }
 
-            pub trait StateStorage {
-                fn execute_state(&self) -> &ExecuteState;
-                fn execute_state_mut(&mut self) -> &mut ExecuteState;
-                fn refresh_commitments(&mut self);
-            }
-
-            impl StateStorage for ExecuteState {
-                fn execute_state(&self) -> &ExecuteState {
-                    self
-                }
-
-                fn execute_state_mut(&mut self) -> &mut ExecuteState {
-                    self
-                }
-
-                fn refresh_commitments(&mut self) {}
-            }
-
-            impl StateStorage for FullState {
-                fn execute_state(&self) -> &ExecuteState {
-                    &self.execute_state
-                }
-
-                fn execute_state_mut(&mut self) -> &mut ExecuteState {
-                    &mut self.execute_state
-                }
-
-                fn refresh_commitments(&mut self) {
-                    self.sync_commitments();
-                }
-            }
-
-            impl<T> Logic for T
-            where
-                T: StateStorage,
-            {
+            impl Logic for FullState {
                 fn compute_events(&self, action: &Action) -> Vec<Event> {
-                    self.execute_state().compute_events_logic(action)
+                    self.execute_state.compute_events(action)
                 }
 
                 fn apply_events(&mut self, events: &[Event]) {
-                    self.execute_state_mut().apply_events_logic(events);
-                    self.refresh_commitments();
+                    self.execute_state.apply_events(events);
+                    #( #sync_statements )*
                 }
             }
         }
