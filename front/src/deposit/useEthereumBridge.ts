@@ -7,6 +7,7 @@ import {
     WALLET_SERVER_BASE_URL,
 } from "../config";
 import { Interface, parseUnits } from "ethers";
+import { normalizeHexLike, requireHexAddress } from "../utils";
 
 interface BackendSessionKey {
     key: string;
@@ -38,21 +39,12 @@ interface AccountInfo {
     salt: string;
 }
 
-const normalizeHexLike = (value: string): string => {
-    const trimmed = value.trim();
-    if (!trimmed.startsWith("0x")) {
-        return trimmed.toLowerCase();
-    }
-    return `0x${trimmed.slice(2).toLowerCase()}`;
-};
-
 const buildClaimMessage = (chain: string, ethAddress: string, userIdentity: string): string => {
     const normalizedChain = normalizeHexLike(chain);
     const normalizedAddress = normalizeHexLike(ethAddress);
     return `${normalizedChain}:${normalizedAddress}:${userIdentity}`;
 };
 
-const isHexAddress = (value: string): boolean => /^0x[a-fA-F0-9]{40}$/.test(value.trim());
 
 const fetchAccountInfo = async (username: string): Promise<AccountInfo | null> => {
     try {
@@ -182,21 +174,6 @@ export function useEthereumBridge() {
         }
     };
 
-    const requireHexAddress = (
-        value: string | undefined | null,
-        errorMessage: string,
-        missingMessage?: string,
-    ): string => {
-        const trimmed = value?.trim() ?? "";
-        if (!trimmed) {
-            throw new Error(missingMessage ?? errorMessage);
-        }
-        if (!isHexAddress(trimmed)) {
-            throw new Error(errorMessage);
-        }
-        return normalizeHexLike(trimmed);
-    };
-
     const providerAvailable = computed(() => typeof window !== "undefined" && Boolean(window.ethereum));
 
     const getProvider = (): EthereumProvider => {
@@ -246,33 +223,6 @@ export function useEthereumBridge() {
         }
     };
 
-    const submitBridgeClaim = async (
-        chain: string,
-        ethAddress: string,
-        identity: string,
-        signature: string,
-    ): Promise<void> => {
-        const normalizedChain = normalizeHexLike(chain);
-        const normalizedAddress = normalizeHexLike(ethAddress);
-
-        const response = await fetch(`${BACKEND_API_URL.value}/bridge/claim`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-                chain: normalizedChain,
-                eth_address: normalizedAddress,
-                user_identity: identity,
-                signature,
-            }),
-        });
-
-        if (!response.ok) {
-            throw new Error(`Bridge claim failed (${response.status})`);
-        }
-    };
-
     const claimBridgeIdentity = async (
         provider: EthereumProvider,
         chain: string,
@@ -291,7 +241,23 @@ export function useEthereumBridge() {
             params: [message, accountForSignature],
         });
 
-        await submitBridgeClaim(normalizedChain, normalizedAddress, identity, signature);
+        // submit bridge claim to server
+        const response = await fetch(`${BACKEND_API_URL.value}/bridge/claim`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                chain: normalizedChain,
+                eth_address: normalizedAddress,
+                user_identity: identity,
+                signature,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error(`Bridge claim failed (${response.status})`);
+        }
         claimStatusError.value = null;
         setClaimState({ claimed: true, address: normalizedAddress });
 
