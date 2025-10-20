@@ -2,6 +2,7 @@ use anyhow::{bail, Result};
 use borsh::BorshDeserialize;
 use client_sdk::{
     contract_indexer::AppError,
+    light_executor,
     rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient},
 };
 use orderbook::{
@@ -13,7 +14,8 @@ use orderbook::{
 };
 use reqwest::StatusCode;
 use sdk::{
-    api::APIRegisterContract, info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
+    api::{APIRegisterContract, TransactionStatusDb},
+    info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -128,12 +130,13 @@ pub async fn init_orderbook_from_database(
     let book_service = book_service.read().await;
 
     let last_settled_tx = indexer
-        .get_last_settled_txid_by_contract(contract_name, None)
+        .get_last_settled_txid_by_contract(contract_name, Some(vec![TransactionStatusDb::Success]))
         .await?;
 
     if last_settled_tx.is_none() {
-        info!("🔍 No last settled tx found, initializing orderbook with empty state");
-        return Ok(init_empty_orderbook(secret, lane_id));
+        info!("🔍 No last settled success tx found, initializing orderbook with empty state");
+        let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
+        return check(node, light_orderbook, full_orderbook).await;
     }
     let last_settled_tx = last_settled_tx.unwrap();
 
@@ -144,9 +147,10 @@ pub async fn init_orderbook_from_database(
         .await;
 
     if commit_id.is_none() {
-        warn!("🔍 No commit id found for tx hash: {}", last_settled_tx);
+        warn!("🔍 No commit id found for tx hash: {}", last_settled_tx.1);
         warn!("🔍 Initializing orderbook with empty state");
-        return Ok(init_empty_orderbook(secret, lane_id));
+        let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
+        return check(node, light_orderbook, full_orderbook).await;
     }
 
     let commit_id = commit_id.unwrap();
@@ -254,6 +258,14 @@ pub async fn init_orderbook_from_database(
         return Ok((light_orderbook, full_orderbook));
     }
 
+    check(node, light_orderbook, full_orderbook).await
+}
+
+async fn check(
+    node: &NodeApiHttpClient,
+    light_orderbook: ExecuteState,
+    full_orderbook: FullState,
+) -> Result<(ExecuteState, FullState), AppError> {
     if let Ok(existing) = node.get_contract(ContractName::from("orderbook")).await {
         let onchain = DebugStateCommitment::from(existing.state_commitment.clone());
         // Log existing & new orderbook and spot diff

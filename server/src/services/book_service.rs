@@ -149,7 +149,7 @@ impl BookService {
                     .and_modify(|v| {
                         v.entry(row.get::<i64, _>("price") as u64)
                             .and_modify(|v| {
-                                v.push_front(row.get("order_id"));
+                                v.push_back(row.get("order_id"));
                             })
                             .or_insert(VecDeque::from([row.get("order_id")]));
                     })
