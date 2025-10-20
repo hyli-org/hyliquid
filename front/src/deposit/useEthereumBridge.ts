@@ -530,7 +530,7 @@ export function useEthereumBridge() {
             }
 
             // FIXME: Do not hardcode this
-            const decimals = "wei";
+            const decimals = "ether";
             const erc20 = new Interface(['function transfer(address to, uint256 amount) returns (bool)']);
             
             const amount = parseUnits(amountTokens, decimals);
