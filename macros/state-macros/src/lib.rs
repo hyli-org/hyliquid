@@ -47,6 +47,11 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
     let mut zk_fields: Vec<TokenStream2> = Vec::new();
     let mut sync_statements: Vec<TokenStream2> = Vec::new();
     let mut witness_fields: Vec<TokenStream2> = Vec::new();
+    let mut ident_sync_statements: Vec<TokenStream2> = Vec::new();
+    let mut commit_struct_fields: Vec<TokenStream2> = Vec::new();
+    let mut commit_field_exprs_full: Vec<TokenStream2> = Vec::new();
+    let mut commit_field_exprs_zk: Vec<TokenStream2> = Vec::new();
+    let mut commit_uses_lifetime = false;
 
     for field in fields_vec.iter() {
         let field_ident = field.ident.clone().unwrap();
@@ -67,6 +72,15 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     zk_fields.push(quote! { pub #field_ident: #witness_ty });
                     sync_statements.push(build_commit_sync(&field_ident, &ty));
                     witness_expr = Some(build_commit_witness_expr(&field_ident, &ty));
+
+                    let root_ty = build_commit_root_type(&ty);
+                    commit_struct_fields.push(quote! { pub #field_ident: #root_ty });
+                    let full_expr = build_full_commit_expr(&field_ident, &ty);
+                    commit_field_exprs_full.push(quote! { #field_ident: #full_expr });
+
+                    let zk_expr = build_witness_commit_expr(&field_ident, &ty);
+                    commit_field_exprs_zk.push(quote! { #field_ident: #zk_expr });
+
                     field_kind = FieldKind::Commit;
                     break;
                 }
@@ -77,6 +91,18 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                 if args.kind == "borsh" {
                     full_fields.push(quote! { pub #field_ident: #ty });
                     zk_fields.push(quote! { pub #field_ident: #ty });
+
+                    commit_struct_fields.push(quote! { pub #field_ident: &'a #ty });
+                    commit_field_exprs_full.push(quote! { #field_ident: &self.#field_ident });
+
+                    commit_uses_lifetime = true;
+
+                    commit_field_exprs_zk.push(quote! { #field_ident: &self.#field_ident });
+
+                    ident_sync_statements.push(quote! {
+                        self.#field_ident = self.execute_state.#field_ident.clone();
+                    });
+
                     field_kind = FieldKind::Ident;
                     break;
                 }
@@ -86,6 +112,17 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
         if matches!(field_kind, FieldKind::Plain) {
             full_fields.push(quote! { pub #field_ident: #ty });
             zk_fields.push(quote! { pub #field_ident: #ty });
+
+            commit_struct_fields.push(quote! { pub #field_ident: &'a #ty });
+            commit_field_exprs_full.push(quote! { #field_ident: &self.#field_ident });
+
+            commit_uses_lifetime = true;
+
+            commit_field_exprs_zk.push(quote! { #field_ident: &self.#field_ident });
+
+            ident_sync_statements.push(quote! {
+                self.#field_ident = self.execute_state.#field_ident.clone();
+            });
         }
 
         let field_witness = witness_expr.unwrap_or_else(|| {
@@ -93,6 +130,28 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
         });
         witness_fields.push(quote! { #field_ident: #field_witness });
     }
+
+    let commit_struct_def = if commit_uses_lifetime {
+        quote! {
+            #[derive(Debug, PartialEq, Eq)]
+            pub struct StateCommitment<'a> {
+                #( #commit_struct_fields, )*
+            }
+        }
+    } else {
+        quote! {
+            #[derive(Debug, PartialEq, Eq)]
+            pub struct StateCommitment {
+                #( #commit_struct_fields, )*
+            }
+        }
+    };
+
+    let commit_return_ty = if commit_uses_lifetime {
+        quote! { StateCommitment<'_> }
+    } else {
+        quote! { StateCommitment }
+    };
 
     let output = quote! {
         #[allow(non_snake_case)]
@@ -114,6 +173,8 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
             pub struct ZkVmState {
                 #( #zk_fields, )*
             }
+
+            #commit_struct_def
 
             pub type Action = super::#action_ty;
             pub type Event = super::#event_ty;
@@ -159,9 +220,23 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
                     <Self as Logic>::apply_action(self, action)
                 }
 
+                pub fn commit(&self) -> #commit_return_ty {
+                    StateCommitment {
+                        #( #commit_field_exprs_full, )*
+                    }
+                }
+
                 pub fn build_witness_state(&self, _events: &[Event]) -> ZkVmState {
                     ZkVmState {
                         #( #witness_fields, )*
+                    }
+                }
+            }
+
+            impl ZkVmState {
+                pub fn commit(&self) -> #commit_return_ty {
+                    StateCommitment {
+                        #( #commit_field_exprs_zk, )*
                     }
                 }
             }
@@ -173,6 +248,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 fn apply_events(&mut self, events: &[Event]) {
                     self.execute_state.apply_events(events);
+                    #( #ident_sync_statements )*
                     #( #sync_statements )*
                 }
             }
@@ -203,6 +279,54 @@ fn build_witness_type(value_ty: &Type) -> TokenStream2 {
         }
     } else {
         quote! { ::state_core::ZkWitnessSet<#value_ty> }
+    }
+}
+
+fn build_commit_root_type(value_ty: &Type) -> TokenStream2 {
+    if let Some((key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if parse_hash_map(&inner_ty).is_some() {
+            quote! { ::std::collections::HashMap<#key_ty, ::state_core::BorshableH256> }
+        } else {
+            quote! { ::state_core::BorshableH256 }
+        }
+    } else {
+        quote! { ::state_core::BorshableH256 }
+    }
+}
+
+fn build_full_commit_expr(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
+    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if parse_hash_map(&inner_ty).is_some() {
+            quote! {
+                self
+                    .#field_ident
+                    .iter()
+                    .map(|(outer_key, tree)| (outer_key.clone(), tree.root()))
+                    .collect::<::std::collections::HashMap<_, _>>()
+            }
+        } else {
+            quote! { self.#field_ident.root() }
+        }
+    } else {
+        quote! { self.#field_ident.root() }
+    }
+}
+
+fn build_witness_commit_expr(field_ident: &Ident, value_ty: &Type) -> TokenStream2 {
+    if let Some((_key_ty, inner_ty)) = parse_hash_map(value_ty) {
+        if parse_hash_map(&inner_ty).is_some() {
+            quote! {
+                self
+                    .#field_ident
+                    .iter()
+                    .map(|(outer_key, witness)| (outer_key.clone(), witness.compute_root()))
+                    .collect::<::std::collections::HashMap<_, _>>()
+            }
+        } else {
+            quote! { self.#field_ident.compute_root() }
+        }
+    } else {
+        quote! { self.#field_ident.compute_root() }
     }
 }
 

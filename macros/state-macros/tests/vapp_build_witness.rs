@@ -377,3 +377,69 @@ fn full_state_action_builds_consistent_witness() {
         _ => panic!("expected current root hash proof for records"),
     }
 }
+
+#[test]
+fn commit_methods_produce_roots_and_refs() {
+    use nestedapp::Logic as NestedLogic;
+    use testapp::Logic as TestLogic;
+
+    let mut full = testapp::FullState::default();
+    let events = vec![
+        testapp::Event::RecordInserted(DummyLeaf::new("alpha", 10)),
+        testapp::Event::RecordInserted(DummyLeaf::new("beta", 20)),
+        testapp::Event::MetadataSet {
+            key: "version".into(),
+            value: "1".into(),
+        },
+        testapp::Event::LevelSet(5),
+    ];
+    full.apply_events(&events);
+
+    let commitment = full.commit();
+    assert_eq!(commitment.records, full.records.root());
+    assert_eq!(commitment.metadata, &full.metadata);
+    assert_eq!(commitment.level, &full.level);
+
+    let witness_state = full.build_witness_state(&events);
+    let witness_commitment = witness_state.commit();
+    assert_eq!(witness_commitment, commitment);
+
+    let mut nested_full = nestedapp::FullState::default();
+    let nested_events = vec![
+        nestedapp::Event::BucketUpsert {
+            bucket: "ETH".into(),
+            leaf: DummyLeaf::new("alice", 50),
+        },
+        nestedapp::Event::BucketUpsert {
+            bucket: "ETH".into(),
+            leaf: DummyLeaf::new("bob", 75),
+        },
+        nestedapp::Event::BucketUpsert {
+            bucket: "SOL".into(),
+            leaf: DummyLeaf::new("carla", 30),
+        },
+    ];
+    nested_full.apply_events(&nested_events);
+
+    let nested_commitment = nested_full.commit();
+    assert_eq!(
+        nested_commitment
+            .buckets
+            .get("ETH")
+            .copied()
+            .expect("ETH root"),
+        nested_full.buckets.get("ETH").expect("ETH tree").root()
+    );
+    assert_eq!(
+        nested_commitment
+            .buckets
+            .get("SOL")
+            .copied()
+            .expect("SOL root"),
+        nested_full.buckets.get("SOL").expect("SOL tree").root()
+    );
+
+    let nested_witness = nested_full.build_witness_state(&nested_events);
+    let nested_witness_commit = nested_witness.commit();
+    assert_eq!(nested_witness_commit, nested_commitment);
+}

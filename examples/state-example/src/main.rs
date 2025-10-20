@@ -24,6 +24,10 @@ fn main() {
         username: "alice".into(),
         name: "Alice".into(),
     });
+
+    let commit = full.commit();
+    println!("commit: {:?}", commit);
+
     println!("register events: {:?}", register_events);
     events.extend(register_events);
 
@@ -36,6 +40,9 @@ fn main() {
     events.extend(credit_events);
 
     let zk_state = full.build_witness_state(&events);
+
+    let commit = zk_state.commit();
+    println!("commit: {:?}", commit);
 
     println!("full: {:?}", full);
     println!("zk: {:?}", zk_state);

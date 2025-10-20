@@ -118,9 +118,9 @@ impl<T: BorshDeserialize + BorshSerialize + Default + Value + GetKey + Ord + Has
 impl<T: BorshDeserialize + BorshSerialize + Default + Value + GetKey + Ord + Hash + Clone>
     ZkWitnessSet<T>
 {
-    pub fn compute_root(&self) -> Result<H256, String> {
+    pub fn compute_root(&self) -> H256 {
         match &self.proof {
-            Proof::CurrentRootHash(root_hash) => Ok(*root_hash),
+            Proof::CurrentRootHash(root_hash) => *root_hash,
             Proof::Some(proof) => {
                 let leaves: Vec<(_, _)> = self
                     .values
@@ -129,17 +129,13 @@ impl<T: BorshDeserialize + BorshSerialize + Default + Value + GetKey + Ord + Has
                     .map(|v| (v.get_key().into(), v.to_h256()))
                     .collect();
 
-                if leaves.is_empty() {
-                    return Err("No leaves in witness set, proof should be empty".to_string());
-                }
-
                 let derived_root = proof
                     .0
                     .clone()
                     .compute_root::<SHA256Hasher>(leaves)
-                    .map_err(|e| format!("Failed to compute witness proof root: {e}"))?;
+                    .unwrap();
 
-                Ok(H256::from(derived_root))
+                H256::from(derived_root)
             }
         }
     }

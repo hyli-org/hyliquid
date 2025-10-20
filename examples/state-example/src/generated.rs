@@ -109,7 +109,7 @@ impl Value for Balance {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct AssetInfo {
     pub decimals: u8,
 }
@@ -136,8 +136,6 @@ pub enum Event {
         amount: i64,
     },
 }
-
-//
 
 #[vapp_state(action = Action, event = Event)]
 pub struct Vapp {
