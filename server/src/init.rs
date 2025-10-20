@@ -111,6 +111,7 @@ fn init_empty_orderbook(secret: Vec<u8>, lane_id: LaneId) -> (ExecuteState, Full
     (light, full)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn init_orderbook_from_database(
     lane_id: LaneId,
     secret: Vec<u8>,
