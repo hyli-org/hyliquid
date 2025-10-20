@@ -179,7 +179,7 @@ impl Module for BridgeModule {
         //   1. User sends a withdraw action to the orderbook contract on Hyli, specifiying a Hyli identity
         //   2. We detect the settled tx event, and send a corresponding transfer on Hyli token contract
 
-        // - Flow 3:USDC from Orderbook (on Hyli) -> USDC token (on Eth): this only happens on one contract (say USDC).
+        // - Flow 3: (TODO) USDC from Orderbook (on Hyli) -> USDC token (on Eth): this only happens on one contract (say USDC).
         //   1. User sends a withdraw action to the orderbook contract on Hyli, specifiying an Eth address
         //   2. We detect the settled tx event, and send a corresponding transfer on Eth
 

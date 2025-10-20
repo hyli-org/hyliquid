@@ -83,11 +83,11 @@ impl EthClient {
     }
 }
 
-/// Petit wrapper pour écouter un contrat Ethereum avec Alloy.
+/// Small wrapper to listen to an Ethereum contract with Alloy.
 ///
-/// # Exemples d'utilisation
+/// # Usage Examples
 ///
-/// ## Écouter tous les événements d'un contrat
+/// ## Listen to all contract events
 /// ```rust
 /// use alloy::primitives::Address;
 /// use std::str::FromStr;
@@ -99,15 +99,15 @@ impl EthClient {
 /// let mut stream = listener.event_stream().await?;
 /// while let Some(result) = stream.next().await {
 ///     match result {
-///         Ok(log) => println!("Nouvel événement: {:?}", log),
-///         Err(e) => eprintln!("Erreur: {}", e),
+///         Ok(log) => println!("New event: {:?}", log),
+///         Err(e) => eprintln!("Error: {}", e),
 ///     }
 /// }
 /// # Ok(())
 /// # }
 /// ```
 ///
-/// ## Écouter des événements spécifiques
+/// ## Listen to specific events
 /// ```rust
 /// # async fn example_specific_events() -> anyhow::Result<()> {
 /// let contract_address = Address::from_str("0x...")?;
@@ -120,8 +120,8 @@ impl EthClient {
 ///
 /// while let Some(result) = stream.next().await {
 ///     match result {
-///         Ok(log) => println!("Transfer ou Approval: {:?}", log),
-///         Err(e) => eprintln!("Erreur: {}", e),
+///         Ok(log) => println!("Transfer or Approval: {:?}", log),
+///         Err(e) => eprintln!("Error: {}", e),
 ///     }
 /// }
 /// # Ok(())
@@ -134,7 +134,7 @@ pub struct EthListener {
 
 impl EthListener {
     const RANGE_BATCH_SIZE: u64 = 1000;
-    /// Connecte au RPC (ws/http) et crée le listener.
+    /// Connects to the RPC (ws/http) and creates the listener.
     pub async fn connect(rpc_url: &str, contract: Address) -> Result<Self> {
         let connect = WsConnect::new(rpc_url);
         let provider = ProviderBuilder::new().connect_ws(connect).await?;
@@ -144,21 +144,21 @@ impl EthListener {
         })
     }
 
-    /// Retourne un stream d'événements concernant le contrat avec filtrage par topics.
+    /// Returns an event stream for the contract with topic filtering.
     ///
-    /// Le stream produit des `Result<Log, Error>` où chaque `Log` représente un événement
-    /// émis par le contrat. Les erreurs de connexion sont gérées et propagées dans le stream.
+    /// The stream produces `Result<Log, Error>` where each `Log` represents an event
+    /// emitted by the contract. Connection errors are handled and propagated in the stream.
     ///
     /// # Arguments
-    /// * `topics` - Optionnel, vecteur de topics pour filtrer les événements spécifiques.
-    ///   Chaque topic est un `Vec<Option<[u8; 32]>>` représentant les signatures d'événements.
+    /// * `topics` - Optional, vector of topics to filter specific events.
+    ///   Each topic is a `Vec<Option<[u8; 32]>>` representing event signatures.
     ///
-    /// Exemple d'usage:
+    /// Usage example:
     /// ```rust
-    /// // Écouter tous les événements
+    /// // Listen to all events
     /// let mut stream = listener.event_stream_with_topics(None).await?;
     ///
-    /// // Écouter seulement un événement spécifique (ex: Transfer)
+    /// // Listen to only a specific event (e.g.: Transfer)
     /// let transfer_topic = keccak256("Transfer(address,address,uint256)");
     /// let topics = vec![Some(transfer_topic)];
     /// let mut stream = listener.event_stream_with_topics(Some(topics)).await?;
@@ -170,7 +170,7 @@ impl EthListener {
         let mut filter = Filter::new().address(self.contract);
 
         if let Some(topics) = topics {
-            // Appliquer les topics au filtre
+            // Apply topics to the filter
             for (i, topic) in topics.into_iter().enumerate() {
                 match i {
                     0 => {
@@ -193,7 +193,7 @@ impl EthListener {
                             filter = filter.topic3(topic);
                         }
                     }
-                    _ => break, // Alloy ne supporte que 4 topics maximum
+                    _ => break, // Alloy only supports maximum 4 topics
                 }
             }
         }
@@ -201,20 +201,20 @@ impl EthListener {
         let sub = self.provider.subscribe_logs(&filter).await?;
         let stream = sub.into_stream();
 
-        // Le stream d'Alloy retourne déjà des Log directement
-        // On les convertit en Result<Log, Error> pour une gestion d'erreur cohérente
+        // Alloy's stream already returns Log directly
+        // We convert them to Result<Log, Error> for consistent error handling
         let error_stream =
             stream.map(|log| Ok(log) as Result<Log, Box<dyn std::error::Error + Send + Sync>>);
 
         Ok(error_stream)
     }
 
-    /// Crée un topic d'événement à partir de sa signature.
+    /// Creates an event topic from its signature.
     ///
     /// # Arguments
-    /// * `signature` - La signature de l'événement (ex: "Transfer(address,address,uint256)")
+    /// * `signature` - The event signature (e.g.: "Transfer(address,address,uint256)")
     ///
-    /// # Exemple
+    /// # Example
     /// ```rust
     /// let transfer_topic = EthListener::create_event_topic("Transfer(address,address,uint256)");
     /// ```
@@ -222,12 +222,12 @@ impl EthListener {
         keccak256(signature.as_bytes()).into()
     }
 
-    /// Convertit une adresse en topic (32 bytes avec padding)
+    /// Converts an address to topic (32 bytes with padding)
     ///
     /// # Arguments
-    /// * `address` - L'adresse à convertir
+    /// * `address` - The address to convert
     ///
-    /// # Exemple
+    /// # Example
     /// ```rust
     /// let address = Address::from_str("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65")?;
     /// let topic = EthListener::address_to_topic(address);
@@ -249,12 +249,12 @@ impl EthListener {
         Ok(self.provider.get_block_number().await?)
     }
 
-    /// Écoute les transferts vers une adresse spécifique
+    /// Listens to transfers to a specific address
     ///
     /// # Arguments
-    /// * `target_address` - L'adresse de destination à filtrer
+    /// * `target_address` - The target address to filter
     ///
-    /// # Exemple
+    /// # Example
     /// ```rust
     /// let vault_address = Address::from_str("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65")?;
     /// let mut stream = listener.stream_transfers_to(vault_address).await?;
@@ -267,16 +267,16 @@ impl EthListener {
         let target_topic = Self::address_to_topic(target_address);
 
         let topics = vec![
-            Some(transfer_topic), // topic0: signature de l'événement
-            None,                 // topic1: from (n'importe qui)
-            Some(target_topic),   // topic2: to (adresse cible)
-            None,                 // topic3: value (n'importe quelle valeur)
+            Some(transfer_topic), // topic0: event signature
+            None,                 // topic1: from (anyone)
+            Some(target_topic),   // topic2: to (target address)
+            None,                 // topic3: value (any value)
         ];
 
         self.event_stream_with_topics(Some(topics)).await
     }
 
-    /// Écoute les transferts depuis une adresse spécifique
+    /// Listens to transfers from a specific address
     pub async fn stream_transfers_from(
         &self,
         source_address: Address,
@@ -285,10 +285,10 @@ impl EthListener {
         let source_topic = Self::address_to_topic(source_address);
 
         let topics = vec![
-            Some(transfer_topic), // topic0: signature de l'événement
-            Some(source_topic),   // topic1: from (adresse source)
-            None,                 // topic2: to (n'importe qui)
-            None,                 // topic3: value (n'importe quelle valeur)
+            Some(transfer_topic), // topic0: event signature
+            Some(source_topic),   // topic1: from (source address)
+            None,                 // topic2: to (anyone)
+            None,                 // topic3: value (any value)
         ];
 
         self.event_stream_with_topics(Some(topics)).await

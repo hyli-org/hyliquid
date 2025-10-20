@@ -5,46 +5,46 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::str::FromStr;
 
-/// Transaction Ethereum entrante (vers le bridge)
+/// Incoming Ethereum transaction (to the bridge)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct EthTransaction {
     pub tx_hash: TxHash,
     pub block_number: u64,
     pub from: Address,
-    pub to: Address, // Adresse du vault
+    pub to: Address, // Vault address
     pub amount: U256,
     pub timestamp: u64,
     pub status: TxStatus,
 }
 
-/// Statut d'une transaction
+/// Transaction status
 #[derive(
     Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize,
 )]
 pub enum TxStatus {
-    Pending,   // En attente de confirmation
-    Confirmed, // Confirmée sur la blockchain
+    Pending,   // Awaiting confirmation
+    Confirmed, // Confirmed on blockchain
 }
 
-/// État global du bridge (version simplifiée)
+/// Global bridge state (simplified version)
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct BridgeState {
     // Configuration
     pub eth_contract: Address,
     pub eth_contract_vault_address: Address,
 
-    // État des blockchains
+    // Blockchain state
     pub eth_last_block: u64,
 
-    // Transactions en attente
+    // Pending transactions
     #[serde(default)]
     pub eth_pending_txs: HashMap<TxHash, EthTransaction>,
 
-    // Transactions déjà observées afin d'éviter de les retraiter.
+    // Already observed transactions to avoid reprocessing them.
     #[serde(default)]
     pub processed_eth_txs: HashSet<TxHash>,
 
-    // Métadonnées
+    // Metadata
     #[serde(default)]
     pub eth_address_bindings: HashMap<Address, String>,
 }
@@ -61,7 +61,7 @@ struct EthTransactionSer {
 }
 
 impl BridgeState {
-    /// Crée un nouvel état de bridge
+    /// Creates a new bridge state
     pub fn from_vault_adress(vault_address: String) -> Self {
         BridgeState {
             eth_contract_vault_address: Address::from_str(vault_address.as_str()).unwrap(),
@@ -117,7 +117,7 @@ impl BridgeState {
         }
     }
 
-    /// Ajoute une transaction Ethereum en attente. Retourne `true` si elle a été enregistrée.
+    /// Adds a pending Ethereum transaction. Returns `true` if it was recorded.
     pub fn add_eth_pending_transaction(&mut self, tx: EthTransaction) -> bool {
         if self.is_eth_tracked(&tx.tx_hash) {
             return false;
