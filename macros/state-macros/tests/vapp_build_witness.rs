@@ -2,7 +2,7 @@ use borsh::{BorshDeserialize, BorshSerialize};
 use sha2::{Digest, Sha256};
 use sparse_merkle_tree::traits::Value;
 use sparse_merkle_tree::H256;
-use state_core::{BorshableH256, GetHashMapIndex, GetKey, Proof, SMT};
+use state_core::{BorshableH256, GetHashMapIndex, GetKey, Proof};
 use state_macros::vapp_state;
 use std::collections::HashMap;
 
@@ -61,11 +61,21 @@ impl Value for DummyLeaf {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-enum Action {}
+enum Action {
+    InsertRecord(DummyLeaf),
+    SetMetadata { key: String, value: String },
+    SetLevel(u8),
+    UpsertBucket { bucket: String, leaf: DummyLeaf },
+}
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-enum Event {}
+enum Event {
+    RecordInserted(DummyLeaf),
+    MetadataSet { key: String, value: String },
+    LevelSet(u8),
+    BucketUpsert { bucket: String, leaf: DummyLeaf },
+}
 
 #[vapp_state(action = Action, event = Event)]
 struct TestApp {
@@ -79,12 +89,37 @@ struct TestApp {
 }
 
 impl testapp::Logic for testapp::ExecuteState {
-    fn compute_events(&self, _action: &testapp::Action) -> Vec<testapp::Event> {
-        Vec::new()
+    fn compute_events(&self, action: &testapp::Action) -> Vec<testapp::Event> {
+        match action {
+            testapp::Action::InsertRecord(leaf) => {
+                vec![testapp::Event::RecordInserted(leaf.clone())]
+            }
+            testapp::Action::SetMetadata { key, value } => vec![testapp::Event::MetadataSet {
+                key: key.clone(),
+                value: value.clone(),
+            }],
+            testapp::Action::SetLevel(level) => {
+                vec![testapp::Event::LevelSet(*level)]
+            }
+            testapp::Action::UpsertBucket { .. } => Vec::new(),
+        }
     }
 
-    fn apply_events(&mut self, _events: &[testapp::Event]) {
-        // No-op for tests
+    fn apply_events(&mut self, events: &[testapp::Event]) {
+        for event in events {
+            match event {
+                testapp::Event::RecordInserted(leaf) => {
+                    self.records.insert(leaf.key.clone(), leaf.clone());
+                }
+                testapp::Event::MetadataSet { key, value } => {
+                    self.metadata.insert(key.clone(), value.clone());
+                }
+                testapp::Event::LevelSet(level) => {
+                    self.level = *level;
+                }
+                testapp::Event::BucketUpsert { .. } => {}
+            }
+        }
     }
 }
 
@@ -95,12 +130,34 @@ struct NestedApp {
 }
 
 impl nestedapp::Logic for nestedapp::ExecuteState {
-    fn compute_events(&self, _action: &nestedapp::Action) -> Vec<nestedapp::Event> {
-        Vec::new()
+    fn compute_events(&self, action: &nestedapp::Action) -> Vec<nestedapp::Event> {
+        match action {
+            nestedapp::Action::UpsertBucket { bucket, leaf } => {
+                vec![nestedapp::Event::BucketUpsert {
+                    bucket: bucket.clone(),
+                    leaf: leaf.clone(),
+                }]
+            }
+            nestedapp::Action::InsertRecord(_)
+            | nestedapp::Action::SetMetadata { .. }
+            | nestedapp::Action::SetLevel(_) => Vec::new(),
+        }
     }
 
-    fn apply_events(&mut self, _events: &[nestedapp::Event]) {
-        // No-op for tests
+    fn apply_events(&mut self, events: &[nestedapp::Event]) {
+        for event in events {
+            match event {
+                nestedapp::Event::BucketUpsert { bucket, leaf } => {
+                    self.buckets
+                        .entry(bucket.clone())
+                        .or_default()
+                        .insert(leaf.key.clone(), leaf.clone());
+                }
+                nestedapp::Event::RecordInserted(_)
+                | nestedapp::Event::MetadataSet { .. }
+                | nestedapp::Event::LevelSet(_) => {}
+            }
+        }
     }
 }
 
@@ -108,31 +165,31 @@ impl nestedapp::Logic for nestedapp::ExecuteState {
 fn build_witness_state_collects_single_commit_field() {
     use testapp::Logic as TestLogic;
 
-    let mut full = testapp::FullState {
-        execute_state: testapp::ExecuteState::default(),
-        records: SMT::zero(),
-        metadata: HashMap::new(),
-        level: 0,
-    };
+    let mut full = testapp::FullState::default();
 
     let alpha = DummyLeaf::new("alpha", 10);
     let beta = DummyLeaf::new("beta", 25);
 
-    full.execute_state
-        .records
-        .insert(alpha.key.clone(), alpha.clone());
-    full.execute_state
-        .records
-        .insert(beta.key.clone(), beta.clone());
-    full.execute_state
-        .metadata
-        .insert("version".into(), "1".into());
+    let events = vec![
+        testapp::Event::RecordInserted(alpha.clone()),
+        testapp::Event::RecordInserted(beta.clone()),
+        testapp::Event::MetadataSet {
+            key: "version".into(),
+            value: "1".into(),
+        },
+        testapp::Event::LevelSet(7),
+    ];
 
-    full.execute_state.level = 7;
-
-    full.apply_events(&[]);
+    full.apply_events(&events);
 
     let zk_state = full.build_witness_state(&[]);
+
+    assert_eq!(full.execute_state.records.len(), 2);
+    assert_eq!(full.execute_state.level, 7);
+    assert_eq!(
+        full.execute_state.metadata.get("version"),
+        Some(&"1".to_string())
+    );
 
     assert_eq!(zk_state.metadata, full.execute_state.metadata);
     assert_eq!(zk_state.level, full.execute_state.level);
@@ -157,20 +214,41 @@ fn build_witness_state_collects_nested_commit_fields() {
     let eth_bob = DummyLeaf::new("bob", 75);
     let sol_carla = DummyLeaf::new("carla", 20);
 
-    {
-        let balances = full.execute_state.buckets.entry("ETH".into()).or_default();
-        balances.insert(eth_alice.key.clone(), eth_alice.clone());
-        balances.insert(eth_bob.key.clone(), eth_bob.clone());
-    }
+    let events = vec![
+        nestedapp::Event::BucketUpsert {
+            bucket: "ETH".into(),
+            leaf: eth_alice.clone(),
+        },
+        nestedapp::Event::BucketUpsert {
+            bucket: "ETH".into(),
+            leaf: eth_bob.clone(),
+        },
+        nestedapp::Event::BucketUpsert {
+            bucket: "SOL".into(),
+            leaf: sol_carla.clone(),
+        },
+    ];
 
-    {
-        let balances = full.execute_state.buckets.entry("SOL".into()).or_default();
-        balances.insert(sol_carla.key.clone(), sol_carla.clone());
-    }
-
-    full.apply_events(&[]);
+    full.apply_events(&events);
 
     let zk_state = full.build_witness_state(&[]);
+
+    assert_eq!(
+        full.execute_state
+            .buckets
+            .get("ETH")
+            .map(|m| m.len())
+            .unwrap_or_default(),
+        2
+    );
+    assert_eq!(
+        full.execute_state
+            .buckets
+            .get("SOL")
+            .map(|m| m.len())
+            .unwrap_or_default(),
+        1
+    );
 
     assert_eq!(zk_state.buckets.len(), 2);
 
@@ -197,5 +275,105 @@ fn build_witness_state_collects_nested_commit_fields() {
             assert_eq!(root, tree.root());
         }
         _ => panic!("expected current root hash proof for SOL"),
+    }
+}
+
+#[test]
+fn full_state_execute_state_matches_standalone_execution() {
+    use nestedapp::Logic as NestedLogic;
+    use testapp::Logic as TestLogic;
+
+    let alpha = DummyLeaf::new("alpha", 10);
+    let beta = DummyLeaf::new("beta", 25);
+    let version_event = testapp::Event::MetadataSet {
+        key: "version".into(),
+        value: "1".into(),
+    };
+    let level_event = testapp::Event::LevelSet(3);
+
+    let record_events = vec![
+        testapp::Event::RecordInserted(alpha.clone()),
+        testapp::Event::RecordInserted(beta.clone()),
+        version_event.clone(),
+        level_event.clone(),
+    ];
+
+    let mut expected_exec = testapp::ExecuteState::default();
+    expected_exec.apply_events(&record_events);
+
+    let mut full = testapp::FullState::default();
+    full.apply_events(&record_events);
+
+    assert_eq!(full.execute_state.records, expected_exec.records);
+    assert_eq!(full.execute_state.metadata, expected_exec.metadata);
+    assert_eq!(full.execute_state.level, expected_exec.level);
+
+    let nested_events = vec![
+        nestedapp::Event::BucketUpsert {
+            bucket: "A".into(),
+            leaf: DummyLeaf::new("alice", 10),
+        },
+        nestedapp::Event::BucketUpsert {
+            bucket: "A".into(),
+            leaf: DummyLeaf::new("bob", 15),
+        },
+        nestedapp::Event::BucketUpsert {
+            bucket: "B".into(),
+            leaf: DummyLeaf::new("carla", 20),
+        },
+    ];
+
+    let mut expected_nested_exec = nestedapp::ExecuteState::default();
+    expected_nested_exec.apply_events(&nested_events);
+
+    let mut nested_full = nestedapp::FullState::default();
+    nested_full.apply_events(&nested_events);
+
+    assert_eq!(
+        nested_full.execute_state.buckets,
+        expected_nested_exec.buckets
+    );
+}
+
+#[test]
+fn full_state_action_builds_consistent_witness() {
+    use testapp::Logic as TestLogic;
+
+    let mut full = testapp::FullState::default();
+
+    let init_events = vec![
+        testapp::Event::RecordInserted(DummyLeaf::new("alpha", 10)),
+        testapp::Event::MetadataSet {
+            key: "version".into(),
+            value: "1".into(),
+        },
+        testapp::Event::LevelSet(1),
+    ];
+    full.apply_events(&init_events);
+
+    let new_record = DummyLeaf::new("charlie", 30);
+    let action = testapp::Action::InsertRecord(new_record.clone());
+    let events = full.apply_action(&action);
+
+    assert_eq!(events.len(), 1);
+
+    let witness = full.build_witness_state(&events);
+
+    assert!(
+        witness.records.values.contains(&new_record),
+        "witness set should contain inserted record"
+    );
+    assert_eq!(
+        witness.metadata, full.execute_state.metadata,
+        "metadata should match"
+    );
+    assert_eq!(
+        witness.level, full.execute_state.level,
+        "level should match"
+    );
+
+    match witness.records.proof {
+        Proof::CurrentRootHash(root) => assert_eq!(root, full.records.root()),
+        _ => panic!("expected current root hash proof for records"),
     }
 }
