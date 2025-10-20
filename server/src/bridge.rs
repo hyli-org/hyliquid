@@ -46,9 +46,9 @@ pub mod utils;
 pub struct BridgeModule {
     bus: BridgeModuleBusClient,
     state: Arc<RwLock<BridgeState>>,
-    collateral_token_cn: ContractName,
     eth_ws_url: String,
-    eth_contract_address: Address,
+    collateral_token_cn: ContractName, // Collateral token contract name on Hyli side
+    eth_contract_address: Address,     // Collateral token address name on Ethereum side
     eth_contract_vault_address: Address,
     state_path: PathBuf,
     asset_service: Arc<RwLock<AssetService>>,
@@ -166,7 +166,6 @@ impl Module for BridgeModule {
             self.eth_contract_vault_address, self.eth_contract_address
         );
 
-        // TODO: filtrer par address de contrat
         let mut to_vault_stream = eth_listener.stream_transfers_to(vault_address).await?;
 
         // TODO: implement all bridge's flows.
