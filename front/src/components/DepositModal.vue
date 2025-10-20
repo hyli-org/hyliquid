@@ -470,7 +470,14 @@ const handleEthereumDeposit = async () => {
                         class="rounded border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200"
                     >
                         Deposit transaction submitted:
-                        <span class="font-mono text-xs">{{ txHash }}</span>
+                        <a
+                            :href="`${selectedNetwork?.blockExplorerUrl}/tx/${txHash}`"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            class="font-mono text-xs text-emerald-300 hover:text-emerald-100 underline decoration-emerald-400 hover:decoration-emerald-200 transition-colors ml-1"
+                        >
+                            {{ txHash }}
+                        </a>
                     </div>
 
                     <button
