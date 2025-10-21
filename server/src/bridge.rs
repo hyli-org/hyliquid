@@ -183,7 +183,6 @@ impl Module for BridgeModule {
 
         let mut to_vault_stream = eth_listener.stream_transfers_to(vault_address).await?;
 
-        // TODO: implement all bridge's flows.
         // There are actually three distinct flows:
         // - Flow 1: USDC token (on Eth) -> Orderbook (on Hyli): this only happens on one contract (say USDC).
         //   1. User sends token on eth to vault address
@@ -193,7 +192,7 @@ impl Module for BridgeModule {
         //   1. User sends a withdraw action to the orderbook contract on Hyli, specifiying a Hyli identity
         //   2. We detect the settled tx event, and send a corresponding transfer on Hyli token contract
 
-        // - Flow 3: (TODO) USDC from Orderbook (on Hyli) -> USDC token (on Eth): this only happens on one contract (say USDC).
+        // - Flow 3: USDC from Orderbook (on Hyli) -> USDC token (on Eth): this only happens on one contract (say USDC).
         //   1. User sends a withdraw action to the orderbook contract on Hyli, specifiying an Eth address
         //   2. We detect the settled tx event, and send a corresponding transfer on Eth
 
@@ -202,7 +201,6 @@ impl Module for BridgeModule {
 
             // Receive Ethereum logs
             Some(msg) = to_vault_stream.next() => {
-
                 match msg {
                     Ok(log) => {
                         // Flow 1
@@ -213,7 +211,7 @@ impl Module for BridgeModule {
                 }
             },
 
-            // Flow 2
+            // Flow 2 + Flow 3
             listen<NodeStateEvent> event => {
                 _ = log_error!(self.handle_node_state_event(event).await, "handle node state event")
             }
@@ -285,6 +283,7 @@ impl BridgeModule {
                 "Settled withdraw action detected",
             );
 
+            // Flow 3
             if withdraw.destination.network == "ethereum-mainnet"
                 || withdraw.destination.network == "ethereum-sepolia"
             {
