@@ -25,9 +25,9 @@ interface AccountInfo {
             };
         }
         | {
-              Jwt: {
-                  hash: number[];
-              };
+            Jwt: {
+                hash: number[];
+            };
         }
         | {
             Ethereum: {
@@ -529,10 +529,26 @@ export function useEthereumBridge() {
                 throw new Error(message);
             }
 
-            // FIXME: Do not hardcode this
-            const decimals = "ether";
-            const erc20 = new Interface(['function transfer(address to, uint256 amount) returns (bool)']);
+            // Get decimals from the ERC20 contract
+            const erc20 = new Interface([
+                'function transfer(address to, uint256 amount) returns (bool)',
+                'function decimals() view returns (uint8)'
+            ]);
+
+            // Query decimals from the contract
+            const decimalsCallData = erc20.encodeFunctionData('decimals', []);
+            const decimalsResult = await provider.request<string>({
+                method: "eth_call",
+                params: [
+                    {
+                        to: tokenAddress,
+                        data: decimalsCallData,
+                    },
+                    "latest"
+                ],
+            });
             
+            const [decimals] = erc20.decodeFunctionResult('decimals', decimalsResult);
             const amount = parseUnits(amountTokens, decimals);
             const data = erc20.encodeFunctionData('transfer', [vaultAddress, amount]);
 

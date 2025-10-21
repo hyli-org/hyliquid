@@ -33,7 +33,7 @@ export const COLLATERAL_NETWORKS: CollateralNetworkConfig[] = [
         id: "ethereum-sepolia",
         name: "Ethereum Sepolia",
         chainId: "0xaa36a7",
-        tokenAddress: "0x6d6Fc2b5B6F71B84838C70ED1719C9D498FdB083",
+        tokenAddress: "0x22CE25BFa5Dcd58A3B52c2A5fa262bDF079A5456",
         vaultAddress: "0x2ffCC85Db88Dbb4047d4d1528CE7739CFB961302",
         rpcUrl: "https://0xrpc.io/sep",
         blockExplorerUrl: "https://sepolia.etherscan.io",

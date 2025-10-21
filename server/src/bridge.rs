@@ -373,13 +373,7 @@ impl BridgeModule {
         })?;
 
         let amount = U256::from(withdraw.amount);
-        // FIXME: decimals should not be multiplied into amount here
-        let amount = {
-            let multiplier = U256::from(10u128.pow(18));
-            amount * multiplier
-        };
 
-        // TODO: assert that bridge has enough balance on eth to process the withdraw
         self.eth_client
             .get_token_balance(self.eth_contract_vault_address)
             .await
@@ -443,9 +437,7 @@ impl BridgeModule {
                 state.add_eth_pending_transaction(eth_tx);
                 return Ok(());
             };
-            // FIXME: decimals should not be divided from amount here
-            let divisor = U256::from(10u128.pow(18));
-            let hyli_amount = u128::try_from(eth_tx.amount / divisor).expect("Amount too large");
+            let hyli_amount = u128::try_from(eth_tx.amount).expect("Amount too large");
 
             let deposit = PendingDeposit {
                 sender: hyli_identity.into(),
