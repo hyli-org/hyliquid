@@ -197,7 +197,7 @@ impl OrderbookProverModule {
                         let request_json: Vec<u8> = row.get("request");
                         let prover_request: OrderbookProverRequest =
                             serde_json::from_slice(&request_json).map_err(|e| {
-                                anyhow!("Failed to parse prover request JSON: {}", e)
+                                anyhow!("Failed to parse prover request JSON: {e}")
                             })?;
 
                         // Process the request to get the pending transaction

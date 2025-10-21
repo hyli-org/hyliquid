@@ -86,7 +86,7 @@ fn run_action(
     action: PermissionnedOrderbookAction,
     private_payload: Vec<u8>,
 ) -> Vec<OrderbookEvent> {
-    let action_repr = format!("{:?}", action);
+    let action_repr = format!("{action:?}");
     let (cn, id, tx_ctx, _, secret) = get_ctx();
 
     let user_info = light
@@ -402,7 +402,7 @@ fn execute_deposit_with_zk_checks(
     assert_eq!(outputs.len(), 1, "expected single zkvm output");
     let hyli_output = &outputs[0];
     if !hyli_output.success {
-        panic!("deposit execution failed: {:?}", hyli_output);
+        panic!("deposit execution failed: {hyli_output:?}");
     }
 
     let final_commitment = full.commit();
@@ -494,7 +494,7 @@ fn execute_add_session_key_with_zk_checks(
     assert_eq!(outputs.len(), 1, "expected single zkvm output");
     let hyli_output = &outputs[0];
     if !hyli_output.success {
-        panic!("add session key execution failed: {:?}", hyli_output);
+        panic!("add session key execution failed: {hyli_output:?}");
     }
 
     let final_commitment = full.commit();

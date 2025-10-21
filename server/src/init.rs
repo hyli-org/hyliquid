@@ -2,7 +2,6 @@ use anyhow::{bail, Result};
 use borsh::BorshDeserialize;
 use client_sdk::{
     contract_indexer::AppError,
-    light_executor,
     rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient},
 };
 use orderbook::{

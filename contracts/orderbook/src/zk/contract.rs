@@ -414,19 +414,17 @@ mod tests {
     {
         assert_eq!(
             actual.values, expected.values,
-            "{} witness values differ",
-            label
+            "{label} witness values differ"
         );
         assert_eq!(
             discriminant(&actual.proof),
             discriminant(&expected.proof),
-            "{} proof discriminant differs",
-            label
+            "{label} proof discriminant differs"
         );
         if let (Proof::CurrentRootHash(actual_root), Proof::CurrentRootHash(expected_root)) =
             (&actual.proof, &expected.proof)
         {
-            assert_eq!(actual_root, expected_root, "{} root hash differs", label);
+            assert_eq!(actual_root, expected_root, "{label} root hash differs");
         }
     }
 
