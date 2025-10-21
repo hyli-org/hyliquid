@@ -102,7 +102,7 @@ impl Module for BridgeModule {
             }
             None => {
                 info!(path = %state_path.display(), "No persisted bridge state found, starting fresh");
-                let mut fresh = BridgeState::from_vault_adress(
+                let mut fresh = BridgeState::from_vault_address(
                     ctx.bridge_config.eth_contract_vault_address.clone(),
                 );
                 fresh.eth_contract = eth_contract_address;
@@ -443,7 +443,7 @@ impl BridgeModule {
                 state.add_eth_pending_transaction(eth_tx);
                 return Ok(());
             };
-            // FIXME: decimals should not be devided from amount here
+            // FIXME: decimals should not be divided from amount here
             let divisor = U256::from(10u128.pow(18));
             let hyli_amount = u128::try_from(eth_tx.amount / divisor).expect("Amount too large");
 

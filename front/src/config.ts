@@ -49,5 +49,5 @@ export const COLLATERAL_NETWORKS: CollateralNetworkConfig[] = [
     },
 ];
 
-// Réseau par défaut (Sepolia)
+// Default network (Sepolia)
 export const DEFAULT_NETWORK = COLLATERAL_NETWORKS[0];

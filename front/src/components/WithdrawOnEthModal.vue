@@ -180,7 +180,7 @@ const closeModal = () => {
 const handleWithdraw = async () => {
     if (!props.balance) return;
     const amount = amountNumber.value;
-    // Vérifier seulement les conditions essentielles : pas null, pas 0, pas négatif
+
     if (amount === null || amount === 0 || amount < 0) return;
     if (!canSubmitWithdraw.value) return;
 

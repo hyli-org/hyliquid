@@ -62,7 +62,7 @@ struct EthTransactionSer {
 
 impl BridgeState {
     /// Creates a new bridge state
-    pub fn from_vault_adress(vault_address: String) -> Self {
+    pub fn from_vault_address(vault_address: String) -> Self {
         BridgeState {
             eth_contract_vault_address: Address::from_str(vault_address.as_str()).unwrap(),
             ..Default::default()

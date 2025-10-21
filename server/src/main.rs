@@ -36,7 +36,7 @@ pub struct Args {
     #[arg(long, default_value = "orderbook")]
     pub orderbook_cn: String,
 
-    #[arg(long, default_value = "oranj")] // This should be USDC contrat or so
+    #[arg(long, default_value = "oranj")] // This should be USDC contract or so
     pub collateral_token_cn: String,
 
     #[arg(long, default_value = "false")]
