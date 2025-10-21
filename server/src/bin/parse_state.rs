@@ -17,5 +17,5 @@ fn main() {
     let commitment = StateCommitment(bytes);
     let debug = DebugStateCommitment::from(commitment);
 
-    println!("{:#?}", debug);
+    println!("{debug:#?}");
 }

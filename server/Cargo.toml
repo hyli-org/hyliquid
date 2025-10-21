@@ -6,6 +6,10 @@ edition = "2021"
 name = "tx_sender"
 path = "src/bin/tx_sender.rs"
 
+[[bin]]
+name = "autoprover"
+path = "src/bin/autoprover.rs"
+
 [dependencies]
 orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
@@ -14,7 +18,7 @@ hyli-modules = { workspace = true }
 hyli-net = { workspace = true }
 hyli-smt-token = { workspace = true }
 # Remove features if you want reproducible builds with docker
-contracts = { workspace = true, features = ["nonreproducible"] }
+contracts = { workspace = true, features = ["nonreproducible", "nobuild"] }
 
 sqlx = { workspace = true, features = [
   "runtime-tokio",

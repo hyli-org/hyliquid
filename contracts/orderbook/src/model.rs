@@ -449,7 +449,7 @@ impl ExecuteState {
                         PermissionnedOrderbookAction::CreateOrder(Order {
                             order_id: create_order_id,
                             ..
-                        })
+                        }), _
                     ) if create_order_id == order_id
                 )
             {
@@ -894,7 +894,17 @@ impl ExecuteState {
 pub struct Balance(pub u64);
 
 #[derive(
-    BorshSerialize, BorshDeserialize, Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd,
+    BorshSerialize,
+    BorshDeserialize,
+    Default,
+    Debug,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
 )]
 pub struct UserInfo {
     pub user: String,

@@ -52,7 +52,7 @@ impl sdk::ZkContract for ZkVmState {
             .unwrap_or_else(|e| panic!("Failed to verify orders owners: {e}"));
 
         let res = match action {
-            OrderbookAction::PermissionnedOrderbookAction(action) => {
+            OrderbookAction::PermissionnedOrderbookAction(action, _) => {
                 if tx_ctx.lane_id != self.lane_id {
                     return Err("Invalid lane id".to_string());
                 }
@@ -91,7 +91,7 @@ impl sdk::ZkContract for ZkVmState {
 
                 res
             }
-            OrderbookAction::PermissionlessOrderbookAction(action) => {
+            OrderbookAction::PermissionlessOrderbookAction(action, _) => {
                 // Execute the given action
                 let events = match action {
                     PermissionlessOrderbookAction::Escape { user_key } => {
@@ -414,19 +414,17 @@ mod tests {
     {
         assert_eq!(
             actual.values, expected.values,
-            "{} witness values differ",
-            label
+            "{label} witness values differ"
         );
         assert_eq!(
             discriminant(&actual.proof),
             discriminant(&expected.proof),
-            "{} proof discriminant differs",
-            label
+            "{label} proof discriminant differs"
         );
         if let (Proof::CurrentRootHash(actual_root), Proof::CurrentRootHash(expected_root)) =
             (&actual.proof, &expected.proof)
         {
-            assert_eq!(actual_root, expected_root, "{} root hash differs", label);
+            assert_eq!(actual_root, expected_root, "{label} root hash differs");
         }
     }
 

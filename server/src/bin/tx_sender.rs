@@ -131,12 +131,9 @@ async fn main() -> Result<()> {
             contract_name1,
             contract_name2,
         } => {
-            let base_symbol = contract_name1.to_uppercase().clone();
-            let quote_symbol = contract_name2.to_uppercase().clone();
             let request = CreatePairRequest {
-                pair: (base_symbol, quote_symbol),
-                base_contract: Some(contract_name1),
-                quote_contract: Some(contract_name2),
+                base_contract: contract_name1,
+                quote_contract: contract_name2,
             };
 
             tracing::info!("Sending create pair request: {:?}", request);

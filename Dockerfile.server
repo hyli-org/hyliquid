@@ -15,7 +15,7 @@ COPY ./elf ./elf
 COPY Cargo.toml . 
 COPY Cargo.lock .
 
-RUN cargo build --release -F nonreproducible -F nobuild --bin server
+RUN cargo build --release -F nonreproducible -F nobuild --bin server --bin autoprover
 
 # RUNNER
 FROM rust:latest
@@ -23,6 +23,7 @@ FROM rust:latest
 WORKDIR /app
 
 COPY --from=builder /app/target/release/server ./
+COPY --from=builder /app/target/release/autoprover ./
 
 RUN apt-get update && apt-get -y install ca-certificates && apt-get clean && rm -rf /var/lib/apt/lists/*
 

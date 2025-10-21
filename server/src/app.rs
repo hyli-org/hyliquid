@@ -1,4 +1,10 @@
-use std::{sync::Arc, vec};
+use std::{
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    vec,
+};
 
 use anyhow::{anyhow, Context, Result};
 use axum::{
@@ -9,10 +15,7 @@ use axum::{
     Router,
 };
 use borsh::BorshSerialize;
-use client_sdk::{
-    contract_indexer::AppError,
-    rest_client::{NodeApiClient, NodeApiHttpClient},
-};
+use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
 use hyli_modules::{
     bus::{BusClientSender, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
@@ -20,7 +23,7 @@ use hyli_modules::{
 };
 use hyli_smt_token::SmtTokenAction;
 use orderbook::{
-    model::{AssetInfo, Order, OrderbookEvent, Pair, PairInfo, UserInfo},
+    model::{AssetInfo, Order, OrderbookEvent, PairInfo, UserInfo},
     transaction::{
         AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
         OrderbookAction, PermissionnedOrderbookAction, WithdrawPrivateInput,
@@ -78,7 +81,6 @@ pub struct OrderbookWsInMessage();
 module_bus_client! {
 #[derive(Debug)]
 pub struct OrderbookModuleBusClient {
-    sender(OrderbookProverRequest),
     sender(DatabaseRequest),
     // receiver(WsInMessage<OrderbookWsInMessage>),
     receiver(NodeStateEvent),
@@ -90,7 +92,6 @@ module_bus_client! {
 struct RouterBusClient {
     sender(WsTopicMessage<OrderbookEvent>),
     sender(WsTopicMessage<String>),
-    sender(OrderbookProverRequest),
     sender(DatabaseRequest),
     // No receiver here ! Because RouterBus is cloned
 }
@@ -113,6 +114,7 @@ impl Module for OrderbookModule {
             lane_id: ctx.lane_id.clone(),
             asset_service: ctx.asset_service.clone(),
             client: ctx.client.clone(),
+            action_id_counter: Arc::new(AtomicU32::new(0)),
         };
 
         let cors = CorsLayer::new()
@@ -309,6 +311,7 @@ impl OrderbookModule {
                     amount,
                     destination_address,
                 },
+                _,
             ) = action
             {
                 let Some(contract_name) =
@@ -343,24 +346,37 @@ impl OrderbookModule {
         }
         .as_blob(contract_name, None, None);
 
+        let action_id = self
+            .router_ctx
+            .action_id_counter
+            .fetch_add(1, Ordering::Relaxed);
         let blob_tx = BlobTransaction::new(
             ORDERBOOK_ACCOUNT_IDENTITY,
             vec![
-                OrderbookAction::PermissionnedOrderbookAction(orderbook_id_action.clone())
-                    .as_blob(self.router_ctx.orderbook_cn.clone()),
+                OrderbookAction::PermissionnedOrderbookAction(
+                    orderbook_id_action.clone(),
+                    action_id,
+                )
+                .as_blob(self.router_ctx.orderbook_cn.clone()),
                 transfer_blob,
             ],
         );
 
-        let tx_hash = self.router_ctx.client.send_tx_blob(blob_tx).await?;
+        let tx_hash = blob_tx.hashed();
 
         let mut bus = self.bus.clone();
-        bus.send(OrderbookProverRequest::TxToProve {
-            events: vec![],
-            user_info: UserInfo::default(),
-            action_private_input: vec![],
-            orderbook_action: orderbook_id_action,
+        bus.send(DatabaseRequest::WriteEvents {
+            user: ORDERBOOK_ACCOUNT_IDENTITY.to_string(),
             tx_hash: tx_hash.clone(),
+            blob_tx,
+            prover_request: OrderbookProverRequest {
+                events: vec![],
+                user_info: UserInfo::default(),
+                action_private_input: vec![],
+                orderbook_action: orderbook_id_action,
+                tx_hash: tx_hash.clone(),
+                nonce: action_id,
+            },
         })?;
         Ok(())
     }
@@ -376,6 +392,7 @@ struct RouterCtx {
     pub lane_id: LaneId,
     pub asset_service: Arc<RwLock<AssetService>>,
     pub client: Arc<NodeApiHttpClient>,
+    pub action_id_counter: Arc<AtomicU32>,
 }
 
 // --------------------------------------------------------
@@ -426,11 +443,8 @@ impl AuthHeaders {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct CreatePairRequest {
-    pub pair: Pair,
-    #[serde(default)]
-    pub base_contract: Option<String>,
-    #[serde(default)]
-    pub quote_contract: Option<String>,
+    pub base_contract: String,
+    pub quote_contract: String,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -480,7 +494,7 @@ async fn create_pair(
 ) -> Result<impl IntoResponse, AppError> {
     let auth = AuthHeaders::from_headers(&headers)?;
 
-    if request.pair.0 == request.pair.1 {
+    if request.base_contract == request.quote_contract {
         return Err(AppError(
             StatusCode::BAD_REQUEST,
             anyhow::anyhow!("Base and quote asset cannot be the same"),
@@ -490,25 +504,25 @@ async fn create_pair(
     let user = auth.identity;
 
     let CreatePairRequest {
-        pair,
         base_contract,
         quote_contract,
     } = request;
 
-    let base_symbol = pair.0.clone();
-    let quote_symbol = pair.1.clone();
-
     let asset_service = ctx.asset_service.read().await;
-    let base_asset = asset_service.get_asset(&base_symbol).await.ok_or(AppError(
-        StatusCode::NOT_FOUND,
-        anyhow::anyhow!("Base asset not found: {base_symbol}"),
-    ))?;
-    let quote_asset = asset_service
-        .get_asset(&quote_symbol)
+
+    let base_asset = asset_service
+        .get_asset_from_contract_name(&base_contract)
         .await
         .ok_or(AppError(
             StatusCode::NOT_FOUND,
-            anyhow::anyhow!("Quote asset not found: {quote_symbol}"),
+            anyhow::anyhow!("Base asset not found: {base_contract}"),
+        ))?;
+    let quote_asset = asset_service
+        .get_asset_from_contract_name(&quote_contract)
+        .await
+        .ok_or(AppError(
+            StatusCode::NOT_FOUND,
+            anyhow::anyhow!("Quote asset not found: {quote_contract}"),
         ))?;
 
     if base_asset.scale >= 20 {
@@ -530,24 +544,15 @@ async fn create_pair(
         ));
     }
 
-    let base_info = AssetInfo::new(
-        base_asset.scale as u64,
-        base_contract
-            .map(ContractName)
-            .unwrap_or_else(|| ContractName(base_symbol.clone())),
-    );
+    let base_info = AssetInfo::new(base_asset.scale as u64, base_contract.into());
 
-    let quote_info = AssetInfo::new(
-        quote_asset.scale as u64,
-        quote_contract
-            .map(ContractName)
-            .unwrap_or_else(|| ContractName(quote_symbol.clone())),
-    );
+    let quote_info = AssetInfo::new(quote_asset.scale as u64, quote_contract.into());
 
     let info = PairInfo {
         base: base_info,
         quote: quote_info,
     };
+    let pair = (base_asset.symbol.clone(), quote_asset.symbol.clone());
     drop(asset_service);
 
     let (user_info, events) = {
@@ -905,24 +910,15 @@ async fn process_orderbook_action<T: BorshSerialize>(
     action_private_input: &T,
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
+    let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
     let blob_tx = BlobTransaction::new(
         ORDERBOOK_ACCOUNT_IDENTITY,
         vec![
-            OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone())
+            OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone(), action_id)
                 .as_blob(ctx.orderbook_cn.clone()),
         ],
     );
     let tx_hash = blob_tx.hashed();
-
-    // Send write events request to database module
-    // Database module will send the blob tx to the node
-    let mut bus = ctx.bus.clone();
-    bus.send(DatabaseRequest::WriteEvents {
-        user: user_info.user.clone(),
-        tx_hash: tx_hash.clone(),
-        events: events.clone(),
-        blob_tx,
-    })?;
 
     let action_private_input = borsh::to_vec(action_private_input).map_err(|e| {
         AppError(
@@ -931,13 +927,23 @@ async fn process_orderbook_action<T: BorshSerialize>(
         )
     })?;
 
-    // Send tx to prover
-    bus.send(OrderbookProverRequest::TxToProve {
+    let prover_request = OrderbookProverRequest {
         events,
-        user_info,
+        user_info: user_info.clone(),
         action_private_input,
         orderbook_action,
         tx_hash: tx_hash.clone(),
+        nonce: action_id,
+    };
+
+    // Send write events request to database module
+    // Database module will send the blob tx to the node
+    let mut bus = ctx.bus.clone();
+    bus.send(DatabaseRequest::WriteEvents {
+        user: user_info.user,
+        tx_hash: tx_hash.clone(),
+        blob_tx,
+        prover_request,
     })?;
 
     Ok(Json(tx_hash))

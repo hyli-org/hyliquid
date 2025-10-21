@@ -79,6 +79,50 @@ impl UserService {
         Ok(UserBalances { balances })
     }
 
+    pub async fn get_balances_from_commit_id(
+        &self,
+        user: &str,
+        commit_id: i64,
+    ) -> Result<UserBalances, AppError> {
+        let user_id = self.get_user_id(user).await?;
+        let rows = sqlx::query(
+            "
+            SELECT 
+                assets.symbol, be.total, be.reserved, be.total - be.reserved as available
+            FROM 
+                balance_events as be
+            JOIN 
+                assets ON be.asset_id = assets.asset_id
+            WHERE 
+                be.user_id = $1
+                AND be.commit_id = 
+                    (SELECT MAX(commit_id) FROM balance_events 
+                        WHERE 
+                            user_id = be.user_id 
+                            AND asset_id = be.asset_id
+                            AND commit_id <= $2
+                    )
+            ;
+        ",
+        )
+        .bind(user_id)
+        .bind(commit_id)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let balances = rows
+            .iter()
+            .map(|row| Balance {
+                symbol: row.get("symbol"),
+                total: row.get("total"),
+                reserved: row.get("reserved"),
+                available: row.get("available"),
+            })
+            .collect();
+
+        Ok(UserBalances { balances })
+    }
+
     pub async fn get_nonce(&self, user: &str) -> Result<u32, AppError> {
         let user_id = self.get_user_id(user).await?;
         let row = sqlx::query("SELECT nonce FROM users WHERE user_id = $1")
@@ -89,19 +133,32 @@ impl UserService {
         Ok(row.get::<i64, _>("nonce") as u32)
     }
 
-    pub async fn get_all_users(&self) -> HashMap<String, UserInfo> {
+    /// Get all users from the database for a given commit_id
+    pub async fn get_all_users(&self, commit_id: i64) -> HashMap<String, UserInfo> {
         // Fetch all users from the database and store them in the user_id_map
         debug!("Fetching all users from the database");
         // TODO this query might need to be optimized
         let rows = sqlx::query(
             "
-            SELECT u.identity, u.user_id, u.salt, u.nonce, 
+            SELECT u.identity, u.user_id, u.salt, uen.nonce, 
                    usk.session_keys as session_keys
             FROM users u
             LEFT JOIN user_session_keys usk ON u.user_id = usk.user_id
-            WHERE usk.commit_id = (SELECT MAX(commit_id) FROM user_session_keys WHERE user_id = u.user_id)
+            LEFT JOIN user_events_nonces uen ON u.user_id = uen.user_id
+            WHERE 
+                usk.commit_id = 
+                    (SELECT MAX(commit_id) FROM user_session_keys 
+                        WHERE user_id = u.user_id
+                        AND commit_id <= $1
+                    )
+                AND uen.commit_id = 
+                    (SELECT MAX(commit_id) FROM user_events_nonces 
+                        WHERE user_id = u.user_id
+                        AND commit_id <= $1
+                    )
         ",
         )
+        .bind(commit_id)
         .fetch_all(&self.pool)
         .await
         .unwrap();

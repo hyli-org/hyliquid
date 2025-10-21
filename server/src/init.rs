@@ -2,7 +2,7 @@ use anyhow::{bail, Result};
 use borsh::BorshDeserialize;
 use client_sdk::{
     contract_indexer::AppError,
-    rest_client::{NodeApiClient, NodeApiHttpClient},
+    rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient},
 };
 use orderbook::{
     model::{
@@ -13,7 +13,8 @@ use orderbook::{
 };
 use reqwest::StatusCode;
 use sdk::{
-    api::APIRegisterContract, info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
+    api::{APIRegisterContract, TransactionStatusDb},
+    info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -71,6 +72,7 @@ async fn init_contract(
                 program_id: contract.program_id,
                 state_commitment: contract.initial_state,
                 contract_name: contract.name.clone(),
+                timeout_window: Some(0),
                 ..Default::default()
             })
             .await?;
@@ -98,6 +100,19 @@ async fn wait_contract_state(
     .await?
 }
 
+fn init_empty_orderbook(secret: Vec<u8>, lane_id: LaneId) -> (ExecuteState, FullState) {
+    let light = ExecuteState::default();
+    let full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
+    (light, full)
+}
+
+#[allow(clippy::too_many_arguments)]
 pub async fn init_orderbook_from_database(
     lane_id: LaneId,
     secret: Vec<u8>,
@@ -105,13 +120,43 @@ pub async fn init_orderbook_from_database(
     user_service: Arc<RwLock<UserService>>,
     book_service: Arc<RwLock<BookService>>,
     node: &NodeApiHttpClient,
+    indexer: &IndexerApiHttpClient,
+    contract_name: &ContractName,
     check_commitment: bool,
 ) -> Result<(ExecuteState, FullState), AppError> {
     let asset_service = asset_service.read().await;
     let user_service = user_service.read().await;
     let book_service = book_service.read().await;
 
-    let instruments = asset_service.get_all_instruments().await;
+    let last_settled_tx = indexer
+        .get_last_settled_txid_by_contract(contract_name, Some(vec![TransactionStatusDb::Success]))
+        .await?;
+
+    if last_settled_tx.is_none() {
+        info!("🔍 No last settled success tx found, initializing orderbook with empty state");
+        let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
+        return check(node, light_orderbook, full_orderbook).await;
+    }
+    let last_settled_tx = last_settled_tx.unwrap();
+
+    info!("🔍 Last settled tx found: {}", last_settled_tx);
+
+    let commit_id = asset_service
+        .get_commit_id_from_tx_hash(&last_settled_tx.1)
+        .await;
+
+    if commit_id.is_none() {
+        warn!("🔍 No commit id found for tx hash: {}", last_settled_tx.1);
+        warn!("🔍 Initializing orderbook with empty state");
+        let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
+        return check(node, light_orderbook, full_orderbook).await;
+    }
+
+    let commit_id = commit_id.unwrap();
+
+    info!("🔍 Commit id: {}", commit_id);
+
+    let instruments = asset_service.get_all_instruments(commit_id).await?;
     let assets = asset_service.get_all_assets().await;
 
     let mut pairs_info: BTreeMap<Pair, PairInfo> = BTreeMap::new();
@@ -135,12 +180,12 @@ pub async fn init_orderbook_from_database(
 
         let base_info = AssetInfo::new(
             base_asset.scale as u64,
-            ContractName(base_asset.symbol.clone()),
+            ContractName(base_asset.contract_name.clone()),
         );
 
         let quote_info = AssetInfo::new(
             quote_asset.scale as u64,
-            ContractName(quote_asset.symbol.clone()),
+            ContractName(quote_asset.contract_name.clone()),
         );
 
         pairs_info.insert(
@@ -152,12 +197,14 @@ pub async fn init_orderbook_from_database(
         );
     }
 
-    let users_info: HashMap<String, UserInfo> = user_service.get_all_users().await;
+    let users_info: HashMap<String, UserInfo> = user_service.get_all_users(commit_id).await;
     let mut balances: HashMap<Symbol, HashMap<orderbook::zk::H256, OrderbookBalance>> =
         HashMap::new();
 
     for user in users_info.values() {
-        let user_balances = user_service.get_balances(&user.user).await?;
+        let user_balances = user_service
+            .get_balances_from_commit_id(&user.user, commit_id)
+            .await?;
         for balance in user_balances.balances {
             balances
                 .entry(balance.symbol.clone())
@@ -166,7 +213,9 @@ pub async fn init_orderbook_from_database(
         }
     }
 
-    let order_manager = book_service.get_order_manager(&users_info).await?;
+    let order_manager = book_service
+        .get_order_manager(&users_info, commit_id)
+        .await?;
 
     // Log some statistics about loaded data
     info!("✅ Users info loaded: {}", users_info.len());
@@ -187,6 +236,8 @@ pub async fn init_orderbook_from_database(
             .sum::<usize>(),
     );
 
+    info!("Users info: {:?}", users_info);
+
     // TODO: load properly the value
     let last_block_height = sdk::BlockHeight(0);
 
@@ -206,11 +257,19 @@ pub async fn init_orderbook_from_database(
         return Ok((light_orderbook, full_orderbook));
     }
 
+    check(node, light_orderbook, full_orderbook).await
+}
+
+async fn check(
+    node: &NodeApiHttpClient,
+    light_orderbook: ExecuteState,
+    full_orderbook: FullState,
+) -> Result<(ExecuteState, FullState), AppError> {
     if let Ok(existing) = node.get_contract(ContractName::from("orderbook")).await {
         let onchain = DebugStateCommitment::from(existing.state_commitment.clone());
         // Log existing & new orderbook and spot diff
-        let derived_onchain_state = DebugStateCommitment::from(full_orderbook.commit());
-        let diff = onchain.diff(&derived_onchain_state);
+        let db_state = DebugStateCommitment::from(full_orderbook.commit());
+        let diff = onchain.diff(&db_state);
         if !diff.is_empty() {
             warn!("⚠️ Differences (onchain vs db):");
             for (key, value) in diff.iter() {
@@ -224,8 +283,12 @@ pub async fn init_orderbook_from_database(
         }
         info!("✅ No differences found between onchain and db");
 
-        if derived_onchain_state != onchain {
+        if db_state != onchain {
             error!("No differences found, but commitment mismatch! Diff algo is broken!");
+            error!("Onchain commitment: {:?}", existing.state_commitment);
+            error!("DB commitment: {:?}", db_state);
+            error!("Onchain state: {:#?}", onchain);
+            error!("DB state: {:#?}", db_state);
             return Err(AppError(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 anyhow::anyhow!("Commitment mismatch"),

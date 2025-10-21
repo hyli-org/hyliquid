@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use client_sdk::contract_indexer::AppError;
-use sdk::ContractName;
+use sdk::{ContractName, TxHash};
 use sqlx::{PgPool, Row};
 use tracing::info;
 
@@ -126,8 +126,32 @@ impl AssetService {
         self.instrument_map.get(symbol)
     }
 
-    pub async fn get_all_instruments(&self) -> &HashMap<String, Instrument> {
-        &self.instrument_map
+    pub async fn get_all_instruments(
+        &self,
+        commit_id: i64,
+    ) -> Result<HashMap<String, Instrument>, AppError> {
+        let rows = sqlx::query("SELECT * FROM instruments where commit_id <= $1")
+            .bind(commit_id)
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    row.get("symbol"),
+                    Instrument {
+                        instrument_id: row.get("instrument_id"),
+                        symbol: row.get("symbol"),
+                        tick_size: row.get("tick_size"),
+                        qty_step: row.get("qty_step"),
+                        base_asset_id: row.get("base_asset_id"),
+                        quote_asset_id: row.get("quote_asset_id"),
+                        status: row.get("status"),
+                    },
+                )
+            })
+            .collect())
     }
 
     pub async fn get_all_assets(&self) -> &HashMap<String, Asset> {
@@ -149,6 +173,12 @@ impl AssetService {
             .insert(instrument.symbol.clone(), instrument);
 
         Ok(())
+    }
+
+    pub async fn get_asset_from_contract_name(&self, contract_name: &str) -> Option<&Asset> {
+        self.asset_map
+            .values()
+            .find(|asset| asset.contract_name == contract_name)
     }
 
     pub async fn get_asset<'a>(&'a self, symbol: &str) -> Option<&'a Asset> {
@@ -179,5 +209,15 @@ impl AssetService {
 
         self.asset_map.insert(asset.symbol.clone(), asset);
         Ok(())
+    }
+
+    /// Get commit_id from a given tx_hash
+    pub async fn get_commit_id_from_tx_hash(&self, tx_hash: &TxHash) -> Option<i64> {
+        let row = sqlx::query("SELECT commit_id FROM commits WHERE tx_hash = $1")
+            .bind(&tx_hash.0)
+            .fetch_one(&self.pool)
+            .await
+            .ok()?;
+        Some(row.get::<i64, _>("commit_id"))
     }
 }
