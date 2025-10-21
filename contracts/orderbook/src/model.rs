@@ -87,6 +87,12 @@ pub type OrderId = String;
 pub type Symbol = String;
 pub type Pair = (Symbol, Symbol);
 
+#[derive(Debug, Clone, Serialize, Deserialize, BorshDeserialize, BorshSerialize, PartialEq, Eq)]
+pub struct WithdrawDestination {
+    pub network: String,
+    pub address: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub enum OrderbookEvent {
     PairCreated {

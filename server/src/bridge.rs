@@ -1,6 +1,6 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc};
 
-use alloy::primitives::{Address, Signature};
+use alloy::primitives::{Address, Signature, U256};
 use axum::{
     extract::{Extension, Path},
     http::StatusCode,
@@ -34,7 +34,10 @@ use tracing::{error, info, warn};
 
 use crate::{
     app::{OrderbookRequest, PendingDeposit, PendingWithdraw},
-    bridge::{bridge_state::BridgeState, eth::EthListener},
+    bridge::{
+        bridge_state::BridgeState,
+        eth::{EthClient, EthListener, EthSendResult},
+    },
     conf::BridgeConfig,
     services::asset_service::AssetService,
 };
@@ -50,6 +53,7 @@ pub struct BridgeModule {
     collateral_token_cn: ContractName, // Collateral token contract name on Hyli side
     eth_contract_address: Address,     // Collateral token address name on Ethereum side
     eth_contract_vault_address: Address,
+    eth_client: Arc<EthClient>,
     state_path: PathBuf,
     asset_service: Arc<RwLock<AssetService>>,
     orderbook_cn: ContractName,
@@ -138,6 +142,16 @@ impl Module for BridgeModule {
             }
         }
 
+        let eth_client = Arc::new(
+            EthClient::new(
+                &ctx.bridge_config.eth_rpc_http_url,
+                &ctx.bridge_config.eth_signer_private_key,
+                eth_contract_address,
+            )
+            .await
+            .context("initializing Ethereum client")?,
+        );
+
         Ok(BridgeModule {
             bus,
             state: shared_state,
@@ -145,6 +159,7 @@ impl Module for BridgeModule {
             eth_ws_url: ctx.bridge_config.eth_rpc_ws_url.clone(),
             eth_contract_address,
             eth_contract_vault_address: vault_address,
+            eth_client,
             state_path,
             asset_service: ctx.asset_service.clone(),
             orderbook_cn: ctx.orderbook_cn.clone(),
@@ -244,6 +259,8 @@ impl BridgeModule {
         let withdraws = self.extract_relevant_withdraws(&tx.tx).await;
 
         let tx_hash = tx.tx_id.1.clone();
+        // TODO: do not re-process already processed txs
+        // state.add_hyli_pending_transaction(tx_hash);
 
         // Handle deposits (transfers to orderbook)
         for transfer in transfers {
@@ -262,11 +279,23 @@ impl BridgeModule {
             sdk::info!(
                 tx_hash = %tx_hash.0,
                 token = %withdraw.contract_name,
-                user = %withdraw.destination_address,
+                network = %withdraw.destination.network,
+                address = %withdraw.destination.address,
                 amount = withdraw.amount,
                 "Settled withdraw action detected",
             );
-            self.bus.send(OrderbookRequest::PendingWithdraw(withdraw))?;
+
+            if withdraw.destination.network == "ethereum-mainnet"
+                || withdraw.destination.network == "ethereum-sepolia"
+            {
+                // TODO: use outputed tx_hash to track the withdraw on Eth side
+                let _eth_send_result = log_error!(
+                    self.handle_eth_withdraw(&withdraw).await,
+                    "processing Ethereum withdraw"
+                );
+            } else {
+                self.bus.send(OrderbookRequest::PendingWithdraw(withdraw))?;
+            }
         }
 
         Ok(())
@@ -318,7 +347,7 @@ impl BridgeModule {
                 PermissionnedOrderbookAction::Withdraw {
                     symbol,
                     amount,
-                    destination_address,
+                    destination,
                 },
                 _,
             ) = action
@@ -329,7 +358,7 @@ impl BridgeModule {
                     continue;
                 };
                 withdraws.push(PendingWithdraw {
-                    destination_address,
+                    destination,
                     contract_name,
                     amount,
                 });
@@ -339,12 +368,56 @@ impl BridgeModule {
         withdraws
     }
 
+    async fn handle_eth_withdraw(&self, withdraw: &PendingWithdraw) -> Result<EthSendResult> {
+        let to = Address::from_str(&withdraw.destination.address).with_context(|| {
+            format!("parsing Ethereum address {}", withdraw.destination.address)
+        })?;
+
+        let amount = U256::from(withdraw.amount);
+        // FIXME: decimals should not be multiplied into amount here
+        let amount = {
+            let multiplier = U256::from(10u128.pow(18));
+            amount * multiplier
+        };
+
+        // TODO: assert that bridge has enough balance on eth to process the withdraw
+        self.eth_client
+            .get_token_balance(self.eth_contract_vault_address)
+            .await
+            .and_then(|balance| {
+                if balance < amount {
+                    Err(anyhow::anyhow!(
+                        "insufficient bridge token balance on Ethereum: have {balance}, need {amount}"
+                    ))
+                } else {
+                    Ok(())
+                }
+            })?;
+
+        let result = self
+            .eth_client
+            .transfer(to, amount)
+            .await
+            .context("sending Ethereum transfer for withdraw")?;
+
+        info!(
+            address = %withdraw.destination.address,
+            token = %withdraw.contract_name,
+            amount = withdraw.amount,
+            tx_hash = ?result.tx_hash,
+            "Submitted Ethereum withdraw transfer"
+        );
+
+        Ok(result)
+    }
+
     async fn handle_eth_to_vault_log(&mut self, log: alloy::rpc::types::Log) -> Result<()> {
         let eth_tx = utils::log_to_eth_transaction(log);
         if eth_tx.from == Address::ZERO {
             warn!(tx = ?eth_tx.tx_hash, "Skipping contract creation transaction");
             return Ok(());
         }
+
         info!(
             "🔵👀 ETH to vault detected: sender {} amount {} wei",
             format!("{:?}", eth_tx.from).get(0..6).unwrap_or(""),
@@ -364,7 +437,6 @@ impl BridgeModule {
         {
             let mut state = self.state.write().await;
             let Some(hyli_identity) = state.hyli_identity_for_eth(&eth_tx.from) else {
-                // TODO: On rajoute la transaction dans la liste des tx qui sont toujours unprocessed. On la traitera lorsqu'on recevra l'identity.
                 info!(
                     "{} is not yet a claimed address. Waiting for the claim to process the deposit",
                     eth_tx.from
@@ -372,7 +444,9 @@ impl BridgeModule {
                 state.add_eth_pending_transaction(eth_tx);
                 return Ok(());
             };
-            let hyli_amount = u128::try_from(eth_tx.amount).expect("Amount too large");
+            // FIXME: decimals should not be devided from amount here
+            let divisor = U256::from(10u128.pow(18));
+            let hyli_amount = u128::try_from(eth_tx.amount / divisor).expect("Amount too large");
 
             let deposit = PendingDeposit {
                 sender: hyli_identity.into(),
@@ -380,6 +454,7 @@ impl BridgeModule {
                 amount: hyli_amount,
             };
             self.bus.send(OrderbookRequest::PendingDeposit(deposit))?;
+            // TODO: instead of marking as processed right away, wait for confirmation from orderbook settled txs
             state.mark_eth_processed(eth_tx.tx_hash)
         };
 

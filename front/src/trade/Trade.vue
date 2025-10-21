@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { watchEffect, onMounted } from "vue";
+import { watchEffect, onMounted, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import InstrumentsPanel from "./components/InstrumentsPanel.vue";
 import TopBar from "./components/TopBar.vue";
@@ -11,7 +11,10 @@ import PositionsTable from "./components/PositionsTable.vue";
 import OrdersTable from "./components/OrdersTable.vue";
 import FillsTable from "./components/FillsTable.vue";
 import BalancesTable from "./components/BalancesTable.vue";
+import WithdrawModal from "../components/WithdrawModal.vue";
+import WithdrawOnEthModal from "../components/WithdrawOnEthModal.vue";
 import { activityState, instrumentsState, selectInstrumentBySymbol } from "./trade";
+import type { Balance } from "./trade";
 
 const route = useRoute();
 
@@ -41,10 +44,35 @@ watchEffect(() => {
         selectInstrumentBySymbol(decodedSymbol);
     }
 });
+
+const isWithdrawOpen = ref(false);
+const isWithdrawOnEthOpen = ref(false);
+const selectedBalance = ref<Balance | null>(null);
+
+const handleOpenWithdraw = (balance: Balance) => {
+    selectedBalance.value = balance;
+    isWithdrawOnEthOpen.value = false;
+    isWithdrawOpen.value = true;
+};
+
+const handleOpenWithdrawOnEth = (balance: Balance) => {
+    selectedBalance.value = balance;
+    isWithdrawOpen.value = false;
+    isWithdrawOnEthOpen.value = true;
+};
+
+watch([isWithdrawOpen, isWithdrawOnEthOpen], ([withdrawOpen, withdrawOnEthOpen]) => {
+    if (!withdrawOpen && !withdrawOnEthOpen) {
+        selectedBalance.value = null;
+    }
+});
 </script>
 
 <template>
     <div class="flex flex-1 w-full overflow-hidden">
+        <WithdrawModal v-model:is-open="isWithdrawOpen" :balance="selectedBalance" />
+        <WithdrawOnEthModal v-model:is-open="isWithdrawOnEthOpen" :balance="selectedBalance" />
+
         <InstrumentsPanel />
 
         <main class="flex min-w-0 grow flex-col bg-neutral-950">
@@ -84,6 +112,8 @@ watchEffect(() => {
                             :balances="activityState.balances"
                             :loading="activityState.balancesLoading"
                             :error="activityState.balancesError"
+                            @withdraw="handleOpenWithdraw"
+                            @withdraw-on-eth="handleOpenWithdrawOnEth"
                         />
                     </div>
                 </section>

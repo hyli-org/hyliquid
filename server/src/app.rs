@@ -23,7 +23,7 @@ use hyli_modules::{
 };
 use hyli_smt_token::SmtTokenAction;
 use orderbook::{
-    model::{AssetInfo, Order, OrderbookEvent, PairInfo, UserInfo},
+    model::{AssetInfo, Order, OrderbookEvent, PairInfo, UserInfo, WithdrawDestination},
     transaction::{
         AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
         OrderbookAction, PermissionnedOrderbookAction, WithdrawPrivateInput,
@@ -72,9 +72,9 @@ pub struct PendingDeposit {
     pub amount: u128,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PendingWithdraw {
-    pub destination_address: String,
+    pub destination: WithdrawDestination,
     pub contract_name: ContractName,
     pub amount: u64,
 }
@@ -221,16 +221,27 @@ impl OrderbookModule {
 
     async fn execute_withdraw(&self, withdraw: PendingWithdraw) -> Result<()> {
         let PendingWithdraw {
-            destination_address,
+            destination,
             contract_name,
             amount,
         } = withdraw;
+
+        if destination.network != "hyli" {
+            // Non-Hyli withdraws are handled by the bridge module directly.
+            tracing::info!(
+                network = %destination.network,
+                address = %destination.address,
+                amount,
+                "Skipping Hyli transfer for non-Hyli withdraw destination"
+            );
+            return Ok(());
+        }
 
         let orderbook_id_action = PermissionnedOrderbookAction::Identify;
 
         let transfer_blob = SmtTokenAction::Transfer {
             sender: Identity(ORDERBOOK_ACCOUNT_IDENTITY.to_string()),
-            recipient: Identity(destination_address.to_string()),
+            recipient: Identity(destination.address.to_string()),
             amount: amount as u128,
         }
         .as_blob(contract_name, None, None);
@@ -351,6 +362,7 @@ pub struct CancelOrderRequest {
 pub struct WithdrawRequest {
     pub symbol: String,
     pub amount: u64,
+    pub destination: WithdrawDestination,
 }
 
 // --------------------------------------------------------
@@ -773,9 +785,9 @@ async fn withdraw(
     };
 
     let orderbook_action = PermissionnedOrderbookAction::Withdraw {
-        symbol: request.symbol.clone(),
+        symbol: request.symbol,
         amount: request.amount,
-        destination_address: user_info.user.clone(), // TODO make it available from request
+        destination: request.destination,
     };
 
     process_orderbook_action(

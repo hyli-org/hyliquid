@@ -3,7 +3,10 @@ use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    model::{ExecuteState, Order, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo},
+    model::{
+        ExecuteState, Order, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo,
+        WithdrawDestination,
+    },
     utils,
 };
 
@@ -81,7 +84,7 @@ pub enum PermissionnedOrderbookAction {
     Withdraw {
         symbol: String,
         amount: u64,
-        destination_address: String,
+        destination: WithdrawDestination,
     },
 }
 

@@ -15,6 +15,18 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+const emit = defineEmits<{
+    (event: "withdraw", balance: Balance): void;
+    (event: "withdraw-on-eth", balance: Balance): void;
+}>();
+
+const handleWithdrawClick = (balance: Balance) => {
+    emit("withdraw", balance);
+};
+
+const handleWithdrawOnEthClick = (balance: Balance) => {
+    emit("withdraw-on-eth", balance);
+};
 </script>
 
 <template>
@@ -39,7 +51,26 @@ const props = defineProps<Props>();
                     <td colspan="4" class="px-3 py-3 text-neutral-400">No balances found</td>
                 </tr>
                 <tr v-for="balance in props.balances" :key="balance.asset" class="border-t border-neutral-900">
-                    <td class="px-3 py-2 font-medium text-white">{{ balance.asset }}</td>
+                    <td class="px-3 py-2 font-medium text-white">
+                        <div class="flex items-center gap-2">
+                            <span>{{ balance.asset }}</span>
+                            <button
+                                type="button"
+                                class="rounded border border-neutral-700 px-2 py-1 text-xs font-semibold text-neutral-200 transition hover:border-neutral-500 hover:text-white"
+                                @click="handleWithdrawClick(balance)"
+                            >
+                                withdraw
+                            </button>
+                            <button
+                                v-if="balance.asset === 'ORANJ'"
+                                type="button"
+                                class="rounded bg-emerald-600 px-2 py-1 text-xs font-semibold text-neutral-100 transition hover:bg-emerald-500"
+                                @click="handleWithdrawOnEthClick(balance)"
+                            >
+                                withdraw on eth
+                            </button>
+                        </div>
+                    </td>
                     <td class="px-3 py-2 text-right tabular-nums text-neutral-300">
                         {{ assetsState.toRealQty(balance.asset, balance.available).toLocaleString() }}
                     </td>

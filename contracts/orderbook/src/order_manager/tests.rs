@@ -7,6 +7,7 @@ use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
 use sha3::{Digest, Sha3_256};
 
+use crate::model::WithdrawDestination;
 use crate::zk::smt::GetKey;
 use crate::{
     model::{
@@ -366,7 +367,10 @@ fn withdraw_deducts_balance() {
         Vec::new(),
     );
 
-    let destination = "dest-address".to_string();
+    let destination = WithdrawDestination {
+        network: "hyli".to_string(),
+        address: "dest-address".to_string(),
+    };
     let withdraw_message = format!("{}:{}:withdraw:{}:{}", user.user, user.nonce, pair.1, 400);
     let withdraw_events = execute_action_ok(
         &mut orderbook,
@@ -374,7 +378,7 @@ fn withdraw_deducts_balance() {
         PermissionnedOrderbookAction::Withdraw {
             symbol: pair.1.clone(),
             amount: 400,
-            destination_address: destination.clone(),
+            destination: destination.clone(),
         },
         serialize(&WithdrawPrivateInput {
             signature: signer.sign(&withdraw_message),
@@ -397,7 +401,7 @@ fn withdraw_deducts_balance() {
         PermissionnedOrderbookAction::Withdraw {
             symbol: pair.1.clone(),
             amount: 700,
-            destination_address: destination,
+            destination,
         },
         serialize(&WithdrawPrivateInput {
             signature: signer.sign(&overdraft_message),

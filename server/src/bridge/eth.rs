@@ -49,9 +49,18 @@ impl EthClient {
                 ],
                 "outputs": [ { "type": "bool" } ],
                 "stateMutability": "nonpayable"
+            },
+            {
+                "type": "function",
+                "name": "balanceOf",
+                "inputs": [
+                    { "name": "owner", "type": "address" }
+                ],
+                "outputs": [ { "name": "balance", "type": "uint256" } ],
+                "stateMutability": "view"
             }
         ]))
-        .context("constructing ERC20 transfer ABI")?;
+        .context("constructing ERC20 ABI")?;
 
         let interface = Interface::new(abi);
         let contract = ContractInstance::new(contract_address, provider.clone(), interface);
@@ -80,6 +89,22 @@ impl EthClient {
             tx_hash,
             block_number: receipt.block_number,
         })
+    }
+
+    /// Gets the ERC20 token balance for a specific address using balanceOf.
+    pub async fn get_token_balance(&self, owner: Address) -> Result<U256> {
+        let call = self
+            .contract
+            .function("balanceOf", &[DynSolValue::Address(owner)])
+            .context("building ERC20 balanceOf call")?;
+
+        let result = call.call().await.context("calling ERC20 balanceOf")?;
+
+        if let Some(DynSolValue::Uint(balance, _)) = result.first() {
+            Ok(*balance)
+        } else {
+            anyhow::bail!("Invalid balanceOf response format")
+        }
     }
 }
 
