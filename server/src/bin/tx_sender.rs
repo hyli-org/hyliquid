@@ -439,7 +439,7 @@ async fn main() -> Result<()> {
                     "up" => {
                         // Upward trend: price increases over time
                         if order_count % 10 == 0 {
-                            middle_price = middle_price + price_offset;
+                            middle_price += price_offset;
                             tracing::info!("Middle price updated to: {}", middle_price);
                         }
                     }
