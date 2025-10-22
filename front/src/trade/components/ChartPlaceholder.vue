@@ -260,10 +260,10 @@ async function fetchChartData() {
         // Transform API data to TradingView format
         const transformedData: CandlestickData[] = result.data.map((item) => ({
             time: item.time as Time,
-            open: item.open,
-            high: item.high,
-            low: item.low,
-            close: item.close,
+            open: parseFloat(instrumentsState.toRealPrice(currentInstrument.value?.symbol, item.open)),
+            high: parseFloat(instrumentsState.toRealPrice(currentInstrument.value?.symbol, item.high)),
+            low: parseFloat(instrumentsState.toRealPrice(currentInstrument.value?.symbol, item.low)),
+            close: parseFloat(instrumentsState.toRealPrice(currentInstrument.value?.symbol, item.close)),
         }))
 
         chartState.data = transformedData
