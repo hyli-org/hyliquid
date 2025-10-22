@@ -133,6 +133,10 @@ const handleHyliDeposit = async () => {
     const result = await submitDeposit(hyliAsset.value, hyliAmount.value);
     if (result.success) {
         hyliAmount.value = 0;
+        // Close modal after 2 seconds
+        setTimeout(() => {
+            closeModal();
+        }, 2000);
     }
 };
 
@@ -180,6 +184,10 @@ const handleEthereumDeposit = async () => {
     await sendDepositTransaction("" + tokenAmount.value);
     if (txHash.value) {
         tokenAmount.value = 0;
+        // Close modal after 2 seconds
+        setTimeout(() => {
+            closeModal();
+        }, 2000);
     }
 };
 </script>

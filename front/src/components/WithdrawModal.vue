@@ -129,6 +129,10 @@ const handleWithdraw = async () => {
     });
     if (result.success) {
         amountInput.value = "";
+        // Close modal after 2 seconds
+        setTimeout(() => {
+            closeModal();
+        }, 2000);
     }
 };
 
