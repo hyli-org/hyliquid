@@ -87,6 +87,12 @@ pub type OrderId = String;
 pub type Symbol = String;
 pub type Pair = (Symbol, Symbol);
 
+#[derive(Debug, Clone, Serialize, Deserialize, BorshDeserialize, BorshSerialize, PartialEq, Eq)]
+pub struct WithdrawDestination {
+    pub network: String,
+    pub address: String,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq)]
 pub enum OrderbookEvent {
     PairCreated {
@@ -449,7 +455,7 @@ impl ExecuteState {
                         PermissionnedOrderbookAction::CreateOrder(Order {
                             order_id: create_order_id,
                             ..
-                        })
+                        }), _
                     ) if create_order_id == order_id
                 )
             {
@@ -894,7 +900,17 @@ impl ExecuteState {
 pub struct Balance(pub u64);
 
 #[derive(
-    BorshSerialize, BorshDeserialize, Default, Debug, Clone, Eq, PartialEq, Ord, PartialOrd,
+    BorshSerialize,
+    BorshDeserialize,
+    Default,
+    Debug,
+    Clone,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
 )]
 pub struct UserInfo {
     pub user: String,

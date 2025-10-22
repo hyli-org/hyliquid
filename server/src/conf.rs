@@ -25,11 +25,24 @@ pub struct Conf {
     pub max_txs_per_proof: usize,
     pub tx_working_window_size: usize,
 
+    // Bridge configuration
+    pub bridge: BridgeConfig,
+
     /// Websocket configuration
     pub websocket: WebSocketConfig,
 
     /// URL to trigger L2 book updates
     pub trigger_url: String,
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeConfig {
+    pub eth_contract_vault_address: String,
+    pub eth_contract_address: String,
+    pub eth_contract_deploy_block: u64,
+    pub eth_rpc_ws_url: String,
+    pub eth_rpc_http_url: String,
+    pub eth_signer_private_key: String,
 }
 
 impl Conf {

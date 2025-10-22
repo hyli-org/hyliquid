@@ -3,7 +3,10 @@ use sdk::merkle_utils::BorshableMerkleProof;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    model::{ExecuteState, Order, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo},
+    model::{
+        ExecuteState, Order, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo,
+        WithdrawDestination,
+    },
     utils,
 };
 
@@ -58,8 +61,8 @@ pub struct EscapePrivateInput {
 /// Enum representing possible calls to the contract functions.
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
 pub enum OrderbookAction {
-    PermissionnedOrderbookAction(PermissionnedOrderbookAction),
-    PermissionlessOrderbookAction(PermissionlessOrderbookAction),
+    PermissionnedOrderbookAction(PermissionnedOrderbookAction, u32),
+    PermissionlessOrderbookAction(PermissionlessOrderbookAction, u32),
 }
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
@@ -81,7 +84,7 @@ pub enum PermissionnedOrderbookAction {
     Withdraw {
         symbol: String,
         amount: u64,
-        destination_address: String,
+        destination: WithdrawDestination,
     },
 }
 

@@ -13,7 +13,7 @@ export class DatabaseQueries {
 
   async getAllAssets(): Promise<Asset[]> {
     const result = await this.pool.query(
-      "SELECT * FROM assets ORDER BY symbol",
+      "SELECT * FROM assets ORDER BY symbol"
     );
     return result.rows.map((row) => ({
       ...row,
@@ -25,7 +25,7 @@ export class DatabaseQueries {
 
   async getAllInstruments(): Promise<Instrument[]> {
     const result = await this.pool.query(
-      "SELECT * FROM instruments ORDER BY symbol",
+      "SELECT * FROM instruments ORDER BY symbol"
     );
     return result.rows.map((row) => ({
       ...row,
@@ -38,17 +38,25 @@ export class DatabaseQueries {
     }));
   }
 
+  async getInstrument(symbol: string): Promise<Instrument | null> {
+    const result = await this.pool.query(
+      "SELECT * FROM instruments WHERE symbol = $1",
+      [symbol]
+    );
+    return result.rows[0] || null;
+  }
+
   async getAllUsers(): Promise<Array<{ identity: string; user_id: number }>> {
     const result = await this.pool.query("SELECT identity, user_id FROM users");
     return result.rows;
   }
 
   async getUserByIdentity(
-    identity: string,
+    identity: string
   ): Promise<{ user_id: number } | null> {
     const result = await this.pool.query(
       "SELECT user_id FROM users WHERE identity = $1",
-      [identity],
+      [identity]
     );
     return result.rows[0] || null;
   }
@@ -56,7 +64,7 @@ export class DatabaseQueries {
   async getUserById(userId: number): Promise<User> {
     const result = await this.pool.query(
       "SELECT * FROM users WHERE user_id = $1",
-      [userId],
+      [userId]
     );
     return result.rows[0] || null;
   }
@@ -80,7 +88,7 @@ export class DatabaseQueries {
       WHERE 
         balances.user_id = $1
     `,
-      [userId],
+      [userId]
     );
     return result.rows.map((row) => ({
       symbol: row.symbol,
@@ -93,7 +101,7 @@ export class DatabaseQueries {
   async getUserNonce(userId: number): Promise<number> {
     const result = await this.pool.query(
       "SELECT nonce FROM users WHERE user_id = $1",
-      [userId],
+      [userId]
     );
     return parseInt(result.rows[0].nonce, 10);
   }
@@ -103,7 +111,7 @@ export class DatabaseQueries {
     page: number = 1,
     limit: number = 20,
     sortBy: string = "created_at",
-    sortOrder: "asc" | "desc" = "desc",
+    sortOrder: "asc" | "desc" = "desc"
   ): Promise<{ orders: Array<Order>; total: number }> {
     const offset = (page - 1) * limit;
 
@@ -123,14 +131,14 @@ export class DatabaseQueries {
     // Get total count
     const countResult = await this.pool.query(
       "SELECT COUNT(*) FROM orders WHERE user_id = $1",
-      [userId],
+      [userId]
     );
     const total = parseInt(countResult.rows[0].count, 10);
 
     // Get paginated results
     const result = await this.pool.query(
       `SELECT * FROM orders WHERE user_id = $1 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $2 OFFSET $3`,
-      [userId, limit, offset],
+      [userId, limit, offset]
     );
 
     const orders = result.rows.map((row) => ({
@@ -157,7 +165,7 @@ export class DatabaseQueries {
     page: number = 1,
     limit: number = 20,
     sortBy: string = "created_at",
-    sortOrder: "asc" | "desc" = "desc",
+    sortOrder: "asc" | "desc" = "desc"
   ): Promise<{ orders: Array<Order>; total: number }> {
     const offset = (page - 1) * limit;
 
@@ -177,14 +185,14 @@ export class DatabaseQueries {
     // Get total count
     const countResult = await this.pool.query(
       "SELECT COUNT(*) FROM orders WHERE user_id = $1 AND instrument_id = $2",
-      [userId, instrumentId],
+      [userId, instrumentId]
     );
     const total = parseInt(countResult.rows[0].count, 10);
 
     // Get paginated results
     const result = await this.pool.query(
       `SELECT * FROM orders WHERE user_id = $1 AND instrument_id = $2 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $3 OFFSET $4`,
-      [userId, instrumentId, limit, offset],
+      [userId, instrumentId, limit, offset]
     );
 
     const orders = result.rows.map((row) => ({
@@ -208,7 +216,7 @@ export class DatabaseQueries {
   async getOrderbook(
     symbol: string,
     levels: number,
-    groupTicks: number,
+    groupTicks: number
   ): Promise<
     Array<{
       side: "bid" | "ask";
@@ -218,7 +226,7 @@ export class DatabaseQueries {
   > {
     const result = await this.pool.query(
       "SELECT * FROM get_orderbook_grouped_by_ticks($1, $2, $3)",
-      [symbol, levels, groupTicks],
+      [symbol, levels, groupTicks]
     );
 
     // Convert string values to numbers since PostgreSQL returns bigint as strings
@@ -232,7 +240,7 @@ export class DatabaseQueries {
   async getLatestPrice(instrumentId: number): Promise<number> {
     const result = await this.pool.query(
       "SELECT price FROM trade_events WHERE instrument_id = $1 ORDER BY trade_id DESC LIMIT 1",
-      [instrumentId],
+      [instrumentId]
     );
     return parseInt(result.rows?.[0]?.price, 10) || 0;
   }
@@ -253,7 +261,7 @@ export class DatabaseQueries {
     )
     SELECT price_now.price - price_24h.price AS price_change FROM price_now, price_24h;
     `,
-      [instrumentId],
+      [instrumentId]
     );
     return parseInt(result.rows?.[0]?.price_change, 10) || 0;
   }
@@ -261,7 +269,7 @@ export class DatabaseQueries {
   async getVolume(instrumentId: number): Promise<number> {
     const result = await this.pool.query(
       `SELECT SUM(qty) FROM trade_events WHERE instrument_id = $1 AND trade_time > now() - interval '24 hours'`,
-      [instrumentId],
+      [instrumentId]
     );
     return parseInt(result.rows?.[0]?.sum, 10) || 0;
   }
@@ -273,7 +281,7 @@ export class DatabaseQueries {
       taker_user_id = $1
       OR maker_user_id = $1;
     `,
-      [userId],
+      [userId]
     );
     return result.rows.map((row) => ({
       trade_id: parseInt(row.trade_id, 10),
@@ -287,7 +295,7 @@ export class DatabaseQueries {
 
   async getUserTradesByPair(
     userId: number,
-    instrumentId: number,
+    instrumentId: number
   ): Promise<Array<Trade>> {
     const result = await this.pool.query(
       `
@@ -296,7 +304,7 @@ export class DatabaseQueries {
       OR maker_user_id = $1
       AND instrument_id = $2;
     `,
-      [userId, instrumentId],
+      [userId, instrumentId]
     );
     return result.rows.map((row) => ({
       trade_id: parseInt(row.trade_id, 10),

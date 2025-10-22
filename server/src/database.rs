@@ -15,16 +15,16 @@ use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::services::asset_service::AssetService;
 use crate::services::user_service::UserService;
+use crate::{prover::OrderbookProverRequest, services::asset_service::AssetService};
 
 #[derive(Debug, Clone)]
 pub enum DatabaseRequest {
     WriteEvents {
         user: String,
         tx_hash: TxHash,
-        events: Vec<OrderbookEvent>,
         blob_tx: BlobTransaction,
+        prover_request: OrderbookProverRequest,
     },
 }
 
@@ -82,10 +82,10 @@ impl DatabaseModule {
             DatabaseRequest::WriteEvents {
                 user,
                 tx_hash,
-                events,
                 blob_tx,
+                prover_request,
             } => {
-                self.write_events(&user, tx_hash, events).await?;
+                self.write_events(&user, tx_hash, prover_request).await?;
                 if !self.ctx.no_blobs {
                     self.ctx.client.send_tx_blob(blob_tx).await?;
                 }
@@ -99,7 +99,7 @@ impl DatabaseModule {
         &self,
         user: &str,
         tx_hash: TxHash,
-        events: Vec<OrderbookEvent>,
+        prover_request: OrderbookProverRequest,
     ) -> Result<()> {
         use crate::services::asset_service::MarketStatus;
 
@@ -112,14 +112,14 @@ impl DatabaseModule {
 
         let row = log_error!(
             sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
-                .bind(tx_hash.0)
+                .bind(tx_hash.0.clone())
                 .fetch_one(&mut *tx)
                 .await,
             "Failed to create commit"
         )?;
         let commit_id: i64 = row.get("commit_id");
 
-        for event in events {
+        for event in prover_request.events.clone() {
             match event {
                 OrderbookEvent::PairCreated { pair, info: _ } => {
                     let asset_service = self.ctx.asset_service.read().await;
@@ -506,17 +506,43 @@ impl DatabaseModule {
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
                     debug!("Incrementing nonce for user {}", user);
+                    let row = log_error!(
+                        sqlx::query(
+                            "UPDATE users SET nonce = $1 WHERE identity = $2 RETURNING user_id"
+                        )
+                        .bind(nonce as i64)
+                        .bind(user)
+                        .fetch_one(&mut *tx)
+                        .await,
+                        "Failed to increment nonce"
+                    )?;
+                    let user_id = row.get::<i64, _>("user_id");
                     log_error!(
-                        sqlx::query("UPDATE users SET nonce = $1 WHERE identity = $2")
+                        sqlx::query("INSERT INTO user_events_nonces (commit_id, user_id, nonce) VALUES ($1, $2, $3)")
+                            .bind(commit_id)
+                            .bind(user_id)
                             .bind(nonce as i64)
-                            .bind(user)
                             .execute(&mut *tx)
                             .await,
-                        "Failed to increment nonce"
+                        "Failed to insert user event nonce"
                     )?;
                 }
             }
         }
+
+        let json_data = serde_json::to_vec(&prover_request)?;
+
+        log_error!(
+            sqlx::query(
+                "INSERT INTO prover_requests (commit_id, tx_hash, request) VALUES ($1, $2, $3)"
+            )
+            .bind(commit_id)
+            .bind(tx_hash.0.clone())
+            .bind(json_data)
+            .execute(&mut *tx)
+            .await,
+            "Failed to insert prover request"
+        )?;
 
         if trigger_notify_trades {
             debug!("Notifying trades");

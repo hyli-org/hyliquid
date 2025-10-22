@@ -64,7 +64,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
             if attr.path().is_ident("commit") {
                 let args = attr
                     .parse_args::<CommitArgs>()
-                    .unwrap_or_else(|err| panic!("invalid commit attribute on field: {}", err));
+                    .unwrap_or_else(|err| panic!("invalid commit attribute on field: {err}"));
                 if args.kind == "SMT" {
                     let commit_ty = build_commit_type(&ty);
                     let witness_ty = build_witness_type(&ty);
@@ -87,7 +87,7 @@ pub fn vapp_state(attr: TokenStream, item: TokenStream) -> TokenStream {
             } else if attr.path().is_ident("ident") {
                 let args = attr
                     .parse_args::<IdentArgs>()
-                    .unwrap_or_else(|err| panic!("invalid ident attribute on field: {}", err));
+                    .unwrap_or_else(|err| panic!("invalid ident attribute on field: {err}"));
                 if args.kind == "borsh" {
                     full_fields.push(quote! { pub #field_ident: #ty });
                     zk_fields.push(quote! { pub #field_ident: #ty });
@@ -481,7 +481,7 @@ impl Parse for MacroArgs {
                 other => {
                     return Err(Error::new(
                         ident.span(),
-                        format!("unknown argument `{}` for vapp_state", other),
+                        format!("unknown argument `{other}` for vapp_state"),
                     ));
                 }
             }

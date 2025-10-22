@@ -26,9 +26,9 @@ fn main() {
     });
 
     let commit = full.commit();
-    println!("commit: {:?}", commit);
+    println!("commit: {commit:?}");
 
-    println!("register events: {:?}", register_events);
+    println!("register events: {register_events:?}");
     events.extend(register_events);
 
     let credit_events = full.apply_action(&vapp::Action::CreditBalance {
@@ -36,14 +36,14 @@ fn main() {
         username: "alice".into(),
         amount: 100,
     });
-    println!("credit events: {:?}", credit_events);
+    println!("credit events: {credit_events:?}");
     events.extend(credit_events);
 
     let zk_state = full.build_witness_state(&events);
 
     let commit = zk_state.commit();
-    println!("commit: {:?}", commit);
+    println!("commit: {commit:?}");
 
-    println!("full: {:?}", full);
-    println!("zk: {:?}", zk_state);
+    println!("full: {full:?}");
+    println!("zk: {zk_state:?}");
 }

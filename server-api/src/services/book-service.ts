@@ -2,7 +2,7 @@
  * Book service for orderbook operations
  */
 
-import { L2BookData, L2BookEntry } from "../types";
+import { Instrument, L2BookData, L2BookEntry } from "../types";
 import { DatabaseQueries } from "../database/queries";
 import { AssetService } from "./asset-service";
 import { CustomError } from "@/middleware";
@@ -73,7 +73,7 @@ export class BookService {
       baseAssetSymbol,
       quoteAssetSymbol
     );
-    const instrumentId = this.assetService.getInstrumentId(symbol);
+    const instrumentId = await this.assetService.getInstrumentId(symbol);
     if (!instrumentId) {
       throw new CustomError(`Instrument not found: ${symbol}`, 404);
     }
@@ -92,7 +92,7 @@ export class BookService {
       baseAssetSymbol,
       quoteAssetSymbol
     );
-    const instrumentId = this.assetService.getInstrumentId(symbol);
+    const instrumentId = await this.assetService.getInstrumentId(symbol);
     if (!instrumentId) {
       throw new CustomError(`Instrument not found: ${symbol}`, 404);
     }
@@ -111,7 +111,7 @@ export class BookService {
       baseAssetSymbol,
       quoteAssetSymbol
     );
-    const instrumentId = this.assetService.getInstrumentId(symbol);
+    const instrumentId = await this.assetService.getInstrumentId(symbol);
     if (!instrumentId) {
       throw new CustomError(`Instrument not found: ${symbol}`, 404);
     }
@@ -122,24 +122,30 @@ export class BookService {
   /**
    * Get all available trading pairs
    */
-  getAvailablePairs(): string[] {
-    return this.assetService
-      .getActiveInstruments()
-      .map((instrument) => instrument.symbol);
+  async getAvailablePairs(): Promise<string[]> {
+    return (await this.assetService.getActiveInstruments()).map(
+      (instrument) => instrument.symbol
+    );
   }
 
   /**
    * Check if a trading pair exists
    */
-  hasPair(baseAssetSymbol: string, quoteAssetSymbol: string): boolean {
+  async hasPair(
+    baseAssetSymbol: string,
+    quoteAssetSymbol: string
+  ): Promise<boolean> {
     const symbol = `${baseAssetSymbol.toUpperCase()}/${quoteAssetSymbol.toUpperCase()}`;
-    return this.assetService.hasInstrument(symbol);
+    return (await this.assetService.getInstrument(symbol)) !== null;
   }
 
   /**
    * Get instrument details for a trading pair
    */
-  getInstrumentDetails(baseAssetSymbol: string, quoteAssetSymbol: string) {
+  async getInstrumentDetails(
+    baseAssetSymbol: string,
+    quoteAssetSymbol: string
+  ): Promise<Instrument | null> {
     const symbol = `${baseAssetSymbol.toUpperCase()}/${quoteAssetSymbol.toUpperCase()}`;
     return this.assetService.getInstrument(symbol);
   }

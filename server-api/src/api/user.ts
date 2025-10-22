@@ -60,7 +60,7 @@ export const userRoutes = (
           params.baseAssetSymbol,
           params.quoteAssetSymbol
         );
-        const instrumentId = assetService.getInstrumentId(symbol);
+        const instrumentId = await assetService.getInstrumentId(symbol);
         if (!instrumentId) {
           throw new CustomError(`Instrument not found: ${symbol}`, 404);
         }
@@ -96,7 +96,7 @@ export const userRoutes = (
           params.baseAssetSymbol,
           params.quoteAssetSymbol
         );
-        const instrumentId = assetService.getInstrumentId(symbol);
+        const instrumentId = await assetService.getInstrumentId(symbol);
         if (!instrumentId) {
           throw new CustomError(`Instrument not found: ${symbol}`, 404);
         }

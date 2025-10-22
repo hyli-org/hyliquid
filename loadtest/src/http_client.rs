@@ -350,9 +350,8 @@ impl OrderbookClient {
             let base_symbol = pair.0.clone();
             let quote_symbol = pair.1.clone();
             CreatePairRequest {
-                pair,
-                base_contract: Some(base_symbol),
-                quote_contract: Some(quote_symbol),
+                base_contract: base_symbol,
+                quote_contract: quote_symbol,
             }
         };
 

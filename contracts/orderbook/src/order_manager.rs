@@ -222,7 +222,6 @@ impl OrderManager {
                         // Existing order is partially filled; put the remainder back at the front
                         existing_order.quantity -= order_to_execute.quantity;
                         existing_order_ids.push_front(existing_order_id.clone());
-                        counter_orders.insert(existing_order_price, existing_order_ids);
 
                         events.push(OrderbookEvent::OrderUpdate {
                             order_id: existing_order_id.clone(),
@@ -261,6 +260,9 @@ impl OrderManager {
                 }
             }
             if break_outer {
+                if !existing_order_ids.is_empty() {
+                    counter_orders.insert(existing_order_price, existing_order_ids);
+                }
                 break;
             }
         }

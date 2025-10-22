@@ -8,7 +8,6 @@ import { DatabaseCallbacks } from "@/database/callbacks";
 
 export class AssetService {
   private assetMap: Map<string, Asset> = new Map();
-  private instrumentMap: Map<string, Instrument> = new Map();
   private queries: DatabaseQueries;
 
   constructor(queries: DatabaseQueries) {
@@ -28,13 +27,6 @@ export class AssetService {
       this.assetMap.set(asset.symbol, asset);
     }
 
-    // Load instruments
-    const instruments = await this.queries.getAllInstruments();
-    this.instrumentMap.clear();
-    for (const instrument of instruments) {
-      this.instrumentMap.set(instrument.symbol, instrument);
-    }
-
     // Register a callback to reload the asset and instrument maps
     DatabaseCallbacks.getInstance().addInstrumentsCallback(
       "asset-service",
@@ -44,9 +36,7 @@ export class AssetService {
       }
     );
 
-    console.log(
-      `Loaded ${this.assetMap.size} assets and ${this.instrumentMap.size} instruments into memory`
-    );
+    console.log(`Loaded ${this.assetMap.size} assets into memory`);
   }
 
   /**
@@ -59,8 +49,8 @@ export class AssetService {
   /**
    * Get an instrument by symbol
    */
-  getInstrument(symbol: string): Instrument | null {
-    return this.instrumentMap.get(symbol) || null;
+  async getInstrument(symbol: string): Promise<Instrument | null> {
+    return await this.queries.getInstrument(symbol);
   }
 
   /**
@@ -76,8 +66,8 @@ export class AssetService {
   /**
    * Get an instrument by id
    */
-  getInstrumentId(symbol: string): number | null {
-    return this.getInstrument(symbol)?.instrument_id || null;
+  async getInstrumentId(symbol: string): Promise<number | null> {
+    return (await this.getInstrument(symbol))?.instrument_id || null;
   }
 
   /**
@@ -90,15 +80,15 @@ export class AssetService {
   /**
    * Get all instruments
    */
-  getAllInstruments(): Instrument[] {
-    return Array.from(this.instrumentMap.values());
+  async getAllInstruments(): Promise<Instrument[]> {
+    return await this.queries.getAllInstruments();
   }
 
   /**
    * Get active instruments only
    */
-  getActiveInstruments(): Instrument[] {
-    return this.getAllInstruments().filter(
+  async getActiveInstruments(): Promise<Instrument[]> {
+    return (await this.getAllInstruments()).filter(
       (instrument) => instrument.status === MarketStatus.ACTIVE
     );
   }
@@ -106,15 +96,15 @@ export class AssetService {
   /**
    * Check if an asset exists
    */
-  hasAsset(symbol: string): boolean {
+  async hasAsset(symbol: string): Promise<boolean> {
     return this.assetMap.has(symbol);
   }
 
   /**
    * Check if an instrument exists
    */
-  hasInstrument(symbol: string): boolean {
-    return this.instrumentMap.has(symbol);
+  async hasInstrument(symbol: string): Promise<boolean> {
+    return (await this.getInstrument(symbol)) !== null;
   }
 
   /**
@@ -127,7 +117,7 @@ export class AssetService {
   /**
    * Get instrument count
    */
-  getInstrumentCount(): number {
-    return this.instrumentMap.size;
+  async getInstrumentCount(): Promise<number> {
+    return (await this.getAllInstruments()).length;
   }
 }

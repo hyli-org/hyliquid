@@ -198,3 +198,56 @@ CREATE TABLE balance_events (
   ref_trade_signed_id text DEFAULT NULL,
   event_time  timestamptz NOT NULL DEFAULT now()
 );
+
+CREATE TABLE prover_requests (
+  commit_id bigint NOT NULL REFERENCES commits (commit_id),
+  tx_hash text NOT NULL,
+  request bytea NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE user_events_nonces (
+  commit_id bigint NOT NULL REFERENCES commits (commit_id),
+  user_id bigint NOT NULL REFERENCES users (user_id),
+  nonce bigint NOT NULL DEFAULT 0,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+--------------------
+-- Bridge module persistence
+--------------------
+CREATE TABLE bridge_metadata (
+  id SMALLINT PRIMARY KEY DEFAULT 0 CHECK (id = 0),
+  eth_last_block BIGINT NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE bridge_eth_address_bindings (
+  eth_address BYTEA PRIMARY KEY,
+  user_identity TEXT NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX bridge_eth_address_bindings_identity_idx
+  ON bridge_eth_address_bindings (user_identity);
+
+CREATE TABLE bridge_eth_pending_txs (
+  tx_hash BYTEA PRIMARY KEY,
+  block_number BIGINT NOT NULL,
+  from_address BYTEA NOT NULL,
+  to_address BYTEA NOT NULL,
+  amount BYTEA NOT NULL,
+  timestamp BIGINT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'confirmed')),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX bridge_eth_pending_from_idx
+  ON bridge_eth_pending_txs (from_address);
+
+CREATE TABLE bridge_eth_processed_txs (
+  tx_hash BYTEA PRIMARY KEY,
+  processed_at timestamptz NOT NULL DEFAULT now()
+);
