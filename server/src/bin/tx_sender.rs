@@ -7,7 +7,8 @@ use k256::{
 };
 use orderbook::model::{Order, OrderSide, OrderType};
 use rand::Rng;
-use reqwest::Client;
+use reqwest::{Client, StatusCode};
+use serde::Deserialize;
 use server::{
     app::{CancelOrderRequest, CreatePairRequest, DepositRequest},
     conf::Conf,
@@ -381,6 +382,130 @@ async fn main() -> Result<()> {
             max_orders,
             trend,
         } => {
+            // Get assets info
+            let response = client
+                .get(format!("{}/api/info", args.api_url))
+                .header("x-identity", args.identity.clone())
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+            #[derive(Debug, Deserialize)]
+            struct ApiAsset {
+                contract_name: String,
+                scale: u64,
+                symbol: String,
+            }
+
+            #[derive(Debug, Deserialize)]
+            struct ApiInfoResponse {
+                assets: Vec<ApiAsset>,
+            }
+
+            let assets_info: ApiInfoResponse = if response.status().is_success() {
+                response.json().await?
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            };
+
+            let asset_1 = assets_info
+                .assets
+                .iter()
+                .find(|asset| asset.symbol == asset_symbol1)
+                .unwrap();
+
+            let deposit_amount_1 = asset_1.scale * 1_000_000_000;
+
+            let asset_2 = assets_info
+                .assets
+                .iter()
+                .find(|asset| asset.symbol == asset_symbol2)
+                .unwrap();
+
+            let deposit_amount_2 = asset_2.scale * 1_000_000_000;
+
+            // Add session key
+            let response = client
+                .post(format!("{}/add_session_key", args.server_url))
+                .header("x-identity", args.identity.clone())
+                .header("x-public-key", &public_key_hex)
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Session key added successfully! Response: {response_text}");
+            } else {
+                let status = response.status();
+                if status != StatusCode::NOT_MODIFIED {
+                    let error_text = response.text().await.unwrap_or_default();
+                    anyhow::bail!("Server returned error {status}: {error_text}");
+                }
+            }
+
+            // Deposit
+            let response = client
+                .post(format!("{}/deposit", args.server_url))
+                .header("x-identity", args.identity.clone())
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({ "symbol": asset_symbol1, "amount": deposit_amount_1 }))
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Deposit successful! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+
+            // Deposit
+            let response = client
+                .post(format!("{}/deposit", args.server_url))
+                .header("x-identity", args.identity.clone())
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({ "symbol": asset_symbol2, "amount": deposit_amount_2 }))
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Deposit successful! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+
+            // Create pair
+            let response = client
+                .post(format!("{}/create_pair", args.server_url))
+                .header("x-identity", args.identity.clone())
+                .header("Content-Type", "application/json")
+                .json(&serde_json::json!({ "base_contract": asset_1.contract_name.clone(), "quote_contract": asset_2.contract_name.clone() }))
+                .send()
+                .await
+                .context("Failed to send request to server")?;
+
+            if response.status().is_success() {
+                let response_text = response.text().await?;
+                println!("Pair created successfully! Response: {response_text}");
+            } else {
+                let status = response.status();
+                let error_text = response.text().await.unwrap_or_default();
+                anyhow::bail!("Server returned error {status}: {error_text}");
+            }
+
+            let quantity = quantity * 10_u64.pow(asset_1.scale as u32);
+            let middle_price = middle_price * 10_u64.pow(asset_2.scale as u32);
+            let price_offset = price_offset * 10_u64.pow(asset_2.scale as u32);
+
             // Validate trend parameter
             match trend.to_lowercase().as_str() {
                 "up" => {
@@ -400,7 +525,7 @@ async fn main() -> Result<()> {
 
             tracing::info!(
                 "Starting simulation for pair {}/{} with middle_price: {}, offset: {}, interval: {}s, quantity: {}, max_orders: {}, trend: {}",
-                asset_symbol1, asset_symbol2, middle_price, price_offset, interval_seconds, quantity, max_orders, trend
+                asset_symbol1, asset_symbol2, middle_price / 10_u64.pow(asset_2.scale as u32), price_offset / 10_u64.pow(asset_2.scale as u32), interval_seconds, quantity / 10_u64.pow(asset_1.scale as u32), max_orders, trend
             );
 
             let mut order_count = 0;
@@ -440,14 +565,20 @@ async fn main() -> Result<()> {
                         // Upward trend: price increases over time
                         if order_count % 10 == 0 {
                             middle_price += price_offset;
-                            tracing::info!("Middle price updated to: {}", middle_price);
+                            tracing::info!(
+                                "Middle price updated to: {}",
+                                middle_price as f64 / 10_u64.pow(asset_2.scale as u32) as f64
+                            );
                         }
                     }
                     "down" => {
                         // Downward trend: price decreases over time
                         if order_count % 10 == 0 {
                             middle_price = middle_price.saturating_sub(price_offset);
-                            tracing::info!("Middle price updated to: {}", middle_price);
+                            tracing::info!(
+                                "Middle price updated to: {}",
+                                middle_price as f64 / 10_u64.pow(asset_2.scale as u32) as f64
+                            );
                         }
                     }
                     "stale" => {
@@ -482,7 +613,7 @@ async fn main() -> Result<()> {
                 tracing::info!(
                     "Creating order #{} (price: {}): {:?}",
                     order_count + 1,
-                    price,
+                    price as f64 / 10_u64.pow(asset_2.scale as u32) as f64,
                     order
                 );
 
