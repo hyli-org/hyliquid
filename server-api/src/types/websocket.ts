@@ -48,6 +48,8 @@ export interface ClientConnection {
   id: string;
   ws: any; // WebSocket connection
   subscriptions: Map<string, WebSocketSubscription>;
+  messageQueue: any[];
+  isProcessing: boolean;
 }
 
 export interface ChannelManager {
