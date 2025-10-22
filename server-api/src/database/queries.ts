@@ -316,6 +316,162 @@ export class DatabaseQueries {
     }));
   }
 
+  async getCandlestickData(
+    instrumentId: number,
+    tFrom: string,
+    tTo: string,
+    stepSec: number
+  ): Promise<
+    Array<{
+      bucket: string;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume_trades: number;
+      trade_count: number;
+    }>
+  > {
+    const query = `
+      WITH user_params AS (
+        SELECT
+          $1::bigint        AS instrument_id,
+          $2::timestamptz   AS t_from,
+          $3::timestamptz   AS t_to,
+          $4::int           AS step_sec
+      ),
+      ft AS (  -- premier trade globalement (ou au moins avant t_to)
+        SELECT MIN(te.trade_time) AS first_trade_time
+        FROM trade_events te
+        JOIN user_params p ON te.instrument_id = p.instrument_id
+        WHERE te.trade_time < (SELECT t_to FROM user_params)
+      ),
+      params AS (
+        SELECT
+          p.instrument_id,
+          GREATEST(
+            p.t_from,
+            -- si aucun trade avant t_to, on garde t_from (la série sera vide dans ce cas)
+            COALESCE(
+              to_timestamp(floor(extract(epoch from ft.first_trade_time) / p.step_sec) * p.step_sec),
+              p.t_from
+            )
+          ) AS t_from,
+          p.t_to,
+          p.step_sec
+        FROM user_params p LEFT JOIN ft ON TRUE
+      ),
+      aligned AS (
+        SELECT
+          -- aligne t_from AU DÉBUT DE SON BUCKET
+          to_timestamp(floor(extract(epoch from t_from) / step_sec) * step_sec) AS from_aligned,
+          -- aligne t_to AU DÉBUT DU DERNIER BUCKET DÉMARRANT AVANT t_to (fenêtre [from_aligned, t_to) )
+          to_timestamp(floor(extract(epoch from (t_to - interval '1 microsecond')) / step_sec) * step_sec) AS to_aligned
+        FROM params
+      ),
+      -- Série de buckets [t_from, t_to) espacés de step_sec
+      series AS (
+        SELECT generate_series(
+                 (SELECT from_aligned FROM aligned),
+                 (SELECT to_aligned FROM aligned),
+                 make_interval(secs => (SELECT step_sec FROM params))
+               ) AS bucket
+      ),
+      -- Trades restreints à la fenêtre, avec attribution au bucket
+      base AS (
+        SELECT
+          to_timestamp(floor(extract(epoch from te.trade_time) / p.step_sec) * p.step_sec) AS bucket,
+          te.price,
+          te.qty,
+          te.trade_time
+        FROM trade_events te
+        JOIN params p ON te.instrument_id = p.instrument_id
+        WHERE te.trade_time >= p.t_from
+          AND te.trade_time <  p.t_to
+      ),
+      -- Agrégats OHLC par bucket
+      agg AS (
+        SELECT
+          b.bucket,
+          (ARRAY_AGG(b.price ORDER BY b.trade_time ASC ))[1]  AS open_first_trade,
+          MAX(b.price)                                        AS high_trade,
+          MIN(b.price)                                        AS low_trade,
+          (ARRAY_AGG(b.price ORDER BY b.trade_time DESC))[1]  AS close_trade,
+          SUM(b.qty)                                          AS volume_trades,
+          COUNT(*)                                            AS trade_count
+        FROM base b
+        GROUP BY b.bucket
+      ),
+      -- Dernier close AVANT la fenêtre (pour remplir les tout premiers buckets s'il n'y a pas encore eu de trade)
+      prev_close AS (
+        SELECT te.price AS prev_close
+        FROM trade_events te
+        JOIN params p ON te.instrument_id = p.instrument_id
+        WHERE te.trade_time < p.t_from
+        ORDER BY te.trade_time DESC
+        LIMIT 1
+      ),
+      -- Joindre série complète et calculer "dernier bucket avec trade" en cumul
+      series_with_last AS (
+        SELECT
+          s.bucket,
+          a.high_trade, a.low_trade, a.close_trade,
+          a.volume_trades, a.trade_count,
+          -- bucket du dernier trade connu jusqu'à CE bucket (NULL s'il n'y en a pas encore)
+          MAX(CASE WHEN a.close_trade IS NOT NULL THEN s.bucket END)
+            OVER (ORDER BY s.bucket ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+            AS last_bucket_with_trade
+        FROM series s
+        LEFT JOIN agg a USING (bucket)
+      ),
+      filled AS (
+        SELECT
+          swl.bucket,
+          -- forward-filled reference close
+          COALESCE(swl.close_trade, last_a.close_trade, pc.prev_close) AS close_ff,
+          -- for high/low: use trade highs/lows if present, else flat at reference close
+          COALESCE(swl.high_trade, COALESCE(last_a.close_trade, pc.prev_close)) AS high_ff,
+          COALESCE(swl.low_trade,  COALESCE(last_a.close_trade, pc.prev_close)) AS low_ff,
+          COALESCE(swl.volume_trades, 0) AS volume_trades,
+          COALESCE(swl.trade_count,  0) AS trade_count,
+          pc.prev_close,
+          last_a.open_first_trade
+        FROM series_with_last swl
+        LEFT JOIN agg last_a
+          ON last_a.bucket = swl.last_bucket_with_trade
+        LEFT JOIN prev_close pc ON TRUE
+      )
+      -- final: OPEN = previous bucket's CLOSE (lag of close_ff), first falls back to prev_close
+      SELECT
+        f.bucket,
+        COALESCE(LAG(f.close_ff) OVER (ORDER BY f.bucket), f.open_first_trade) AS open,
+        f.high_ff  AS high,
+        f.low_ff   AS low,
+        f.close_ff AS close,
+        f.volume_trades,
+        f.trade_count
+      FROM filled f
+      ORDER BY f.bucket;
+    `;
+
+    const result = await this.pool.query(query, [
+      instrumentId,
+      tFrom,
+      tTo,
+      stepSec,
+    ]);
+
+    return result.rows.map((row) => ({
+      bucket: row.bucket,
+      open: parseInt(row.open, 10),
+      high: parseInt(row.high, 10),
+      low: parseInt(row.low, 10),
+      close: parseInt(row.close, 10),
+      volume_trades: parseInt(row.volume_trades, 10),
+      trade_count: parseInt(row.trade_count, 10),
+    }));
+  }
+
   async healthCheck(): Promise<boolean> {
     try {
       await this.pool.query("SELECT 1");

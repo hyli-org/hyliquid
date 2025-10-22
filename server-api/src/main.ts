@@ -74,7 +74,7 @@ async function main() {
     .use(loggerMiddleware())
     .use(wsRoute)
     //@ts-ignore
-    .use(createApiRoutes(bookService, userService, assetService))
+    .use(createApiRoutes(bookService, userService, assetService, dbQueries))
     // Proxy all unknown requests to the Rust server
     .all(
       "/*",
