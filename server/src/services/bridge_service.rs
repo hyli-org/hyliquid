@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::convert::TryInto;
 
+use crate::conf;
+
 /// Incoming Ethereum transaction (to the bridge)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct EthTransaction {
@@ -50,8 +52,12 @@ pub struct BridgeService {
 }
 
 impl BridgeService {
-    pub fn new(pool: PgPool) -> Self {
-        BridgeService { pool }
+    pub async fn new(pool: PgPool, bridge_conf: &conf::BridgeConfig) -> Result<Self> {
+        let bridge_service = BridgeService { pool };
+        bridge_service
+            .ensure_initialized(bridge_conf.eth_contract_deploy_block)
+            .await?;
+        Ok(bridge_service)
     }
 
     pub async fn ensure_initialized(&self, initial_eth_block: u64) -> Result<()> {

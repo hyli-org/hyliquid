@@ -51,6 +51,7 @@ async fn main() -> Result<()> {
     let ServiceContext {
         user_service,
         asset_service,
+        bridge_service: _,
         book_service,
         node_client,
         indexer_client,

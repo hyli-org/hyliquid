@@ -45,12 +45,12 @@ pub mod utils;
 
 pub struct BridgeModule {
     bus: BridgeModuleBusClient,
-    bridge_service: Arc<BridgeService>,
     eth_ws_url: String,
     collateral_token_cn: ContractName, // Collateral token contract name on Hyli side
     eth_contract_address: Address,     // Collateral token address name on Ethereum side
     eth_contract_vault_address: Address,
     eth_client: Arc<EthClient>,
+    bridge_service: Arc<RwLock<BridgeService>>,
     asset_service: Arc<RwLock<AssetService>>,
     orderbook_cn: ContractName,
 }
@@ -60,13 +60,14 @@ pub struct BridgeModuleCtx {
     pub collateral_token_cn: ContractName,
     pub bridge_config: BridgeConfig,
     pub pool: PgPool,
+    pub bridge_service: Arc<RwLock<BridgeService>>,
     pub asset_service: Arc<RwLock<AssetService>>,
     pub orderbook_cn: ContractName,
 }
 
 #[derive(Clone)]
 struct BridgeRouterCtx {
-    bridge_service: Arc<BridgeService>,
+    bridge_service: Arc<RwLock<BridgeService>>,
     bus: BridgeModuleBusClient,
     collateral_token_cn: ContractName,
 }
@@ -89,22 +90,9 @@ impl Module for BridgeModule {
             .context("parsing Ethereum contract address")?;
         let vault_address = Address::from_str(&ctx.bridge_config.eth_contract_vault_address)
             .context("parsing Ethereum vault address")?;
-        let state = BridgeService::new(ctx.pool.clone());
-        state
-            .ensure_initialized(ctx.bridge_config.eth_contract_deploy_block)
-            .await?;
-        let eth_last_block = state.eth_last_block().await?;
-        let eth_pending = state.pending_eth_tx_count().await?;
 
-        info!(
-            eth_last_block = eth_last_block,
-            eth_pending = eth_pending,
-            "Bridge module state initialized"
-        );
-
-        let shared_state = Arc::new(state);
         let claim_state = BridgeRouterCtx {
-            bridge_service: shared_state.clone(),
+            bridge_service: ctx.bridge_service.clone(),
             bus: bus.clone(),
             collateral_token_cn: ctx.collateral_token_cn.clone(),
         };
@@ -138,13 +126,13 @@ impl Module for BridgeModule {
 
         Ok(BridgeModule {
             bus,
-            bridge_service: shared_state,
             collateral_token_cn: ctx.collateral_token_cn.clone(),
             eth_ws_url: ctx.bridge_config.eth_rpc_ws_url.clone(),
             eth_contract_address,
             eth_contract_vault_address: vault_address,
             eth_client,
             asset_service: ctx.asset_service.clone(),
+            bridge_service: ctx.bridge_service.clone(),
             orderbook_cn: ctx.orderbook_cn.clone(),
         })
     }
@@ -385,24 +373,23 @@ impl BridgeModule {
             eth_tx.amount
         );
 
-        let already_tracked = self.bridge_service.is_eth_tracked(&eth_tx.tx_hash).await?;
+        let bridge_service = self.bridge_service.read().await;
+
+        let already_tracked = bridge_service.is_eth_tracked(&eth_tx.tx_hash).await?;
 
         if already_tracked {
             info!(tx = ?eth_tx.tx_hash, "ETH transaction already tracked, skipping");
             return Ok(());
         }
 
-        let hyli_identity = self
-            .bridge_service
-            .hyli_identity_for_eth(&eth_tx.from)
-            .await?;
+        let hyli_identity = bridge_service.hyli_identity_for_eth(&eth_tx.from).await?;
 
         let Some(hyli_identity) = hyli_identity else {
             info!(
                 "{} is not yet a claimed address. Waiting for the claim to process the deposit",
                 eth_tx.from
             );
-            self.bridge_service
+            bridge_service
                 .add_eth_pending_transaction(eth_tx.clone())
                 .await?;
             return Ok(());
@@ -417,27 +404,25 @@ impl BridgeModule {
         };
         self.bus.send(OrderbookRequest::PendingDeposit(deposit))?;
         // TODO: instead of marking as processed right away, wait for confirmation from orderbook settled txs
-        self.bridge_service
-            .mark_eth_processed(eth_tx.tx_hash)
-            .await?;
-
+        bridge_service.mark_eth_processed(eth_tx.tx_hash).await?;
         Ok(())
     }
 
     async fn catch_up_eth(&mut self, listener: &EthListener) -> Result<()> {
-        let from_block = self
-            .bridge_service
-            .eth_last_block()
-            .await?
-            .saturating_add(1);
+        let (from_block, latest, vault) = {
+            let bridge_service = self.bridge_service.read().await;
+            let from_block = bridge_service.eth_last_block().await?.saturating_add(1);
 
-        let latest = listener.latest_block_number().await?;
-        if from_block > latest {
-            info!(latest_block = latest, "No ETH catch-up needed");
-            return Ok(());
-        }
+            let latest = listener.latest_block_number().await?;
+            if from_block > latest {
+                info!(latest_block = latest, "No ETH catch-up needed");
+                return Ok(());
+            }
 
-        let vault = self.eth_contract_vault_address;
+            let vault = self.eth_contract_vault_address;
+            bridge_service.record_eth_block(latest).await?;
+            (from_block, latest, vault)
+        };
 
         // for loop from from_block to lastest with 10 step
         for chunk_start in (from_block..=latest).step_by(10) {
@@ -455,8 +440,6 @@ impl BridgeModule {
                 self.handle_eth_to_vault_log(log).await?;
             }
         }
-
-        self.bridge_service.record_eth_block(latest).await?;
 
         info!(from_block, latest_block = latest, "ETH catch-up completed");
         Ok(())
@@ -486,8 +469,8 @@ async fn claim_status(
     Extension(claim_state): Extension<BridgeRouterCtx>,
     Path(identity): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let addr = claim_state
-        .bridge_service
+    let bridge_service = claim_state.bridge_service.read().await;
+    let addr = bridge_service
         .eth_address_for_hyli_identity(&identity)
         .await
         .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?;
@@ -547,8 +530,9 @@ async fn claim(
         ));
     }
 
-    if let Some(existing_identity) = claim_state
-        .bridge_service
+    let bridge_service = claim_state.bridge_service.read().await;
+
+    if let Some(existing_identity) = bridge_service
         .hyli_identity_for_eth(&eth_address)
         .await
         .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?
@@ -561,14 +545,12 @@ async fn claim(
         }
     }
 
-    let pending_eth_txs = claim_state
-        .bridge_service
+    let pending_eth_txs = bridge_service
         .pending_eth_transactions_for_address(&eth_address)
         .await
         .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?;
 
-    claim_state
-        .bridge_service
+    bridge_service
         .record_eth_identity_binding(eth_address, request.user_identity.clone())
         .await
         .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?;
@@ -604,8 +586,7 @@ async fn claim(
             })?;
 
         let tx_hash = eth_tx.tx_hash;
-        claim_state
-            .bridge_service
+        bridge_service
             .mark_eth_processed(tx_hash)
             .await
             .map_err(|err| {

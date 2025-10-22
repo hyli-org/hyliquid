@@ -103,6 +103,7 @@ async fn actual_main() -> Result<()> {
         node_client,
         indexer_client,
         validator_lane_id,
+        bridge_service,
     } = setup_services(&config, pool.clone()).await?;
 
     // TODO: make a proper secret management
@@ -220,6 +221,7 @@ async fn actual_main() -> Result<()> {
             bridge_config: config.bridge.clone(),
             pool: pool.clone(),
             asset_service: asset_service.clone(),
+            bridge_service: bridge_service.clone(),
             orderbook_cn: args.orderbook_cn.clone().into(),
         }))
         .await?;
