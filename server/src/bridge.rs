@@ -1,4 +1,4 @@
-use std::{path::PathBuf, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 
 use alloy::primitives::{Address, Signature, U256};
 use axum::{
@@ -28,33 +28,29 @@ use sdk::{
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
 use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{error, info, warn};
 
 use crate::{
     app::{OrderbookRequest, PendingDeposit, PendingWithdraw},
-    bridge::{
-        bridge_state::BridgeState,
-        eth::{EthClient, EthListener, EthSendResult},
-    },
+    bridge::eth::{EthClient, EthListener, EthSendResult},
     conf::BridgeConfig,
-    services::asset_service::AssetService,
+    services::{asset_service::AssetService, bridge_service::BridgeService},
 };
 
-pub mod bridge_state;
 pub mod eth;
 pub mod utils;
 
 pub struct BridgeModule {
     bus: BridgeModuleBusClient,
-    state: Arc<RwLock<BridgeState>>,
+    bridge_service: Arc<BridgeService>,
     eth_ws_url: String,
     collateral_token_cn: ContractName, // Collateral token contract name on Hyli side
     eth_contract_address: Address,     // Collateral token address name on Ethereum side
     eth_contract_vault_address: Address,
     eth_client: Arc<EthClient>,
-    state_path: PathBuf,
     asset_service: Arc<RwLock<AssetService>>,
     orderbook_cn: ContractName,
 }
@@ -63,14 +59,14 @@ pub struct BridgeModuleCtx {
     pub api: Arc<BuildApiContextInner>,
     pub collateral_token_cn: ContractName,
     pub bridge_config: BridgeConfig,
-    pub state_path: PathBuf,
+    pub pool: PgPool,
     pub asset_service: Arc<RwLock<AssetService>>,
     pub orderbook_cn: ContractName,
 }
 
 #[derive(Clone)]
-struct ClaimDepositState {
-    bridge_state: Arc<RwLock<BridgeState>>,
+struct BridgeRouterCtx {
+    bridge_service: Arc<BridgeService>,
     bus: BridgeModuleBusClient,
     collateral_token_cn: ContractName,
 }
@@ -93,34 +89,22 @@ impl Module for BridgeModule {
             .context("parsing Ethereum contract address")?;
         let vault_address = Address::from_str(&ctx.bridge_config.eth_contract_vault_address)
             .context("parsing Ethereum vault address")?;
-        let state_path = ctx.state_path.clone();
-
-        let state = match Self::load_from_disk::<BridgeState>(state_path.as_path()) {
-            Some(loaded) => {
-                info!(path = %state_path.display(), "Restored bridge state from disk");
-                loaded
-            }
-            None => {
-                info!(path = %state_path.display(), "No persisted bridge state found, starting fresh");
-                let mut fresh = BridgeState::from_vault_address(
-                    ctx.bridge_config.eth_contract_vault_address.clone(),
-                );
-                fresh.eth_contract = eth_contract_address;
-                fresh.eth_contract_vault_address = vault_address;
-                fresh.eth_last_block = ctx.bridge_config.eth_contract_deploy_block;
-                fresh
-            }
-        };
+        let state = BridgeService::new(ctx.pool.clone());
+        state
+            .ensure_initialized(ctx.bridge_config.eth_contract_deploy_block)
+            .await?;
+        let eth_last_block = state.eth_last_block().await?;
+        let eth_pending = state.pending_eth_tx_count().await?;
 
         info!(
-            eth_last_block = state.eth_last_block,
-            eth_pending = state.eth_pending_txs.len(),
+            eth_last_block = eth_last_block,
+            eth_pending = eth_pending,
             "Bridge module state initialized"
         );
 
-        let shared_state = Arc::new(RwLock::new(state));
-        let claim_state = ClaimDepositState {
-            bridge_state: shared_state.clone(),
+        let shared_state = Arc::new(state);
+        let claim_state = BridgeRouterCtx {
+            bridge_service: shared_state.clone(),
             bus: bus.clone(),
             collateral_token_cn: ctx.collateral_token_cn.clone(),
         };
@@ -154,13 +138,12 @@ impl Module for BridgeModule {
 
         Ok(BridgeModule {
             bus,
-            state: shared_state,
+            bridge_service: shared_state,
             collateral_token_cn: ctx.collateral_token_cn.clone(),
             eth_ws_url: ctx.bridge_config.eth_rpc_ws_url.clone(),
             eth_contract_address,
             eth_contract_vault_address: vault_address,
             eth_client,
-            state_path,
             asset_service: ctx.asset_service.clone(),
             orderbook_cn: ctx.orderbook_cn.clone(),
         })
@@ -220,22 +203,6 @@ impl Module for BridgeModule {
 
         Ok(())
     }
-
-    fn persist(&mut self) -> impl std::future::Future<Output = Result<()>> + Send {
-        let state = Arc::clone(&self.state);
-        let path = self.state_path.clone();
-
-        async move {
-            let snapshot = { state.read().await.clone() };
-            if let Err(err) = Self::save_on_disk(path.as_path(), &snapshot) {
-                warn!(path = %path.display(), "Failed to persist bridge state: {}", err);
-            } else {
-                info!(path = %path.display(), "Bridge state persisted");
-            }
-
-            Ok(())
-        }
-    }
 }
 
 impl BridgeModule {
@@ -288,6 +255,7 @@ impl BridgeModule {
                 || withdraw.destination.network == "ethereum-sepolia"
             {
                 // TODO: use outputed tx_hash to track the withdraw on Eth side
+                // TODO: if the withdraw fails (e.g. insufficient balance), we need to handle it properly in order to redo it
                 let _eth_send_result = log_error!(
                     self.handle_eth_withdraw(&withdraw).await,
                     "processing Ethereum withdraw"
@@ -417,47 +385,51 @@ impl BridgeModule {
             eth_tx.amount
         );
 
-        let already_tracked = {
-            let state = self.state.read().await;
-            state.is_eth_tracked(&eth_tx.tx_hash)
-        };
+        let already_tracked = self.bridge_service.is_eth_tracked(&eth_tx.tx_hash).await?;
 
         if already_tracked {
             info!(tx = ?eth_tx.tx_hash, "ETH transaction already tracked, skipping");
             return Ok(());
         }
 
-        {
-            let mut state = self.state.write().await;
-            let Some(hyli_identity) = state.hyli_identity_for_eth(&eth_tx.from) else {
-                info!(
-                    "{} is not yet a claimed address. Waiting for the claim to process the deposit",
-                    eth_tx.from
-                );
-                state.add_eth_pending_transaction(eth_tx);
-                return Ok(());
-            };
-            let hyli_amount = u128::try_from(eth_tx.amount).expect("Amount too large");
+        let hyli_identity = self
+            .bridge_service
+            .hyli_identity_for_eth(&eth_tx.from)
+            .await?;
 
-            let deposit = PendingDeposit {
-                sender: hyli_identity.into(),
-                contract_name: self.collateral_token_cn.clone(),
-                amount: hyli_amount,
-            };
-            self.bus.send(OrderbookRequest::PendingDeposit(deposit))?;
-            // TODO: instead of marking as processed right away, wait for confirmation from orderbook settled txs
-            state.mark_eth_processed(eth_tx.tx_hash)
+        let Some(hyli_identity) = hyli_identity else {
+            info!(
+                "{} is not yet a claimed address. Waiting for the claim to process the deposit",
+                eth_tx.from
+            );
+            self.bridge_service
+                .add_eth_pending_transaction(eth_tx.clone())
+                .await?;
+            return Ok(());
         };
+
+        let hyli_amount = u128::try_from(eth_tx.amount).expect("Amount too large");
+
+        let deposit = PendingDeposit {
+            sender: hyli_identity.into(),
+            contract_name: self.collateral_token_cn.clone(),
+            amount: hyli_amount,
+        };
+        self.bus.send(OrderbookRequest::PendingDeposit(deposit))?;
+        // TODO: instead of marking as processed right away, wait for confirmation from orderbook settled txs
+        self.bridge_service
+            .mark_eth_processed(eth_tx.tx_hash)
+            .await?;
 
         Ok(())
     }
 
     async fn catch_up_eth(&mut self, listener: &EthListener) -> Result<()> {
-        let from_block = {
-            let state = self.state.read().await;
-            state.eth_last_block
-        }
-        .saturating_add(1);
+        let from_block = self
+            .bridge_service
+            .eth_last_block()
+            .await?
+            .saturating_add(1);
 
         let latest = listener.latest_block_number().await?;
         if from_block > latest {
@@ -484,10 +456,7 @@ impl BridgeModule {
             }
         }
 
-        {
-            let mut state = self.state.write().await;
-            state.record_eth_block(latest);
-        }
+        self.bridge_service.record_eth_block(latest).await?;
 
         info!(from_block, latest_block = latest, "ETH catch-up completed");
         Ok(())
@@ -514,11 +483,14 @@ pub struct ClaimStatusResponse {
 #[axum::debug_handler]
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(claim_state)))]
 async fn claim_status(
-    Extension(claim_state): Extension<ClaimDepositState>,
+    Extension(claim_state): Extension<BridgeRouterCtx>,
     Path(identity): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let state = claim_state.bridge_state.read().await;
-    let addr = state.eth_address_for_hyli_identity(&identity);
+    let addr = claim_state
+        .bridge_service
+        .eth_address_for_hyli_identity(&identity)
+        .await
+        .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?;
 
     let response = ClaimStatusResponse {
         claimed: addr.is_some(),
@@ -531,7 +503,7 @@ async fn claim_status(
 #[axum::debug_handler]
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(claim_state)))]
 async fn claim(
-    Extension(mut claim_state): Extension<ClaimDepositState>,
+    Extension(mut claim_state): Extension<BridgeRouterCtx>,
     Json(request): Json<ClaimDepositRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let eth_address = Address::from_str(request.eth_address.as_str()).map_err(|err| {
@@ -575,60 +547,75 @@ async fn claim(
         ));
     }
 
+    if let Some(existing_identity) = claim_state
+        .bridge_service
+        .hyli_identity_for_eth(&eth_address)
+        .await
+        .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?
     {
-        let mut state = claim_state.bridge_state.write().await;
-        if let Some(existing_identity) = state.hyli_identity_for_eth(&eth_address) {
-            if existing_identity != &request.user_identity {
-                return Err(AppError(
-                    StatusCode::CONFLICT,
-                    anyhow::anyhow!("address already associated with a different Hyli identity"),
-                ));
-            }
+        if existing_identity != request.user_identity {
+            return Err(AppError(
+                StatusCode::CONFLICT,
+                anyhow::anyhow!("address already associated with a different Hyli identity"),
+            ));
         }
+    }
 
-        let pending_eth_txs: Vec<_> = state
-            .eth_pending_txs
-            .values()
-            .filter(|tx| tx.from == eth_address)
-            .cloned()
-            .collect();
+    let pending_eth_txs = claim_state
+        .bridge_service
+        .pending_eth_transactions_for_address(&eth_address)
+        .await
+        .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?;
 
-        state.record_eth_identity_binding(eth_address, request.user_identity.clone());
+    claim_state
+        .bridge_service
+        .record_eth_identity_binding(eth_address, request.user_identity.clone())
+        .await
+        .map_err(|err| AppError(StatusCode::INTERNAL_SERVER_ERROR, err))?;
 
-        for eth_tx in pending_eth_txs {
-            let hyli_amount = u128::try_from(eth_tx.amount).map_err(|_| {
+    for eth_tx in pending_eth_txs {
+        let hyli_amount = u128::try_from(eth_tx.amount).map_err(|_| {
+            AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow::anyhow!("amount too large to fit into u128"),
+            )
+        })?;
+
+        let deposit = PendingDeposit {
+            sender: request.user_identity.clone().into(),
+            contract_name: claim_state.collateral_token_cn.clone(),
+            amount: hyli_amount,
+        };
+
+        sdk::info!(
+            "Queuing pending deposit for eth tx {:?}: {:?}",
+            eth_tx.tx_hash,
+            deposit
+        );
+
+        claim_state
+            .bus
+            .send(OrderbookRequest::PendingDeposit(deposit))
+            .map_err(|err| {
                 AppError(
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    anyhow::anyhow!("amount too large to fit into u128"),
+                    anyhow::anyhow!("failed to queue pending deposit after identity claim: {err}"),
                 )
             })?;
 
-            let deposit = PendingDeposit {
-                sender: request.user_identity.clone().into(),
-                contract_name: claim_state.collateral_token_cn.clone(),
-                amount: hyli_amount,
-            };
-
-            sdk::info!(
-                "Queuing pending deposit for eth tx {:?}: {:?}",
-                eth_tx.tx_hash,
-                deposit
-            );
-
-            claim_state
-                .bus
-                .send(OrderbookRequest::PendingDeposit(deposit))
-                .map_err(|err| {
-                    AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        anyhow::anyhow!(
-                            "failed to queue pending deposit after identity claim: {err}"
-                        ),
-                    )
-                })?;
-
-            state.mark_eth_processed(eth_tx.tx_hash);
-        }
+        let tx_hash = eth_tx.tx_hash;
+        claim_state
+            .bridge_service
+            .mark_eth_processed(tx_hash)
+            .await
+            .map_err(|err| {
+                AppError(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    anyhow::anyhow!(
+                        "failed to mark pending deposit as processed after identity claim: {err}"
+                    ),
+                )
+            })?;
     }
 
     Ok(Json("ok"))

@@ -24,7 +24,7 @@ use server::{
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
-use std::{path::PathBuf, sync::Arc};
+use std::sync::Arc;
 use tracing::error;
 
 #[derive(Parser, Debug)]
@@ -218,7 +218,7 @@ async fn actual_main() -> Result<()> {
             api: api_ctx.clone(),
             collateral_token_cn: args.collateral_token_cn.clone().into(),
             bridge_config: config.bridge.clone(),
-            state_path: PathBuf::from(&config.data_directory).join("bridge_state.bin"),
+            pool: pool.clone(),
             asset_service: asset_service.clone(),
             orderbook_cn: args.orderbook_cn.clone().into(),
         }))

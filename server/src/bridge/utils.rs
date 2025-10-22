@@ -2,9 +2,9 @@ use std::time::SystemTime;
 
 use alloy::primitives::{TxHash, U256};
 
-use crate::bridge::{
-    bridge_state::{EthTransaction, TxStatus},
-    eth::EthListener,
+use crate::{
+    bridge::eth::EthListener,
+    services::bridge_service::{EthTransaction, TxStatus},
 };
 
 pub fn log_to_eth_transaction(log: alloy::rpc::types::Log) -> EthTransaction {

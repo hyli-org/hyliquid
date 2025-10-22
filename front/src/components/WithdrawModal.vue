@@ -50,7 +50,7 @@ const amountError = computed(() => {
         return `Unknown asset ${props.balance.asset}`;
     }
     if (value === null) {
-        return "Invalid amount";
+        return "";
     }
     if (value === 0) {
         return "Amount cannot be zero";
