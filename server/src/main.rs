@@ -8,17 +8,16 @@ use hyli_modules::{
     modules::{
         da_listener::{DAListener, DAListenerConf},
         rest::{RestApi, RestApiRunContext},
-        websocket::WebSocketModule,
         BuildApiContextInner, ModulesHandler,
     },
     utils::logger::setup_tracing,
 };
-use orderbook::model::OrderbookEvent;
 use prometheus::Registry;
 use sdk::{api::NodeInfo, info};
 use server::{
     api::{ApiModule, ApiModuleCtx},
-    app::{OrderbookModule, OrderbookModuleCtx, OrderbookWsInMessage},
+    app::{OrderbookModule, OrderbookModuleCtx},
+    bridge::{BridgeModule, BridgeModuleCtx},
     conf::Conf,
     database::{DatabaseModule, DatabaseModuleCtx},
     prover::{OrderbookProverCtx, OrderbookProverModule},
@@ -36,6 +35,9 @@ pub struct Args {
 
     #[arg(long, default_value = "orderbook")]
     pub orderbook_cn: String,
+
+    #[arg(long, default_value = "oranj")] // This should be USDC contract or so
+    pub collateral_token_cn: String,
 
     #[arg(long, default_value = "false")]
     pub clean_db: bool,
@@ -74,6 +76,7 @@ fn main() -> Result<()> {
 }
 
 async fn actual_main() -> Result<()> {
+    server::init::install_rustls_crypto_provider();
     let args = Args::parse();
     let config = Conf::new(args.config_file).context("reading config file")?;
 
@@ -100,6 +103,7 @@ async fn actual_main() -> Result<()> {
         node_client,
         indexer_client,
         validator_lane_id,
+        bridge_service,
     } = setup_services(&config, pool.clone()).await?;
 
     // TODO: make a proper secret management
@@ -211,9 +215,15 @@ async fn actual_main() -> Result<()> {
         .await?;
 
     handler
-        .build_module::<WebSocketModule<OrderbookWsInMessage, OrderbookEvent>>(
-            config.websocket.clone(),
-        )
+        .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
+            api: api_ctx.clone(),
+            collateral_token_cn: args.collateral_token_cn.clone().into(),
+            bridge_config: config.bridge.clone(),
+            pool: pool.clone(),
+            asset_service: asset_service.clone(),
+            bridge_service: bridge_service.clone(),
+            orderbook_cn: args.orderbook_cn.clone().into(),
+        }))
         .await?;
 
     // Should come last so the other modules have nested their own routes.

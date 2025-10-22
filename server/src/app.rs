@@ -6,7 +6,7 @@ use std::{
     vec,
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     extract::{Json, State},
     http::{HeaderMap, Method},
@@ -17,13 +17,13 @@ use axum::{
 use borsh::BorshSerialize;
 use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
 use hyli_modules::{
-    bus::{BusClientSender, SharedMessageBus},
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
-    modules::{websocket::WsTopicMessage, BuildApiContextInner, Module},
+    modules::{BuildApiContextInner, Module},
 };
 use hyli_smt_token::SmtTokenAction;
 use orderbook::{
-    model::{AssetInfo, Order, OrderbookEvent, PairInfo, UserInfo},
+    model::{AssetInfo, Order, OrderbookEvent, PairInfo, UserInfo, WithdrawDestination},
     transaction::{
         AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
         OrderbookAction, PermissionnedOrderbookAction, WithdrawPrivateInput,
@@ -32,10 +32,7 @@ use orderbook::{
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::StatusCode;
-use sdk::{
-    BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId, NodeStateEvent,
-    StatefulEvent, StructuredBlob, UnsettledBlobTransaction,
-};
+use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
@@ -51,20 +48,6 @@ pub struct OrderbookModule {
     router_ctx: RouterCtx,
 }
 
-#[derive(Debug, Clone)]
-struct PendingTransfer {
-    sender: Identity,
-    symbol: String,
-    amount: u128,
-}
-
-#[derive(Debug, Clone)]
-struct PendingWithdraw {
-    destination_address: String,
-    contract_name: ContractName,
-    amount: u64,
-}
-
 pub struct OrderbookModuleCtx {
     pub api: Arc<BuildApiContextInner>,
     pub orderbook_cn: ContractName,
@@ -74,24 +57,39 @@ pub struct OrderbookModuleCtx {
     pub asset_service: Arc<RwLock<AssetService>>,
 }
 
-/// Messages received from WebSocket clients that will be processed by the system
+#[derive(Debug, Clone)]
+pub enum OrderbookRequest {
+    PendingDeposit(PendingDeposit),
+    PendingWithdraw(PendingWithdraw),
+}
+
+impl BusMessage for OrderbookRequest {}
+
+#[derive(Debug, Clone)]
+pub struct PendingDeposit {
+    pub sender: Identity,
+    pub contract_name: ContractName,
+    pub amount: u128,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OrderbookWsInMessage();
+pub struct PendingWithdraw {
+    pub destination: WithdrawDestination,
+    pub contract_name: ContractName,
+    pub amount: u64,
+}
 
 module_bus_client! {
 #[derive(Debug)]
 pub struct OrderbookModuleBusClient {
     sender(DatabaseRequest),
-    // receiver(WsInMessage<OrderbookWsInMessage>),
-    receiver(NodeStateEvent),
+    receiver(OrderbookRequest),
 }
 }
 
 module_bus_client! {
 #[derive(Debug)]
 struct RouterBusClient {
-    sender(WsTopicMessage<OrderbookEvent>),
-    sender(WsTopicMessage<String>),
     sender(DatabaseRequest),
     // No receiver here ! Because RouterBus is cloned
 }
@@ -146,9 +144,17 @@ impl Module for OrderbookModule {
         module_handle_messages! {
             on_self self,
 
-            listen<NodeStateEvent> event => {
-                // info!("[OrderbookModule] Received NodeStateEvent: {:?}", event);
-                _ = log_error!(self.handle_node_state_event(event).await, "handle node state event")
+            listen<OrderbookRequest> event => {
+                match event {
+                    OrderbookRequest::PendingDeposit(deposit) => {
+                        _ = log_error!(self.execute_deposit(deposit)
+                            .await, "could not deposit transfer")
+                    }
+                    OrderbookRequest::PendingWithdraw(withdraw) => {
+                        _ =  log_error!(self.execute_withdraw(withdraw)
+                            .await, "could not withdraw")
+                    }
+                }
             }
         };
 
@@ -157,102 +163,24 @@ impl Module for OrderbookModule {
 }
 
 impl OrderbookModule {
-    async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
-        match event {
-            NodeStateEvent::NewBlock(block) => {
-                for (_, stateful_event) in block.stateful_events.events.iter() {
-                    if let StatefulEvent::SettledTx(unsettled) = stateful_event {
-                        self.handle_settled_tx(unsettled).await?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-}
-
-impl OrderbookModule {
-    async fn handle_settled_tx(&mut self, tx: &UnsettledBlobTransaction) -> Result<()> {
-        let transfers = self.extract_relevant_transfers(&tx.tx).await;
-        let withdraws = self.extract_relevant_withdraws(&tx.tx).await;
-
-        let tx_hash = tx.tx_id.1.clone();
-
-        // Handle deposits (transfers to orderbook)
-        for transfer in transfers {
-            sdk::info!(
-                tx_hash = %tx_hash.0,
-                token = %transfer.symbol,
-                sender = %transfer.sender.0,
-                amount = transfer.amount,
-                "Settled deposit transfer detected",
-            );
-            self.execute_deposit(transfer)
-                .await
-                .with_context(|| format!("applying deposit for tx {}", tx_hash.0))?;
-        }
-
-        // Handle withdraws (orderbook withdraw actions)
-        for withdraw in withdraws {
-            sdk::info!(
-                tx_hash = %tx_hash.0,
-                token = %withdraw.contract_name,
-                user = %withdraw.destination_address,
-                amount = withdraw.amount,
-                "Settled withdraw action detected",
-            );
-            self.execute_withdraw_transfer(withdraw)
-                .await
-                .with_context(|| format!("applying withdraw transfer for tx {}", tx_hash.0))?;
-        }
-
-        Ok(())
-    }
-
-    async fn extract_relevant_transfers(&self, tx: &BlobTransaction) -> Vec<PendingTransfer> {
+    async fn execute_deposit(&self, deposit: PendingDeposit) -> Result<()> {
+        let PendingDeposit {
+            sender,
+            contract_name,
+            amount,
+        } = deposit;
         let asset_service = self.router_ctx.asset_service.read().await;
 
-        let mut transfers = Vec::new();
-        for blob in tx.blobs.iter() {
-            let Some(symbol) = asset_service
-                .get_symbol_from_contract_name(&blob.contract_name.0)
-                .await
-            else {
-                continue;
-            };
-
-            let Ok(structured) = StructuredBlob::<SmtTokenAction>::try_from(blob.clone()) else {
-                continue;
-            };
-
-            if let SmtTokenAction::Transfer {
-                sender,
-                recipient,
-                amount,
-            } = structured.data.parameters
-            {
-                if recipient.0 != ORDERBOOK_ACCOUNT_IDENTITY {
-                    continue;
-                }
-
-                transfers.push(PendingTransfer {
-                    sender,
-                    symbol,
-                    amount,
-                });
-            }
-        }
-
-        transfers
-    }
-
-    async fn execute_deposit(&self, transfer: PendingTransfer) -> Result<()> {
-        let PendingTransfer {
-            sender,
-            symbol,
-            amount,
-        } = transfer;
         let Identity(user) = sender;
+        let Some(symbol) = asset_service
+            .get_symbol_from_contract_name(&contract_name.0)
+            .await
+        else {
+            bail!(
+                "Could not deposit: Unknown contract name: {}",
+                contract_name.0
+            );
+        };
         let amount_u64 =
             u64::try_from(amount).context("Deposit amount exceeds supported range (u64)")?;
 
@@ -291,57 +219,29 @@ impl OrderbookModule {
         Ok(())
     }
 
-    async fn extract_relevant_withdraws(&self, tx: &BlobTransaction) -> Vec<PendingWithdraw> {
-        let asset_service = self.router_ctx.asset_service.read().await;
-
-        let mut withdraws = Vec::new();
-        for blob in tx.blobs.iter() {
-            // Only look at orderbook contract blobs
-            if blob.contract_name != self.router_ctx.orderbook_cn {
-                continue;
-            }
-
-            let Ok(action) = borsh::from_slice::<OrderbookAction>(blob.data.0.as_slice()) else {
-                continue;
-            };
-
-            if let OrderbookAction::PermissionnedOrderbookAction(
-                PermissionnedOrderbookAction::Withdraw {
-                    symbol,
-                    amount,
-                    destination_address,
-                },
-                _,
-            ) = action
-            {
-                let Some(contract_name) =
-                    asset_service.get_contract_name_from_symbol(&symbol).await
-                else {
-                    continue;
-                };
-                withdraws.push(PendingWithdraw {
-                    destination_address,
-                    contract_name,
-                    amount,
-                });
-            }
-        }
-
-        withdraws
-    }
-
-    async fn execute_withdraw_transfer(&self, withdraw: PendingWithdraw) -> Result<()> {
+    async fn execute_withdraw(&self, withdraw: PendingWithdraw) -> Result<()> {
         let PendingWithdraw {
-            destination_address,
+            destination,
             contract_name,
             amount,
         } = withdraw;
+
+        if destination.network != "hyli" {
+            // Non-Hyli withdraws are handled by the bridge module directly.
+            tracing::info!(
+                network = %destination.network,
+                address = %destination.address,
+                amount,
+                "Skipping Hyli transfer for non-Hyli withdraw destination"
+            );
+            return Ok(());
+        }
 
         let orderbook_id_action = PermissionnedOrderbookAction::Identify;
 
         let transfer_blob = SmtTokenAction::Transfer {
             sender: Identity(ORDERBOOK_ACCOUNT_IDENTITY.to_string()),
-            recipient: Identity(destination_address.to_string()),
+            recipient: Identity(destination.address.to_string()),
             amount: amount as u128,
         }
         .as_blob(contract_name, None, None);
@@ -462,6 +362,7 @@ pub struct CancelOrderRequest {
 pub struct WithdrawRequest {
     pub symbol: String,
     pub amount: u64,
+    pub destination: WithdrawDestination,
 }
 
 // --------------------------------------------------------
@@ -884,9 +785,9 @@ async fn withdraw(
     };
 
     let orderbook_action = PermissionnedOrderbookAction::Withdraw {
-        symbol: request.symbol.clone(),
+        symbol: request.symbol,
         amount: request.amount,
-        destination_address: user_info.user.clone(), // TODO make it available from request
+        destination: request.destination,
     };
 
     process_orderbook_action(

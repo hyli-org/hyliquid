@@ -136,6 +136,7 @@ pub fn init_tracing() {
 pub struct ServiceContext {
     pub user_service: Arc<RwLock<crate::services::user_service::UserService>>,
     pub asset_service: Arc<RwLock<crate::services::asset_service::AssetService>>,
+    pub bridge_service: Arc<RwLock<crate::services::bridge_service::BridgeService>>,
     pub book_service: Arc<RwLock<crate::services::book_service::BookService>>,
     pub node_client: Arc<NodeApiHttpClient>,
     pub indexer_client: Arc<IndexerApiHttpClient>,
@@ -149,6 +150,9 @@ pub async fn setup_services(config: &Conf, pool: PgPool) -> Result<ServiceContex
     ));
     let asset_service = Arc::new(RwLock::new(
         crate::services::asset_service::AssetService::new(pool.clone()).await,
+    ));
+    let bridge_service = Arc::new(RwLock::new(
+        crate::services::bridge_service::BridgeService::new(pool.clone(), &config.bridge).await?,
     ));
     let book_service = Arc::new(RwLock::new(
         crate::services::book_service::BookService::new(pool.clone()),
@@ -179,6 +183,7 @@ pub async fn setup_services(config: &Conf, pool: PgPool) -> Result<ServiceContex
     Ok(ServiceContext {
         user_service,
         asset_service,
+        bridge_service,
         book_service,
         node_client,
         indexer_client,
