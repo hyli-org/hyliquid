@@ -33,28 +33,44 @@ const {
     claimStatusError,
     providerAvailable,
     manualAssociation,
-    availableNetworks,
-    selectedNetwork,
-    selectedNetworkId,
-    setSelectedNetwork,
+    currentNetwork,
     isWrongNetwork,
     switchNetworkError,
     isSwitchingNetwork,
-    switchToSelectedNetwork,
+    switchToSepoliaNetwork,
     checkNetworkMatch,
     setupNetworkListener,
 } = useEthereumBridge();
 
-const hasNetworks = computed(() => availableNetworks.length > 0);
+let networkListenerCleanup: (() => void) | undefined;
 
-const effectiveNetworkId = computed({
-    get: () => selectedNetworkId.value || undefined,
-    set: (value: string | undefined) => {
-        if (value) {
-            setSelectedNetwork(value);
+watch(
+    () => props.isOpen,
+    async (open) => {
+        if (open) {
+            amountInput.value = "";
+            clearStatus();
+            await refreshAssociation();
+            await checkNetworkMatch();
+            networkListenerCleanup = setupNetworkListener();
+        } else {
+            if (networkListenerCleanup) {
+                networkListenerCleanup();
+                networkListenerCleanup = undefined;
+            }
         }
     },
-});
+);
+
+watch(
+    () => props.balance,
+    () => {
+        if (props.isOpen) {
+            amountInput.value = "";
+            clearStatus();
+        }
+    },
+);
 
 const assetInfo = computed(() => {
     const symbol = props.balance?.asset;
@@ -131,48 +147,6 @@ const canSubmitWithdraw = computed(() => {
     return !isSubmitting.value;
 });
 
-let networkListenerCleanup: (() => void) | undefined;
-
-watch(
-    () => props.isOpen,
-    async (open) => {
-        if (open) {
-            amountInput.value = "";
-            clearStatus();
-            if (hasNetworks.value && !selectedNetwork.value && availableNetworks[0]) {
-                await setSelectedNetwork(availableNetworks[0]!.id);
-            }
-            await refreshAssociation();
-            await checkNetworkMatch();
-            networkListenerCleanup = setupNetworkListener();
-        } else {
-            if (networkListenerCleanup) {
-                networkListenerCleanup();
-                networkListenerCleanup = undefined;
-            }
-        }
-    },
-);
-
-watch(
-    () => props.balance,
-    () => {
-        if (props.isOpen) {
-            amountInput.value = "";
-            clearStatus();
-        }
-    },
-);
-
-watch(
-    () => selectedNetworkId.value,
-    () => {
-        if (props.isOpen) {
-            checkNetworkMatch();
-        }
-    },
-);
-
 const closeModal = () => {
     emit("update:isOpen", false);
 };
@@ -190,7 +164,7 @@ const handleWithdraw = async () => {
     }
 
     const result = await submitWithdraw(props.balance.asset, amount, {
-        network: selectedNetworkId.value ? selectedNetworkId.value : "ethereum-sepolia",
+        network: "ethereum-sepolia",
         address,
     });
     if (result.success) {
@@ -280,28 +254,22 @@ const withdrawTitle = computed(() => {
                             </button>
                         </header>
 
-                        <div v-if="hasNetworks" class="space-y-2">
-                            <label class="flex items-center justify-between text-xs text-neutral-400">
-                                Target network
-                                <span v-if="isWrongNetwork" class="text-amber-400">Switch to continue claiming</span>
-                            </label>
-                            <select
-                                v-model="effectiveNetworkId"
-                                class="w-full rounded border border-neutral-700 bg-neutral-900/60 p-2 text-sm text-neutral-100 focus:border-cyan-500 focus:outline-none"
-                            >
-                                <option v-for="network in availableNetworks" :key="network.id" :value="network.id">
-                                    {{ network.name }}
-                                </option>
-                            </select>
+                        <div class="space-y-2">
+                            <div class="space-y-1 text-xs text-neutral-500">
+                                <p class="flex items-center justify-between">
+                                    Target network
+                                    <span class="font-mono text-neutral-300">{{ currentNetwork.name }}</span>
+                                </p>
+                            </div>
                             <button
                                 v-if="isWrongNetwork"
                                 type="button"
                                 class="w-full rounded border border-cyan-600 px-2 py-1 text-xs font-semibold text-cyan-200 transition hover:bg-cyan-600/20 disabled:cursor-not-allowed disabled:border-neutral-700 disabled:text-neutral-500"
                                 :disabled="isSwitchingNetwork"
-                                @click="switchToSelectedNetwork"
+                                @click="switchToSepoliaNetwork"
                             >
                                 <span v-if="isSwitchingNetwork">Switching network…</span>
-                                <span v-else>Switch in wallet</span>
+                                <span v-else>Switch to {{ currentNetwork.name }} in wallet</span>
                             </button>
                             <p v-if="switchNetworkError" class="text-xs text-rose-400">
                                 {{ switchNetworkError }}

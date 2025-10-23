@@ -8,13 +8,7 @@ window.__CONFIG__ = {
   WALLET_SERVER_BASE_URL: "http://localhost:4000",
   WALLET_WEBSOCKET_URL: "ws://localhost:8081",
   GOOGLE_CLIENT_ID: undefined,
-  DEFAULT_NETWORK: {
-    id: "ethereum-sepolia",
-    name: "Ethereum Sepolia",
-    chainId: "0xaa36a7",
-    tokenAddress: "0x22CE25BFa5Dcd58A3B52c2A5fa262bDF079A5456",
-    vaultAddress: "0x2ffCC85Db88Dbb4047d4d1528CE7739CFB961302",
-    rpcUrl: "https://0xrpc.io/sep",
-    blockExplorerUrl: "https://sepolia.etherscan.io"
-  }
+  TOKEN_ADDRESS: "0x22CE25BFa5Dcd58A3B52c2A5fa262bDF079A5456",
+  VAULT_ADDRESS: "0x2ffCC85Db88Dbb4047d4d1528CE7739CFB961302",
+  RPC_URL: "https://0xrpc.io/sep"
 };

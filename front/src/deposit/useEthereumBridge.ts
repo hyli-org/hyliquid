@@ -2,8 +2,7 @@ import { computed, ref } from "vue";
 import { useWallet } from "hyli-wallet-vue";
 import {
     BACKEND_API_URL,
-    COLLATERAL_NETWORKS,
-    type CollateralNetworkConfig,
+    NETWORK,
     WALLET_SERVER_BASE_URL,
 } from "../config";
 import { Interface, parseUnits } from "ethers";
@@ -60,10 +59,6 @@ const fetchAccountInfo = async (username: string): Promise<AccountInfo | null> =
     }
 };
 
-const availableNetworks: CollateralNetworkConfig[] = COLLATERAL_NETWORKS.filter(
-    (network) => Boolean(network?.id && network?.chainId),
-);
-
 export function useEthereumBridge() {
     const { wallet } = useWallet();
     const userIdentity = computed(() => wallet.value?.address ?? null);
@@ -103,34 +98,6 @@ export function useEthereumBridge() {
         return identity;
     };
 
-    const selectedNetworkId = ref<string | null>(
-        // availableNetworks.find((network) => network.id === "local-anvil")?.id ??
-        availableNetworks.find((network) => network.id === "ethereum-sepolia")?.id ??
-            availableNetworks[0]?.id ??
-            null,
-    );
-    const selectedNetwork = computed<CollateralNetworkConfig | null>(() => {
-        if (!selectedNetworkId.value) return null;
-        return availableNetworks.find((network) => network.id === selectedNetworkId.value) ?? null;
-    });
-
-    const setSelectedNetwork = async (networkId: string) => {
-        if (selectedNetworkId.value === networkId) {
-            return;
-        }
-
-        if (availableNetworks.some((network) => network.id === networkId)) {
-            selectedNetworkId.value = networkId;
-            networkError.value = null;
-            depositError.value = null;
-            txHash.value = null;
-            switchNetworkError.value = null;
-            
-            // Check if the wallet is on the correct network
-            await checkNetworkMatch();
-        }
-    };
-
     const normalizedWalletAddress = computed(() => {
         const info = accountInfo.value;
         if (!info || !("Ethereum" in info.auth_method)) {
@@ -155,16 +122,6 @@ export function useEthereumBridge() {
 
     const hasBridgeIdentity = computed(() => Boolean(userIdentity.value));
     const needsBridgeClaim = computed(() => hasBridgeIdentity.value && !bridgeClaimed.value);
-
-    const requireSelectedNetwork = (
-        errorMessage = "Please select a network",
-    ): CollateralNetworkConfig => {
-        const network = selectedNetwork.value;
-        if (!network) {
-            throw new Error(errorMessage);
-        }
-        return network;
-    };
 
     const requireAssociatedAddress = (): string => {
         const address = associatedAddress.value;
@@ -201,28 +158,21 @@ export function useEthereumBridge() {
     };
 
     const checkNetworkMatch = async () => {
-        if (!selectedNetwork.value) {
-            isWrongNetwork.value = false;
-            return;
-        }
-
         const chainId = await getCurrentChainId();
-        isWrongNetwork.value = chainId !== null && chainId !== selectedNetwork.value.chainId;
+        isWrongNetwork.value = chainId !== null && chainId !== NETWORK.chainId;
     };
 
-    const switchToSelectedNetwork = async () => {
-        const network = requireSelectedNetwork("Please select a network to switch to");
-        
+    const switchToSepoliaNetwork = async () => {
         isSwitchingNetwork.value = true;
         switchNetworkError.value = null;
         
         try {
             const provider = getProvider();
             
-            // Try to switch to the network
+            // Try to switch to Sepolia
             await provider.request({
                 method: "wallet_switchEthereumChain",
-                params: [{ chainId: network.chainId }],
+                params: [{ chainId: NETWORK.chainId }],
             });
             
             // Update current chain ID and check match
@@ -236,10 +186,10 @@ export function useEthereumBridge() {
                     await provider.request({
                         method: "wallet_addEthereumChain",
                         params: [{
-                            chainId: network.chainId,
-                            chainName: network.name,
-                            rpcUrls: [network.rpcUrl],
-                            blockExplorerUrls: [network.blockExplorerUrl],
+                            chainId: NETWORK.chainId,
+                            chainName: NETWORK.name,
+                            rpcUrls: [NETWORK.rpcUrl],
+                            blockExplorerUrls: [NETWORK.blockExplorerUrl],
                             nativeCurrency: {
                                 name: "ETH",
                                 symbol: "ETH",
@@ -252,7 +202,7 @@ export function useEthereumBridge() {
                     const providerAfterAdd = getProvider();
                     await providerAfterAdd.request({
                         method: "wallet_switchEthereumChain",
-                        params: [{ chainId: network.chainId }],
+                        params: [{ chainId: NETWORK.chainId }],
                     });
                     
                     await checkNetworkMatch();
@@ -260,13 +210,13 @@ export function useEthereumBridge() {
                 } catch (addError) {
                     switchNetworkError.value = addError instanceof Error 
                         ? addError.message 
-                        : "Failed to add network to MetaMask";
+                        : "Failed to add Sepolia network to MetaMask";
                     throw addError;
                 }
             } else {
                 switchNetworkError.value = switchError instanceof Error 
                     ? switchError.message 
-                    : "Failed to switch network";
+                    : "Failed to switch to Sepolia network";
                 throw switchError;
             }
         } finally {
@@ -279,9 +229,7 @@ export function useEthereumBridge() {
         
         const handleChainChanged = (...args: unknown[]) => {
             const chainId = args[0] as string;
-            if (selectedNetwork.value) {
-                isWrongNetwork.value = chainId !== selectedNetwork.value.chainId;
-            }
+            isWrongNetwork.value = chainId !== NETWORK.chainId;
         };
         
         window.ethereum.on("chainChanged", handleChainChanged);
@@ -440,14 +388,11 @@ export function useEthereumBridge() {
         await checkBridgeClaimStatus();
         
         // Also check network match when refreshing association
-        if (selectedNetwork.value) {
-            await checkNetworkMatch();
-        }
+        await checkNetworkMatch();
     };
 
     const requestManualAssociation = async () => {
         requireIdentity();
-        const network = requireSelectedNetwork("Please select a network before associating an address");
 
         submitError.value = null;
         submittingAssociation.value = true;
@@ -471,7 +416,7 @@ export function useEthereumBridge() {
             const normalizedTarget = normalizeHexLike(targetAddress);
             const signature = await claimBridgeIdentity(
                 provider,
-                network.chainId,
+                NETWORK.chainId,
                 normalizedTarget,
                 signerAccount,
             );
@@ -496,16 +441,15 @@ export function useEthereumBridge() {
         txHash.value = null;
 
         try {
-            const network = requireSelectedNetwork();
             const address = requireAssociatedAddress();
             requireBridgeClaimed();
 
             const tokenAddress = requireHexAddress(
-                network.tokenAddress,
+                NETWORK.tokenAddress,
                 "Collateral token address is invalid",
                 "Collateral token address is not configured",
             );
-            const vaultAddress = requireHexAddress(network.vaultAddress, "Vault address is invalid");
+            const vaultAddress = requireHexAddress(NETWORK.vaultAddress, "Vault address is invalid");
 
             isSendingTransaction.value = true;
 
@@ -515,7 +459,7 @@ export function useEthereumBridge() {
             // Check if we're on the correct network
             await checkNetworkMatch();
             if (isWrongNetwork.value) {
-                throw new Error(`Please switch to ${network.name} network first`);
+                throw new Error(`Please switch to ${NETWORK.name} network first`);
             }
 
             let signerAccount: string;
@@ -591,19 +535,16 @@ export function useEthereumBridge() {
         networkError,
         isSwitchingNetwork,
         manualAssociation,
-        availableNetworks,
-        selectedNetwork,
-        selectedNetworkId,
         isWrongNetwork,
         switchNetworkError,
-        setSelectedNetwork,
+        currentNetwork: NETWORK,
         checkBridgeClaimStatus,
         refreshAssociation,
         requestManualAssociation,
         sendDepositTransaction,
         getCurrentChainId,
         checkNetworkMatch,
-        switchToSelectedNetwork,
+        switchToSepoliaNetwork,
         setupNetworkListener,
     };
 }

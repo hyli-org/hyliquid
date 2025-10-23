@@ -12,7 +12,9 @@ declare global {
             WALLET_SERVER_BASE_URL?: string;
             WALLET_WEBSOCKET_URL?: string;
             GOOGLE_CLIENT_ID?: string;
-            DEFAULT_NETWORK?: CollateralNetworkConfig;
+            TOKEN_ADDRESS?: string;
+            VAULT_ADDRESS?: string;
+            RPC_URL?: string;
         };
     }
 }
@@ -39,38 +41,12 @@ export const WEBSOCKET_URL =
 export const GOOGLE_CLIENT_ID =
     window.__CONFIG__?.GOOGLE_CLIENT_ID || import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
-export interface CollateralNetworkConfig {
-    id: string;
-    name: string;
-    chainId: string;
-    tokenAddress: string;
-    vaultAddress: string;
-    rpcUrl: string;
-    blockExplorerUrl: string;
-}
-
-// Default configuration with Sepolia listed first (default)
-export const COLLATERAL_NETWORKS: CollateralNetworkConfig[] = [
-    {
-        id: "ethereum-sepolia",
-        name: "Ethereum Sepolia",
-        chainId: "0xaa36a7",
-        tokenAddress: "0x22CE25BFa5Dcd58A3B52c2A5fa262bDF079A5456",
-        vaultAddress: "0x2ffCC85Db88Dbb4047d4d1528CE7739CFB961302",
-        rpcUrl: "https://0xrpc.io/sep",
-        blockExplorerUrl: "https://sepolia.etherscan.io",
-    },
-    {
-        id: "ethereum-mainnet",
-        name: "Ethereum Mainnet",
-        chainId: "0x1",
-        tokenAddress: "TBD",
-        vaultAddress: "0x2ffCC85Db88Dbb4047d4d1528CE7739CFB961302",
-        rpcUrl: "https://tbd",
-        blockExplorerUrl: "https://etherscan.io",
-    },
-];
-
-// Default network (Sepolia)
-export const DEFAULT_NETWORK =
-    window.__CONFIG__?.DEFAULT_NETWORK || import.meta.env.VITE_DEFAULT_NETWORK || COLLATERAL_NETWORKS[0];
+export const NETWORK = {
+    id: "ethereum-sepolia",
+    name: "Ethereum Sepolia",
+    chainId: "0xaa36a7",
+    tokenAddress: window.__CONFIG__?.TOKEN_ADDRESS || import.meta.env.VITE_TOKEN_ADDRESS || "0x22CE25BFa5Dcd58A3B52c2A5fa262bDF079A5456",
+    vaultAddress: window.__CONFIG__?.VAULT_ADDRESS || import.meta.env.VITE_VAULT_ADDRESS || "0x2ffCC85Db88Dbb4047d4d1528CE7739CFB961302",
+    rpcUrl: window.__CONFIG__?.RPC_URL || import.meta.env.VITE_RPC_URL || "https://0xrpc.io/sep",
+    blockExplorerUrl: "https://sepolia.etherscan.io",
+};
