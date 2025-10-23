@@ -4,17 +4,17 @@
     "": {
       "name": "hyliquid-front",
       "dependencies": {
-        "@tailwindcss/vite": "^4.1.13",
+        "@tailwindcss/vite": "^4.1.15",
         "add": "^2.0.6",
         "ethers": "^6.15.0",
         "hyli-noir": "^0.3.0",
-        "hyli-wallet-vue": "^0.1.10",
+        "hyli-wallet-vue": "^0.1.11",
         "lightweight-charts": "^5.0.9",
-        "tailwindcss": "^4.1.13",
+        "tailwindcss": "^4.1.15",
         "uuid": "^13.0.0",
         "vite-plugin-node-polyfills": "^0.24.0",
         "vue": "^3.5.22",
-        "vue-router": "^4.5.1",
+        "vue-router": "^4.6.3",
       },
       "devDependencies": {
         "@vitejs/plugin-vue": "^6.0.1",
@@ -22,7 +22,7 @@
         "prettier": "^3.6.2",
         "typescript": "~5.8.3",
         "vite": "npm:rolldown-vite@7.1.12",
-        "vue-tsc": "^3.1.0",
+        "vue-tsc": "^3.1.1",
       },
     },
   },
@@ -362,7 +362,7 @@
 
     "hyli-wallet": ["hyli-wallet@0.5.11", "", { "dependencies": { "@noble/hashes": "^2.0.1", "@types/crypto-js": "^4.2.2", "@types/elliptic": "^6.4.18", "@types/react-router-dom": "^5.3.3", "elliptic": "^6.6.1", "hyli": "^0.4.1", "js-sha3": "^0.9.3" }, "peerDependencies": { "hyli-noir": "^0.3.0", "react": "^19.1.1", "react-dom": "^19.1.1", "react-router-dom": "^7.9.3" } }, "sha512-jnK4d3m+dd4xtnP4yR+AbH77Bz6JM/3cautr/K0fy5c6u9zzmHHwXLn+9QrxHINKV+nWK8Xaf7lGn69vamJs8g=="],
 
-    "hyli-wallet-vue": ["hyli-wallet-vue@0.1.10", "", { "dependencies": { "hyli-wallet": "^0.5.11" }, "peerDependencies": { "vue": "^3.5.22" } }, "sha512-0YMijgYkKk7ECeUg4PqxLhL+I1OLQf0+W8wDy9DY9ReAPQKCKX2zCf+2His/VDFep4zPCeBoW9W5muFzY9HqOg=="],
+    "hyli-wallet-vue": ["hyli-wallet-vue@0.1.11", "", { "dependencies": { "hyli-wallet": "^0.5.11" }, "peerDependencies": { "vue": "^3.5.22" } }, "sha512-Bm0ajqyRZR6Gv7San8Nw8k2Gtnv1au4DBEoDnuI5bYGEbRBgEnOpT3SD3RBNNGnfKKtW/OKh1Q46e4KSiCITGw=="],
 
     "idb-keyval": ["idb-keyval@6.2.2", "", {}, "sha512-yjD9nARJ/jb1g+CvD0tlhUHOrJ9Sy0P8T9MF3YaLlHnSRpwPfpTX0XIvpmw3gAJUmEu3FiICLBDPXVwyEvrleg=="],
 
