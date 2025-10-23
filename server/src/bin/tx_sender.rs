@@ -115,6 +115,23 @@ fn create_signature(signing_key: &SigningKey, data: &str) -> Result<String> {
     Ok(hex::encode(signature.to_bytes()))
 }
 
+async fn get_nonce(client: &Client, server_url: &str, identity: &str) -> Result<u32> {
+    let response = client
+        .get(format!("{}/nonce", server_url))
+        .header("x-identity", identity)
+        .send()
+        .await
+        .context("Failed to send request to server")?;
+    if response.status().is_success() {
+        let nonce_str = response.text().await?;
+        Ok(nonce_str.trim().parse::<u32>().unwrap_or_default())
+    } else {
+        let status = response.status();
+        let error_text = response.text().await.unwrap_or_default();
+        anyhow::bail!("Server returned error {status}: {error_text}");
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -136,23 +153,7 @@ async fn main() -> Result<()> {
 
     let client = Client::new();
 
-    let nonce: u32 = {
-        let response = client
-            .get(format!("{}/nonce", args.server_url))
-            .header("x-identity", args.identity.clone())
-            .send()
-            .await
-            .context("Failed to send request to server")?;
-
-        if response.status().is_success() {
-            let nonce_str = response.text().await?;
-            nonce_str.trim().parse::<u32>().unwrap_or_default()
-        } else {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            anyhow::bail!("Server returned error {status}: {error_text}");
-        }
-    };
+    let nonce = get_nonce(&client, &args.server_url, &args.identity).await?;
 
     match args.command {
         Commands::CreatePair {
@@ -529,11 +530,11 @@ async fn main() -> Result<()> {
             );
 
             let mut order_count = 0;
-            let mut current_nonce = nonce;
             let mut middle_price = middle_price;
             let mut trend_direction = trend.as_str();
 
             while order_count < max_orders {
+                let current_nonce = get_nonce(&client, &args.server_url, &args.identity).await?;
                 // Calculate price progression based on trend
 
                 match trend.as_str() {
@@ -643,7 +644,6 @@ async fn main() -> Result<()> {
                         price,
                         response_text
                     );
-                    current_nonce += 1;
                 } else {
                     let status = response.status();
                     let error_text = response.text().await.unwrap_or_default();
