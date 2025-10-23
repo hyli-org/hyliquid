@@ -1,4 +1,6 @@
-FROM rust:bookworm AS builder
+ARG DEP_IMAGE=rust:bookworm
+
+FROM ${DEP_IMAGE} AS builder
 
 RUN apt-get update && apt-get -y install curl g++ git libssl-dev pkg-config
 
