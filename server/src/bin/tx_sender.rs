@@ -643,6 +643,7 @@ async fn main() -> Result<()> {
                         price,
                         response_text
                     );
+                    current_nonce += 1;
                 } else {
                     let status = response.status();
                     let error_text = response.text().await.unwrap_or_default();
@@ -655,7 +656,6 @@ async fn main() -> Result<()> {
                 }
 
                 order_count += 1;
-                current_nonce += 1;
 
                 // Wait for the specified interval before creating the next order
                 if order_count < max_orders {
