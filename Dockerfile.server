@@ -1,23 +1,50 @@
-FROM rust:bookworm AS builder
+# Stage 1: Prepare the recipe for dependencies
+FROM rust:bookworm AS chef
 
 RUN apt-get update && apt-get -y install curl g++ git libssl-dev pkg-config
-
-RUN if ! /root/.sp1/bin/cargo-prove prove -V 2>/dev/null | grep -q "38f0f14"; then \
-    curl -L https://sp1up.succinct.xyz | bash && /root/.sp1/bin/sp1up; \
-fi
+RUN cargo install cargo-chef
 
 WORKDIR /app
+
+# Stage 2: Compute recipe file
+FROM chef AS planner
+
 COPY .cargo .cargo
 COPY ./loadtest/ ./loadtest
 COPY ./contracts/ ./contracts
 COPY ./server ./server
 COPY ./elf ./elf
-COPY Cargo.toml . 
-COPY Cargo.lock .
+COPY Cargo.toml Cargo.lock ./
 
-RUN cargo build --release -F nonreproducible -F nobuild --bin server --bin autoprover --bin tx_sender
+RUN cargo chef prepare --recipe-path recipe.json
 
-# RUNNER
+# Stage 3: Build dependencies (cached layer)
+FROM chef AS builder
+
+RUN if ! /root/.sp1/bin/cargo-prove prove -V 2>/dev/null | grep -q "38f0f14"; then \
+    curl -L https://sp1up.succinct.xyz | bash && /root/.sp1/bin/sp1up; \
+fi
+
+COPY --from=planner /app/recipe.json recipe.json
+
+# Build dependencies - this layer is cached until recipe.json changes
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo chef cook --release --recipe-path recipe.json --features nonreproducible,nobuild
+
+# Now copy source code and build the actual binaries
+COPY .cargo .cargo
+COPY ./loadtest/ ./loadtest
+COPY ./contracts/ ./contracts
+COPY ./server ./server
+COPY ./elf ./elf
+COPY Cargo.toml Cargo.lock ./
+
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    cargo build --release -F nonreproducible -F nobuild --bin server --bin autoprover --bin tx_sender
+
+# Stage 4: Runtime
 FROM rust:latest
 
 WORKDIR /app

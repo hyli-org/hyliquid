@@ -53,6 +53,14 @@ jobs:
           (matrix.suffix == 'api' && inputs.build_api)
         uses: actions/checkout@v2
 
+      - name: Set up Docker Buildx
+        if: |
+          github.event_name == 'push' ||
+          (matrix.suffix == 'server' && inputs.build_server) ||
+          (matrix.suffix == 'ui' && inputs.build_ui) ||
+          (matrix.suffix == 'api' && inputs.build_api)
+        uses: docker/setup-buildx-action@v3
+
       - name: Docker meta
         if: |
           github.event_name == 'push' ||
@@ -111,3 +119,5 @@ jobs:
           file: Dockerfile.${{ matrix.suffix }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}-${{ matrix.suffix }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}-${{ matrix.suffix }}:buildcache,mode=max
