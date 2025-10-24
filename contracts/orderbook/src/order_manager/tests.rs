@@ -102,7 +102,7 @@ fn serialize<T: BorshSerialize>(value: &T) -> Vec<u8> {
     borsh::to_vec(value).expect("serialize private input")
 }
 
-fn apply_user_updates(orderbook: &mut FullState, user: &mut UserInfo, events: &[OrderbookEvent]) {
+fn apply_user_updates(user: &mut UserInfo, events: &[OrderbookEvent]) {
     for event in events {
         match event {
             OrderbookEvent::SessionKeyAdded { session_keys, .. } => {
@@ -114,11 +114,6 @@ fn apply_user_updates(orderbook: &mut FullState, user: &mut UserInfo, events: &[
             _ => {}
         }
     }
-
-    orderbook
-        .state
-        .users_info
-        .insert(user.user.clone(), user.clone());
 }
 
 fn execute_action_ok(
@@ -128,9 +123,14 @@ fn execute_action_ok(
     private_input: Vec<u8>,
 ) -> Vec<OrderbookEvent> {
     let events = orderbook
-        .execute_and_update_roots(user, &action, &private_input)
+        .state
+        .generate_permissionned_execution_events(user, action, &private_input)
+        .expect("failed to generate execution events");
+
+    orderbook
+        .apply_events_and_update_roots(user, events.clone())
         .expect("action should succeed");
-    apply_user_updates(orderbook, user, &events);
+    apply_user_updates(user, &events);
     events
 }
 
@@ -141,7 +141,8 @@ fn execute_action_err(
     private_input: Vec<u8>,
 ) -> String {
     orderbook
-        .execute_and_update_roots(user, &action, &private_input)
+        .state
+        .generate_permissionned_execution_events(user, action, &private_input)
         .expect_err("action should fail")
 }
 
@@ -173,11 +174,11 @@ fn add_session_key_registers_new_key() {
         events[0],
         OrderbookEvent::SessionKeyAdded { ref user, .. } if user == "alice"
     ));
-
     let err = orderbook
-        .execute_and_update_roots(
+        .state
+        .generate_permissionned_execution_events(
             &user,
-            &PermissionnedOrderbookAction::AddSessionKey,
+            PermissionnedOrderbookAction::AddSessionKey,
             &serialize(&AddSessionKeyPrivateInput {
                 new_public_key: key,
             }),
@@ -295,7 +296,7 @@ fn create_pair_merges_metadata_without_overrides() {
     );
 }
 
-#[test]
+#[test_log::test]
 fn deposit_updates_balance_and_event() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
@@ -489,7 +490,7 @@ fn limit_bid_inserts_when_no_liquidity() {
 
     assert_eq!(events.len(), 1);
     assert!(matches!(events[0], OrderbookEvent::OrderCreated { .. }));
-    assert_eq!(manager.buy_orders.get(&order.pair).unwrap().len(), 1);
+    assert_eq!(manager.bid_orders.get(&order.pair).unwrap().len(), 1);
     assert!(manager.orders.contains_key(&order.order_id));
 }
 
@@ -510,11 +511,7 @@ fn limit_bid_matches_existing_ask() {
         .expect("matching limit bid should succeed");
 
     assert!(!manager.orders.contains_key(&taker_order.order_id));
-    assert!(manager
-        .sell_orders
-        .get(&taker_order.pair)
-        .unwrap()
-        .is_empty());
+    assert!(!manager.ask_orders.contains_key(&taker_order.pair));
 
     assert!(events.iter().any(|event| matches!(
         event,
@@ -546,7 +543,7 @@ fn limit_bid_inserts_when_price_too_low() {
     assert!(manager.orders.contains_key(&taker_order.order_id));
     assert_eq!(
         manager
-            .buy_orders
+            .bid_orders
             .get(&taker_order.pair)
             .unwrap()
             .first_key_value()
@@ -572,7 +569,7 @@ fn limit_ask_inserts_when_no_bids() {
     assert!(manager.orders.contains_key(&order.order_id));
     assert_eq!(
         manager
-            .sell_orders
+            .ask_orders
             .get(&order.pair)
             .and_then(|queue| queue.first_key_value())
             .map(|(_price, orders)| orders.front().unwrap()),
@@ -630,7 +627,7 @@ fn limit_ask_inserts_when_price_above_best_bid() {
     assert!(manager.orders.contains_key(&taker_order.order_id));
     assert_eq!(
         manager
-            .sell_orders
+            .ask_orders
             .get(&taker_order.pair)
             .and_then(|queue| queue.first_key_value())
             .map(|(_price, orders)| orders.front().unwrap()),

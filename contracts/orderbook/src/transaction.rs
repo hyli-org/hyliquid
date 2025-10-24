@@ -110,6 +110,21 @@ impl ExecuteState {
         action: PermissionnedOrderbookAction,
         private_input: &[u8],
     ) -> Result<Vec<OrderbookEvent>, String> {
+        let events = self
+            .generate_permissionned_execution_events(&user_info, action, private_input)
+            .map_err(|e| format!("Could not generate events: {e}"))?;
+        self.apply_events(&user_info, &events)
+            .map_err(|e| format!("Could not apply events to state: {e}"))?;
+
+        Ok(events)
+    }
+
+    pub fn generate_permissionned_execution_events(
+        &self,
+        user_info: &UserInfo,
+        action: PermissionnedOrderbookAction,
+        private_input: &[u8],
+    ) -> Result<Vec<OrderbookEvent>, String> {
         match action {
             PermissionnedOrderbookAction::Identify => {
                 Ok(vec![]) // Identify action does not change the state
@@ -125,10 +140,13 @@ impl ExecuteState {
                         format!("Failed to deserialize CreateOrderPrivateInput: {e}")
                     })?;
 
-                self.add_session_key(user_info, &add_session_key_private_input.new_public_key)
+                self.add_session_key(
+                    user_info.clone(),
+                    &add_session_key_private_input.new_public_key,
+                )
             }
             PermissionnedOrderbookAction::Deposit { symbol, amount } => {
-                self.deposit(&symbol, amount, &user_info)
+                self.deposit(&symbol, amount, user_info)
             }
             PermissionnedOrderbookAction::CreateOrder(Order {
                 order_id,
@@ -156,7 +174,7 @@ impl ExecuteState {
                 // The orderbook server knows the signature as user informed it offchain.
                 // As the public key has been registered, only the user can create that signature and hence allow this order creation
                 utils::verify_user_signature_authorization(
-                    &user_info,
+                    user_info,
                     &create_order_private_input.public_key,
                     &format!(
                         "{}:{}:create_order:{order_id}",
@@ -175,7 +193,7 @@ impl ExecuteState {
                     quantity,
                 };
 
-                self.execute_order(&user_info, order)
+                self.execute_order(user_info, order)
             }
             PermissionnedOrderbookAction::Cancel { order_id } => {
                 let cancel_order_private_data =
@@ -184,14 +202,14 @@ impl ExecuteState {
                     })?;
                 // Verify user signature authorization
                 utils::verify_user_signature_authorization(
-                    &user_info,
+                    user_info,
                     &cancel_order_private_data.public_key,
                     &format!("{}:{}:cancel:{order_id}", user_info.user, user_info.nonce),
                     &cancel_order_private_data.signature,
                 )
                 .map_err(|err| format!("Failed to verify user signature authorization: {err}"))?;
 
-                self.cancel_order(order_id, &user_info)
+                self.cancel_order(order_id, user_info)
             }
             PermissionnedOrderbookAction::Withdraw { symbol, amount, .. } => {
                 // TODO: assert there is a transfer blob for that symbol
@@ -202,7 +220,7 @@ impl ExecuteState {
 
                 // Verify user signature authorization
                 utils::verify_user_signature_authorization(
-                    &user_info,
+                    user_info,
                     &withdraw_private_data.public_key,
                     &format!(
                         "{}:{}:withdraw:{symbol}:{amount}",
@@ -212,7 +230,7 @@ impl ExecuteState {
                 )
                 .map_err(|err| format!("Failed to verify user signature authorization: {err}"))?;
 
-                self.withdraw(&symbol, &amount, &user_info)
+                self.withdraw(&symbol, &amount, user_info)
             }
         }
     }

@@ -138,17 +138,9 @@ pub enum OrderbookEvent {
 /// impl of functions for actions execution
 impl ExecuteState {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn create_pair(
-        &mut self,
-        pair: &Pair,
-        info: &PairInfo,
-    ) -> Result<Vec<OrderbookEvent>, String> {
-        self.register_asset(&pair.0, &info.base)?;
-        self.register_asset(&pair.1, &info.quote)?;
-
-        for symbol in &[&pair.0, &pair.1] {
-            self.balances.entry((*symbol).clone()).or_default();
-        }
+    pub fn create_pair(&self, pair: &Pair, info: &PairInfo) -> Result<Vec<OrderbookEvent>, String> {
+        self.ensure_asset_registration(&pair.0, &info.base)?;
+        self.ensure_asset_registration(&pair.1, &info.quote)?;
 
         Ok(vec![OrderbookEvent::PairCreated {
             pair: pair.clone(),
@@ -156,58 +148,67 @@ impl ExecuteState {
         }])
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    fn register_asset(&mut self, symbol: &Symbol, asset_info: &AssetInfo) -> Result<(), String> {
-        match self.assets_info.get_mut(symbol) {
+    fn ensure_asset_registration(
+        &self,
+        symbol: &Symbol,
+        asset_info: &AssetInfo,
+    ) -> Result<(), String> {
+        match self.assets_info.get(symbol) {
             Some(existing) => {
                 if existing.scale != asset_info.scale
                     || existing.contract_name != asset_info.contract_name
                 {
-                    return Err(format!(
+                    Err(format!(
                         "Symbol {symbol} already registered with different parameters"
-                    ));
+                    ))
+                } else {
+                    Ok(())
                 }
             }
             None => {
                 if asset_info.scale >= 20 {
-                    return Err(format!(
+                    Err(format!(
                         "Scale too large for {symbol}: {} while maximum is 20",
                         asset_info.scale
-                    ));
+                    ))
+                } else {
+                    Ok(())
                 }
-                self.assets_info.insert(symbol.clone(), asset_info.clone());
             }
         }
+    }
 
-        Ok(())
+    fn nonce_increment_event(user_info: &UserInfo) -> Result<OrderbookEvent, String> {
+        let next_nonce = user_info.nonce.checked_add(1).ok_or("Nonce overflow")?;
+
+        Ok(OrderbookEvent::NonceIncremented {
+            user: user_info.user.clone(),
+            nonce: next_nonce,
+        })
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn add_session_key(
-        &mut self,
-        mut user_info: UserInfo,
+        &self,
+        user_info: UserInfo,
         pubkey: &Vec<u8>,
     ) -> Result<Vec<OrderbookEvent>, String> {
         if user_info.session_keys.contains(pubkey) {
             return Err("Session key already exists".to_string());
         }
 
-        // Add the session key to the user's list of session keys
-        user_info.session_keys.push(pubkey.clone());
-
-        self.users_info
-            .insert(user_info.user.clone(), user_info.clone());
+        let mut updated_user_info = user_info.clone();
+        updated_user_info.session_keys.push(pubkey.clone());
 
         let mut events = vec![OrderbookEvent::SessionKeyAdded {
-            user: user_info.user.to_string(),
-            salt: user_info.salt.clone(),
-            nonce: user_info.nonce,
-            session_keys: user_info.session_keys.clone(),
+            user: updated_user_info.user.to_string(),
+            salt: updated_user_info.salt.clone(),
+            nonce: updated_user_info.nonce,
+            session_keys: updated_user_info.session_keys.clone(),
         }];
 
-        if user_info.nonce == 0 {
-            // We incremente nonce
-            events.push(self.increment_nonce_and_save_user_info(&user_info)?);
+        if updated_user_info.nonce == 0 {
+            events.push(Self::nonce_increment_event(&updated_user_info)?);
         }
 
         Ok(events)
@@ -215,7 +216,7 @@ impl ExecuteState {
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn deposit(
-        &mut self,
+        &self,
         symbol: &str,
         amount: u64,
         user_info: &UserInfo,
@@ -223,9 +224,6 @@ impl ExecuteState {
         // Compute the new balance
         let balance = self.get_balance(user_info, symbol);
         let new_balance = Balance(balance.0.checked_add(amount).ok_or("Balance overflow")?);
-
-        self.update_balances(symbol, vec![(user_info.get_key(), new_balance.clone())])
-            .map_err(|e| e.to_string())?;
 
         Ok(vec![OrderbookEvent::BalanceUpdated {
             user: user_info.user.clone(),
@@ -236,7 +234,7 @@ impl ExecuteState {
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn withdraw(
-        &mut self,
+        &self,
         symbol: &str,
         amount: &u64,
         user_info: &UserInfo,
@@ -249,24 +247,22 @@ impl ExecuteState {
             ));
         }
 
-        self.deduct_from_account(symbol, user_info, *amount)
-            .map_err(|e| e.to_string())?;
+        let new_total = balance.0 - *amount;
 
-        let user_balance = self.get_balance(user_info, symbol);
+        let mut events = vec![OrderbookEvent::BalanceUpdated {
+            user: user_info.user.clone(),
+            symbol: symbol.to_string(),
+            amount: new_total,
+        }];
 
-        Ok(vec![
-            OrderbookEvent::BalanceUpdated {
-                user: user_info.user.clone(),
-                symbol: symbol.to_string(),
-                amount: user_balance.0,
-            },
-            self.increment_nonce_and_save_user_info(user_info)?,
-        ])
+        events.push(Self::nonce_increment_event(user_info)?);
+
+        Ok(events)
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn cancel_order(
-        &mut self,
+        &self,
         order_id: OrderId,
         user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
@@ -282,22 +278,23 @@ impl ExecuteState {
             OrderSide::Ask => order.pair.0.clone(),
         };
 
-        // Refund the reserved amount to the user
-        self.fund_account(&required_symbol, user_info, &Balance(order.quantity))
-            .map_err(|e| e.to_string())?;
+        let current_balance = self.get_balance(user_info, &required_symbol).0;
+        let new_balance = current_balance
+            .checked_add(order.quantity)
+            .ok_or("Balance overflow")?;
 
-        // Cancel order through order manager
-        let mut events = self.order_manager.cancel_order(&order_id)?;
-
-        let user_balance = self.get_balance(user_info, &required_symbol);
-
-        events.push(OrderbookEvent::BalanceUpdated {
-            user: user_info.user.clone(),
-            symbol: required_symbol.to_string(),
-            amount: user_balance.0,
-        });
-
-        events.push(self.increment_nonce_and_save_user_info(user_info)?);
+        let events = vec![
+            OrderbookEvent::OrderCancelled {
+                order_id: order_id.clone(),
+                pair: order.pair.clone(),
+            },
+            OrderbookEvent::BalanceUpdated {
+                user: user_info.user.clone(),
+                symbol: required_symbol,
+                amount: new_balance,
+            },
+            Self::nonce_increment_event(user_info)?,
+        ];
 
         Ok(events)
     }
@@ -338,7 +335,8 @@ impl ExecuteState {
         };
 
         for (pair, info) in pairs_info {
-            orderbook.create_pair(&pair, &info)?;
+            let events = orderbook.create_pair(&pair, &info)?;
+            orderbook.apply_events(&UserInfo::default(), &events)?;
         }
 
         Ok(orderbook)
@@ -359,6 +357,60 @@ impl ExecuteState {
         self.order_manager.orders.clone()
     }
 
+    pub fn apply_events(
+        &mut self,
+        user_info: &UserInfo,
+        events: &[OrderbookEvent],
+    ) -> Result<(), String> {
+        for event in events {
+            match event {
+                OrderbookEvent::PairCreated { pair, info } => {
+                    self.register_asset(&pair.0, &info.base)?;
+                    self.register_asset(&pair.1, &info.quote)?;
+                    self.balances.entry(pair.0.clone()).or_default();
+                    self.balances.entry(pair.1.clone()).or_default();
+                }
+                OrderbookEvent::BalanceUpdated {
+                    user,
+                    symbol,
+                    amount,
+                } => {
+                    let user_info = if user == &user_info.user {
+                        user_info.clone()
+                    } else {
+                        self.get_user_info(user)?
+                    };
+                    self.update_balances(symbol, vec![(user_info.get_key(), Balance(*amount))])?;
+                }
+                OrderbookEvent::SessionKeyAdded {
+                    user,
+                    salt,
+                    nonce,
+                    session_keys,
+                    ..
+                } => {
+                    let mut updated = self
+                        .users_info
+                        .get(user)
+                        .cloned()
+                        .unwrap_or_else(|| UserInfo::new(user.clone(), salt.clone()));
+                    updated.salt = salt.clone();
+                    updated.nonce = *nonce;
+                    updated.session_keys = session_keys.clone();
+                    self.users_info.insert(user.clone(), updated);
+                }
+                OrderbookEvent::NonceIncremented { user, nonce } => {
+                    let mut ui = user_info.clone();
+                    let entry = self.users_info.get_mut(user).unwrap_or(&mut ui);
+                    entry.nonce = *nonce;
+                }
+                _ => {}
+            }
+        }
+
+        self.order_manager.apply_events(user_info.get_key(), events)
+    }
+
     pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {
         self.order_manager.orders_owner.get(order_id)
     }
@@ -368,45 +420,6 @@ impl ExecuteState {
             .get(user)
             .cloned()
             .ok_or_else(|| format!("User info not found for user '{user}'"))
-    }
-
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn fund_account(
-        &mut self,
-        symbol: &str,
-        user_info: &UserInfo,
-        amount: &Balance,
-    ) -> Result<(), String> {
-        let current_balance = self.get_balance(user_info, symbol);
-
-        self.update_balances(
-            symbol,
-            vec![(user_info.get_key(), Balance(current_balance.0 + amount.0))],
-        )
-        .map_err(|e| e.to_string())
-    }
-
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn deduct_from_account(
-        &mut self,
-        symbol: &str,
-        user_info: &UserInfo,
-        amount: u64,
-    ) -> Result<(), String> {
-        let current_balance = self.get_balance(user_info, symbol);
-
-        if current_balance.0 < amount {
-            return Err(format!(
-                "Insufficient balance: user {} has {} {}, trying to remove {}",
-                user_info.user, current_balance.0, symbol, amount
-            ));
-        }
-
-        self.update_balances(
-            symbol,
-            vec![(user_info.get_key(), Balance(current_balance.0 - amount))],
-        )
-        .map_err(|e| e.to_string())
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -439,6 +452,32 @@ impl ExecuteState {
             .entry(symbol.to_string())
             .or_default()
             .extend(balances_to_update);
+
+        Ok(())
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    fn register_asset(&mut self, symbol: &Symbol, asset_info: &AssetInfo) -> Result<(), String> {
+        match self.assets_info.get_mut(symbol) {
+            Some(existing) => {
+                if existing.scale != asset_info.scale
+                    || existing.contract_name != asset_info.contract_name
+                {
+                    return Err(format!(
+                        "Symbol {symbol} already registered with different parameters"
+                    ));
+                }
+            }
+            None => {
+                if asset_info.scale >= 20 {
+                    return Err(format!(
+                        "Scale too large for {symbol}: {} while maximum is 20",
+                        asset_info.scale
+                    ));
+                }
+                self.assets_info.insert(symbol.clone(), asset_info.clone());
+            }
+        }
 
         Ok(())
     }
@@ -477,8 +516,9 @@ impl ExecuteState {
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn execute_order(
-        &mut self,
+        &self,
         user_info: &UserInfo,
         order: Order,
     ) -> Result<Vec<OrderbookEvent>, String> {
@@ -497,7 +537,7 @@ impl ExecuteState {
         let base_scale = POW10[base_asset_info.scale as usize];
 
         // Delegate order execution to the manager
-        let order_events = self.order_manager.execute_order(user_info_key, &order)?;
+        let order_events = self.order_manager.execute_order_dry_run(&order)?;
 
         events.extend(order_events);
 
@@ -523,7 +563,9 @@ impl ExecuteState {
 
             let new_value: u64 = ((balance.0 as i128) + amount).try_into().map_err(|e| {
                 format!(
-                    "User with key {} cannot perform {symbol} exchange: balance is {}, attempted to add {amount}: {e}", hex::encode(user_info_key.as_slice()), balance.0
+                    "User with key {} cannot perform {symbol} exchange: balance is {}, attempted to add {amount}: {e}",
+                    hex::encode(user_info_key.as_slice()),
+                    balance.0
                 )
             })?;
 
@@ -714,8 +756,8 @@ impl ExecuteState {
             }
         }
 
-        // Clear executed orders from the order manager
-        self.order_manager.clear_executed_orders(&events);
+        // // Clear executed orders from the order manager
+        // self.order_manager.clear_executed_orders(&events);
 
         // Updating balances
         for (symbol, user_keys) in touched_accounts {
@@ -723,7 +765,6 @@ impl ExecuteState {
                 .get(&symbol)
                 .ok_or_else(|| format!("{symbol} not found in balance_changes"))?;
 
-            let mut balances_to_update: Vec<(H256, Balance)> = Vec::new();
             for user_key in user_keys {
                 let amount = symbol_balances.get(&user_key).ok_or_else(|| {
                     format!(
@@ -732,20 +773,21 @@ impl ExecuteState {
                     )
                 })?;
 
-                let user_info = self.get_user_info_from_key(&user_key).unwrap();
+                let user_name = if user_key == *user_info_key {
+                    user_info.user.clone()
+                } else {
+                    self.get_user_info_from_key(&user_key)?.user.clone()
+                };
+
                 events.push(OrderbookEvent::BalanceUpdated {
-                    user: user_info.user.clone(),
+                    user: user_name,
                     symbol: symbol.clone(),
                     amount: amount.0,
                 });
-
-                balances_to_update.push((user_key, amount.clone()));
             }
-
-            self.update_balances(&symbol, balances_to_update)?;
         }
 
-        events.push(self.increment_nonce_and_save_user_info(user_info)?);
+        events.push(Self::nonce_increment_event(user_info)?);
 
         Ok(events)
     }

@@ -225,12 +225,12 @@ pub async fn init_orderbook_from_database(
         "✅ Orders loaded: {} (buy: {}, sell: {})",
         order_manager.orders.len(),
         order_manager
-            .buy_orders
+            .bid_orders
             .values()
             .map(|orders| orders.len())
             .sum::<usize>(),
         order_manager
-            .sell_orders
+            .ask_orders
             .values()
             .map(|orders| orders.len())
             .sum::<usize>(),

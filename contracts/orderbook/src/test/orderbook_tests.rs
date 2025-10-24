@@ -103,15 +103,8 @@ fn run_action(
         .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &action)
         .expect("derive metadata");
 
-    let events_full = full
-        .execute_and_update_roots(&user_info, &action, &private_payload)
-        .expect("full execution");
-
-    tracing::debug!("full events: {:?}\n\n\n", events_full);
-    assert!(
-        events.len() == events_full.len(),
-        "light and full events should match"
-    );
+    full.apply_events_and_update_roots(&user_info, events.clone())
+        .expect("full execution deposit");
 
     let permissioned_private_input = PermissionnedPrivateInput {
         secret: secret.to_vec(),
@@ -159,7 +152,7 @@ fn run_action(
         "Full next state mismatch for action {action_repr}"
     );
 
-    events_full
+    events
 }
 
 #[derive(Default, Clone, Copy)]
@@ -369,13 +362,8 @@ fn execute_deposit_with_zk_checks(
         "Initial commitment mismatch between FullState and ZkVmState metadata"
     );
 
-    let events_full = full
-        .execute_and_update_roots(&user_info_full, &action, &[])
+    full.apply_events_and_update_roots(&user_info_full, events_light)
         .expect("full execution deposit");
-    assert_eq!(
-        events_light, events_full,
-        "Light and full execution events mismatch for deposit"
-    );
 
     let private_input = PermissionnedPrivateInput {
         secret: secret.clone(),
@@ -461,13 +449,8 @@ fn execute_add_session_key_with_zk_checks(
         "Initial commitment mismatch between FullState and ZkVmState metadata for add session key"
     );
 
-    let events_full = full
-        .execute_and_update_roots(&user_info_full, &action, &private_payload)
-        .expect("full execution add session key");
-    assert_eq!(
-        events_light, events_full,
-        "Light and full execution events mismatch for add session key"
-    );
+    full.apply_events_and_update_roots(&user_info_full, events_light)
+        .expect("full execution deposit");
 
     let private_input = PermissionnedPrivateInput {
         secret: secret.clone(),
@@ -928,8 +911,8 @@ fn test_complex_multi_user_orderbook() {
         }
     }
 
-    let buy_orders = light.order_manager.buy_orders.get(&pair).unwrap().clone();
-    let sell_orders = light.order_manager.sell_orders.get(&pair).unwrap().clone();
+    let buy_orders = light.order_manager.bid_orders.get(&pair).unwrap().clone();
+    let sell_orders = light.order_manager.ask_orders.get(&pair).unwrap().clone();
 
     let all_order_ids: Vec<String> = buy_orders
         .iter()
@@ -1092,8 +1075,8 @@ fn test_complex_multi_user_orderbook() {
         ],
     );
 
-    let sell_orders = light.order_manager.sell_orders.get(&pair).unwrap().clone();
-    assert!(sell_orders.is_empty(), "all sell orders should be filled");
+    let sell_orders = light.order_manager.ask_orders.get(&pair);
+    assert!(sell_orders.is_none(), "all sell orders should be filled");
 
     execute_market_order(
         "after partially filling bid-lim1",
@@ -1196,10 +1179,10 @@ fn test_complex_multi_user_orderbook() {
         ],
     );
 
-    let sell_orders = light.order_manager.sell_orders.get(&pair).unwrap().clone();
-    assert!(sell_orders.is_empty(), "all sell orders should be filled");
-    let buy_orders = light.order_manager.buy_orders.get(&pair).unwrap().clone();
-    assert!(buy_orders.is_empty(), "all buy orders should be filled");
+    let sell_orders = light.order_manager.ask_orders.get(&pair);
+    assert!(sell_orders.is_none(), "all sell orders should be filled");
+    let buy_orders = light.order_manager.bid_orders.get(&pair);
+    assert!(buy_orders.is_none(), "all buy orders should be filled");
 }
 
 #[test_log::test]
