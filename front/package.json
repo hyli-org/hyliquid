@@ -9,16 +9,17 @@
         "preview": "vite preview"
     },
     "dependencies": {
-        "@tailwindcss/vite": "^4.1.13",
+        "@tailwindcss/vite": "^4.1.15",
         "add": "^2.0.6",
         "ethers": "^6.15.0",
         "hyli-noir": "^0.3.0",
-        "hyli-wallet-vue": "^0.1.10",
-        "tailwindcss": "^4.1.13",
+        "hyli-wallet-vue": "^0.1.12",
+        "lightweight-charts": "^5.0.9",
+        "tailwindcss": "^4.1.15",
         "uuid": "^13.0.0",
         "vite-plugin-node-polyfills": "^0.24.0",
         "vue": "^3.5.22",
-        "vue-router": "^4.5.1"
+        "vue-router": "^4.6.3"
     },
     "devDependencies": {
         "@vitejs/plugin-vue": "^6.0.1",
@@ -26,7 +27,7 @@
         "prettier": "^3.6.2",
         "typescript": "~5.8.3",
         "vite": "npm:rolldown-vite@7.1.12",
-        "vue-tsc": "^3.1.0"
+        "vue-tsc": "^3.1.1"
     },
     "overrides": {
         "vite": "npm:rolldown-vite@7.1.12"

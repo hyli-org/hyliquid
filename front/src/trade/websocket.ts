@@ -38,6 +38,10 @@ export interface WebSocketState {
     orders: Order[];
 }
 
+export interface TradeCallback {
+    (trade: { price: number; qty: number; time: number }): void;
+}
+
 class WebSocketManager {
     private ws: WebSocket | null = null;
     private currentBookSubscription: Subscription | null = null;
@@ -47,6 +51,7 @@ class WebSocketManager {
     private currentOrdersSubscription: Subscription | null = null;
     private reconnectTimeout: number | null = null;
     private url: string;
+    private tradeCallbacks: Set<TradeCallback> = new Set();
 
     public state = reactive<WebSocketState>({
         connected: false,
@@ -104,6 +109,25 @@ class WebSocketManager {
         this.currentBookSubscription = null;
         this.currentTradesSubscription = null;
         this.currentOrdersSubscription = null;
+    }
+
+    // Trade callback management
+    onNewTrade(callback: TradeCallback): void {
+        this.tradeCallbacks.add(callback);
+    }
+
+    offNewTrade(callback: TradeCallback): void {
+        this.tradeCallbacks.delete(callback);
+    }
+
+    private notifyTradeCallbacks(trade: { price: number; qty: number; time: number }): void {
+        this.tradeCallbacks.forEach((callback) => {
+            try {
+                callback(trade);
+            } catch (error) {
+                console.error("Error in trade callback:", error);
+            }
+        });
     }
 
     subscribeTo(subscription: Subscription): void {
@@ -197,6 +221,19 @@ class WebSocketManager {
                     return transformTrade(trade);
                 });
                 this.state.fills = fills || [];
+
+                // Notify trade callbacks with the latest trades
+                if (data.data.trades && data.data.trades.length > 0) {
+                    data.data.trades.forEach((trade: any) => {
+                        // Convert API trade to callback format
+                        const tradeData = {
+                            price: trade.price,
+                            qty: trade.qty,
+                            time: Math.floor(new Date(trade.trade_time).getTime() / 1000), // Convert to Unix timestamp
+                        };
+                        this.notifyTradeCallbacks(tradeData);
+                    });
+                }
             } else if (data.type === "orders" && data.data) {
                 console.log("Received orders:", data.data.orders);
                 const orders = data.data.orders?.map((order: any) => {

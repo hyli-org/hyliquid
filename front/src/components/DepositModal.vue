@@ -45,22 +45,19 @@ const {
     isSendingTransaction,
     networkError,
     isSwitchingNetwork,
-    availableNetworks,
-    selectedNetwork,
-    selectedNetworkId,
     isWrongNetwork,
     switchNetworkError,
-    setSelectedNetwork,
     needsBridgeClaim,
     hasBridgeIdentity,
     bridgeClaimed,
     claimStatusLoading,
     claimStatusError,
+    currentNetwork,
     refreshAssociation,
     requestManualAssociation,
     sendDepositTransaction,
     checkNetworkMatch,
-    switchToSelectedNetwork,
+    switchToSepoliaNetwork,
     setupNetworkListener,
 } = useEthereumBridge();
 
@@ -83,17 +80,12 @@ const resetFormState = () => {
 
 watch(
     () => props.isOpen,
-    async (open) => {
+    (open) => {
         if (open) {
-            if (hasNetworks.value && !selectedNetwork.value) {
-                await setSelectedNetwork(availableNetworks[0]!.id);
-            }
             resetFormState();
             refreshAssociation();
-
             // Check network match when modal opens
-            await checkNetworkMatch();
-
+            checkNetworkMatch();
             // Setup network change listener
             networkListenerCleanup = setupNetworkListener();
         } else {
@@ -103,16 +95,6 @@ watch(
                 networkListenerCleanup = undefined;
             }
         }
-    },
-);
-
-watch(
-    () => selectedNetworkId.value,
-    () => {
-        tokenAmount.value = 0;
-        txHash.value = null;
-        networkError.value = null;
-        depositError.value = null;
     },
 );
 
@@ -142,19 +124,8 @@ const handleHyliDeposit = async () => {
 
 const canClaimAddress = computed(() => providerAvailable.value && needsBridgeClaim.value);
 
-const hasNetworks = computed(() => availableNetworks.length > 0);
-
-const effectiveNetworkId = computed({
-    get: () => selectedNetworkId.value || undefined,
-    set: (value: string | undefined) => {
-        if (value) {
-            setSelectedNetwork(value);
-        }
-    },
-});
-
-const networkTokenAddress = computed(() => selectedNetwork.value?.tokenAddress ?? "");
-const networkVaultAddress = computed(() => selectedNetwork.value?.vaultAddress ?? "");
+const networkTokenAddress = computed(() => currentNetwork.tokenAddress);
+const networkVaultAddress = computed(() => currentNetwork.vaultAddress);
 
 const tokenAmountValid = computed(() => {
     const amount = Number(tokenAmount.value);
@@ -163,12 +134,11 @@ const tokenAmountValid = computed(() => {
 
 const canSendTokenDeposit = computed(() => {
     return (
-        hasNetworks.value &&
         tokenAmountValid.value &&
         Boolean(associatedAddress.value) &&
         providerAvailable.value &&
-        Boolean(selectedNetwork.value?.tokenAddress) &&
-        Boolean(selectedNetwork.value?.vaultAddress) &&
+        Boolean(currentNetwork.tokenAddress) &&
+        Boolean(currentNetwork.vaultAddress) &&
         !needsManualAssociation.value &&
         bridgeClaimed.value &&
         !claimStatusLoading.value &&
@@ -299,28 +269,12 @@ const handleEthereumDeposit = async () => {
 
                 <section v-else class="space-y-4">
                     <div class="space-y-3">
-                        <div>
-                            <label class="flex items-center justify-between text-sm text-neutral-300">
-                                Network
-                                <span class="text-xs text-neutral-500">Choose the origin chain for the transfer</span>
-                            </label>
-                            <select
-                                v-if="hasNetworks"
-                                v-model="effectiveNetworkId"
-                                class="mt-1 w-full rounded border border-neutral-700 bg-neutral-800/60 p-2 text-neutral-100 focus:border-cyan-500 focus:outline-none"
-                            >
-                                <option v-for="network in availableNetworks" :key="network.id" :value="network.id">
-                                    {{ network.name }}
-                                </option>
-                            </select>
-                            <p v-else class="mt-2 text-sm text-neutral-500">
-                                No collateral networks configured. Update the frontend configuration to enable token
-                                transfers.
-                            </p>
-                        </div>
-
                         <div class="rounded border border-neutral-800 bg-neutral-800/40 p-3 text-sm text-neutral-300">
                             <div class="space-y-1 text-xs text-neutral-500">
+                                <p class="flex items-center justify-between">
+                                    Network
+                                    <span class="font-mono text-neutral-300">{{ currentNetwork.name }}</span>
+                                </p>
                                 <p class="flex items-center justify-between">
                                     Token contract
                                     <span class="font-mono text-neutral-300">
@@ -338,14 +292,14 @@ const handleEthereumDeposit = async () => {
 
                         <!-- Network mismatch warning and switch button -->
                         <div
-                            v-if="isWrongNetwork && selectedNetwork"
+                            v-if="isWrongNetwork"
                             class="rounded border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm space-y-3"
                         >
                             <div class="text-amber-200">
                                 <p class="font-semibold">Wrong network detected</p>
                                 <p class="text-xs mt-1">
                                     Your wallet is connected to a different network. Please switch to
-                                    {{ selectedNetwork.name }} to continue.
+                                    {{ currentNetwork.name }} to continue.
                                 </p>
                             </div>
 
@@ -353,10 +307,10 @@ const handleEthereumDeposit = async () => {
                                 type="button"
                                 class="w-full rounded bg-amber-600 px-3 py-2 text-sm font-semibold text-neutral-100 transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:bg-neutral-700 disabled:text-neutral-400"
                                 :disabled="isSwitchingNetwork || !providerAvailable"
-                                @click="switchToSelectedNetwork"
+                                @click="switchToSepoliaNetwork"
                             >
                                 <span v-if="isSwitchingNetwork">Switching network…</span>
-                                <span v-else>Switch to {{ selectedNetwork.name }}</span>
+                                <span v-else>Switch to {{ currentNetwork.name }}</span>
                             </button>
 
                             <div
@@ -479,7 +433,7 @@ const handleEthereumDeposit = async () => {
                     >
                         Deposit transaction submitted:
                         <a
-                            :href="`${selectedNetwork?.blockExplorerUrl}/tx/${txHash}`"
+                            :href="`${currentNetwork.blockExplorerUrl}/tx/${txHash}`"
                             target="_blank"
                             rel="noopener noreferrer"
                             class="font-mono text-xs text-emerald-300 hover:text-emerald-100 underline decoration-emerald-400 hover:decoration-emerald-200 transition-colors ml-1"

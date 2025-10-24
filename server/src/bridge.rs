@@ -68,7 +68,7 @@ pub struct BridgeModuleCtx {
 #[derive(Clone)]
 struct BridgeRouterCtx {
     bridge_service: Arc<RwLock<BridgeService>>,
-    bus: BridgeModuleBusClient,
+    bus: RouterBusClient,
     collateral_token_cn: ContractName,
 }
 
@@ -80,10 +80,19 @@ module_bus_client! {
     }
 }
 
+module_bus_client! {
+#[derive(Debug)]
+struct RouterBusClient {
+    sender(OrderbookRequest),
+    // No receiver here ! Because RouterBus is cloned
+}
+}
+
 impl Module for BridgeModule {
     type Context = Arc<BridgeModuleCtx>;
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+        let router_bus = RouterBusClient::new_from_bus(bus.new_handle()).await;
         let bus = BridgeModuleBusClient::new_from_bus(bus.new_handle()).await;
 
         let eth_contract_address = Address::from_str(&ctx.bridge_config.eth_contract_address)
@@ -93,7 +102,7 @@ impl Module for BridgeModule {
 
         let claim_state = BridgeRouterCtx {
             bridge_service: ctx.bridge_service.clone(),
-            bus: bus.clone(),
+            bus: router_bus,
             collateral_token_cn: ctx.collateral_token_cn.clone(),
         };
 

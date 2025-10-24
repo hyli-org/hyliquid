@@ -38,7 +38,7 @@ export interface PaginationQuery {
   page?: number;
   limit?: number;
   sort_by?: string;
-  sort_order?: 'asc' | 'desc';
+  sort_order?: "asc" | "desc";
 }
 
 export interface PaginatedResponse<T> {
@@ -60,4 +60,21 @@ export interface AuthHeaders {
 export interface AppError {
   status: number;
   message: string;
+}
+
+export interface CandlestickData {
+  time: number; // Unix timestamp
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume_trades: number;
+  trade_count: number;
+}
+
+export interface CandlestickQuery {
+  instrument_id: number;
+  t_from: string; // ISO timestamp
+  t_to: string; // ISO timestamp
+  step_sec: number;
 }

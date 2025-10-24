@@ -95,6 +95,13 @@ export const instrumentsState = reactive({
     list: [] as Instrument[],
     fetching: instrumentsAndAssets.fetching,
     error: instrumentsAndAssets.error,
+    toRealPriceNumber: (instrument_symbol: string | undefined, price: number) => {
+        if (!instrument_symbol) return price;
+        const quoteAsset = instrument_symbol.split("/")[1];
+        const quoteAssetScale = assetsState.list.find((a) => a.symbol === quoteAsset)?.scale ?? 0;
+        const real = price / 10 ** quoteAssetScale;
+        return real;
+    },
     toRealPrice: (instrument_symbol: string | undefined, price: number) => {
         if (!instrument_symbol)
             return price.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 });

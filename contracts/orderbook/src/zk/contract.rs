@@ -6,7 +6,7 @@ use sha3::Digest;
 use sparse_merkle_tree::traits::Value;
 
 use crate::{
-    model::{Balance, ExecuteState},
+    model::{Balance, ExecuteState, OrderbookEvent},
     transaction::{
         EscapePrivateInput, OrderbookAction, PermissionlessOrderbookAction,
         PermissionnedOrderbookAction, PermissionnedPrivateInput,
@@ -51,7 +51,7 @@ impl sdk::ZkContract for ZkVmState {
             .verify_orders_owners(&action)
             .unwrap_or_else(|e| panic!("Failed to verify orders owners: {e}"));
 
-        let res = match action {
+        let mut events = match action {
             OrderbookAction::PermissionnedOrderbookAction(action, _) => {
                 if tx_ctx.lane_id != self.lane_id {
                     return Err("Invalid lane id".to_string());
@@ -80,20 +80,15 @@ impl sdk::ZkContract for ZkVmState {
                     .unwrap_or_else(|e| panic!("User info provided by server is incorrect: {e}")));
 
                 // Execute the given action
-                let events = state.execute_permissionned_action(
+                state.execute_permissionned_action(
                     user_info,
                     action,
                     &permissionned_private_input.private_input,
-                )?;
-
-                let res = borsh::to_vec(&events)
-                    .map_err(|e| format!("Failed to encode OrderbookEvents: {e}"))?;
-
-                res
+                )?
             }
             OrderbookAction::PermissionlessOrderbookAction(action, _) => {
                 // Execute the given action
-                let events = match action {
+                match action {
                     PermissionlessOrderbookAction::Escape { user_key } => {
                         let escape_private_input: EscapePrivateInput =
                             borsh::from_slice(&calldata.private_input).unwrap_or_else(|e| {
@@ -114,14 +109,22 @@ impl sdk::ZkContract for ZkVmState {
                         }
                         state.escape(&self.last_block_number, calldata, &user_info)?
                     }
-                };
-
-                let res = borsh::to_vec(&events)
-                    .map_err(|e| format!("Failed to encode OrderbookEvents: {e}"))?;
-
-                res
+                }
             }
         };
+
+        // Filter out unwanted events for privacy
+        events.retain(|evt| {
+            !matches!(
+                evt,
+                OrderbookEvent::BalanceUpdated { .. }
+                    | OrderbookEvent::SessionKeyAdded { .. }
+                    | OrderbookEvent::NonceIncremented { .. }
+            )
+        });
+
+        let res =
+            borsh::to_vec(&events).map_err(|e| format!("Failed to encode OrderbookEvents: {e}"))?;
 
         self.take_changes_back(&mut state)?;
 

@@ -130,8 +130,6 @@ export function transformOrder(apiOrder: ApiOrder): Order {
 
 // Helper function to transform API trade to frontend fill
 export function transformTrade(apiTrade: ApiTrade): Fill {
-    console.log("transformTrade", apiTrade);
-    console.log("instrumentsState.list", instrumentsState.list);
     const instrument = instrumentsState.list.find((i) => i.instrument_id === apiTrade.instrument_id);
 
     return {
@@ -285,4 +283,55 @@ export async function fetchBalances(): Promise<Balance[]> {
         locked: balance.reserved,
         total: balance.total,
     }));
+}
+
+// Candlestick chart data types
+export interface ApiCandlestickData {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume_trades: number;
+    trade_count: number;
+}
+
+export interface ApiCandlestickResponse {
+    data: ApiCandlestickData[];
+    metadata: {
+        instrument_id: number;
+        t_from: string;
+        t_to: string;
+        step_sec: number;
+        count: number;
+    };
+}
+
+export interface CandlestickParams {
+    instrument_id: number;
+    t_from: string;
+    t_to: string;
+    step_sec: number;
+}
+
+export async function fetchCandlestickData(params: CandlestickParams): Promise<ApiCandlestickResponse> {
+    const url = new URL(`${API_BASE_URL}/api/chart/candlestick`);
+
+    // Add query parameters
+    url.searchParams.set("instrument_id", params.instrument_id.toString());
+    url.searchParams.set("t_from", params.t_from);
+    url.searchParams.set("t_to", params.t_to);
+    url.searchParams.set("step_sec", params.step_sec.toString());
+
+    const response = await fetch(url.toString(), {
+        headers: {
+            "Content-Type": "application/json",
+        },
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch candlestick data: ${response.status} ${response.statusText}`);
+    }
+
+    return await response.json();
 }

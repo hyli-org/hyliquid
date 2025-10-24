@@ -55,6 +55,8 @@ export class WebSocketService {
               id: clientId,
               ws,
               subscriptions: new Map(),
+              messageQueue: [],
+              isProcessing: false,
             };
 
             this.channelManager.clients.set(clientId, client);
@@ -66,7 +68,7 @@ export class WebSocketService {
 
           message: (ws: any, message: any) => {
             try {
-              this.handleMessage(ws.data.clientId, message);
+              this.enqueueMessage(ws.data.clientId, message);
             } catch (error) {
               console.error("Invalid WebSocket message:", error);
               this.sendError(ws.data.clientId, "Invalid message format");
@@ -115,6 +117,54 @@ export class WebSocketService {
           }
         })
     );
+  }
+
+  /**
+   * Enqueue a message for processing
+   */
+  private enqueueMessage(clientId: string, message: any) {
+    const client = this.channelManager.clients.get(clientId);
+    if (!client) {
+      console.error(`Client not found: ${clientId}`);
+      return;
+    }
+
+    // Add message to queue
+    client.messageQueue.push(message);
+
+    // Start processing if not already processing
+    this.processQueue(clientId);
+  }
+
+  /**
+   * Process the message queue for a client
+   */
+  private async processQueue(clientId: string) {
+    const client = this.channelManager.clients.get(clientId);
+    if (!client) {
+      return;
+    }
+
+    // Acquire lock - if already processing, return immediately
+    if (client.isProcessing) {
+      return;
+    }
+
+    // Set processing flag atomically
+    client.isProcessing = true;
+
+    try {
+      // Process all messages in the queue
+      while (client.messageQueue.length > 0) {
+        const message = client.messageQueue.shift();
+        await this.handleMessage(clientId, message);
+      }
+    } catch (error) {
+      console.error(`Error processing queue for client ${clientId}:`, error);
+    } finally {
+      // Always release the lock
+      client.isProcessing = false;
+    }
   }
 
   /**
@@ -187,7 +237,7 @@ export class WebSocketService {
 
       client.subscriptions.set(subscriptionKey, subscription);
       console.log(
-        `Client ${clientId} subscribed to ${subscription.type}: ${subscription.instrument}`
+        `Client ${clientId} subscribed to ${subscription.type}: ${subscription.instrument}. Key: ${subscriptionKey}`
       );
     } catch (error) {
       console.error(`Subscription error for client ${clientId}:`, error);
@@ -212,7 +262,11 @@ export class WebSocketService {
     if (client.subscriptions.has(subscriptionKey)) {
       client.subscriptions.delete(subscriptionKey);
       console.log(
-        `Client ${clientId} unsubscribed from ${subscription.type}: ${subscription.instrument}`
+        `Client ${clientId} unsubscribed from ${subscription.type}: ${subscription.instrument}. Key: ${subscriptionKey}`
+      );
+    } else {
+      console.log(
+        `Client ${clientId} did not have subscription ${subscriptionKey}`
       );
     }
   }
@@ -376,8 +430,10 @@ export class WebSocketService {
 
     console.log(`WebSocket client disconnected: ${clientId}`);
 
-    // Clean up subscriptions
+    // Clean up subscriptions and message queue
     client.subscriptions.clear();
+    client.messageQueue = [];
+    client.isProcessing = false;
 
     this.channelManager.clients.delete(clientId);
   }
@@ -507,7 +563,7 @@ export class WebSocketService {
    * Generate subscription key for tracking
    */
   private getSubscriptionKey(subscription: any): string {
-    return `${subscription.type}_${subscription.instrument}_${
+    return `${subscription.type}_${subscription.instrument.toLowerCase()}_${
       subscription.groupTicks || "default"
     }`;
   }

@@ -14,7 +14,7 @@ RUN bun install
 COPY front .
 
 # Construire l'application
-RUN bun run build
+RUN bun run vite build
 
 # Étape de production
 FROM nginx:1.21.5-alpine AS production

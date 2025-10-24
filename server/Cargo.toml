@@ -60,6 +60,7 @@ prometheus = { version = "0.13.4" }
 
 opentelemetry-otlp = { version = "0.28.0", features = ["grpc-tonic", "trace"] }
 tracing-opentelemetry = "0.29.0"
+uuid = { version = "1.18.1", features = ["v4"] }
 
 [features]
 nonreproducible = ["contracts/nonreproducible"]
