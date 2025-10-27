@@ -238,17 +238,14 @@ impl FullState {
             .map_err(|e| format!("Failed to serialize ZkVm orderbook metadata: {e}"))
     }
 
-    pub fn execute_and_update_roots(
+    pub fn apply_events_and_update_roots(
         &mut self,
         user_info: &UserInfo,
-        action: &PermissionnedOrderbookAction,
-        private_input: &[u8],
-    ) -> Result<Vec<OrderbookEvent>, String> {
-        let events = self.state.execute_permissionned_action(
-            user_info.clone(),
-            action.clone(),
-            private_input,
-        )?;
+        events: Vec<OrderbookEvent>,
+    ) -> Result<(), String> {
+        self.state
+            .apply_events(user_info, &events)
+            .map_err(|e| format!("Could not apply events to state: {e}"))?;
 
         let (users_to_update, mut balances_to_update) =
             self.collect_user_and_balance_updates(user_info, &events)?;
@@ -275,6 +272,6 @@ impl FullState {
                 .or_insert_with(SMT::zero);
         }
 
-        Ok(events)
+        Ok(())
     }
 }

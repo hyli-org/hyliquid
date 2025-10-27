@@ -331,7 +331,7 @@ mod tests {
         let mut order_manager = OrderManager::default();
         order_manager.orders.insert(order_id.clone(), order.clone());
         order_manager
-            .buy_orders
+            .bid_orders
             .entry(pair.clone())
             .or_default()
             .entry(price)
@@ -500,8 +500,8 @@ mod tests {
         );
         assert!(
             execution_state.order_manager.orders.is_empty()
-                && execution_state.order_manager.buy_orders.is_empty()
-                && execution_state.order_manager.sell_orders.is_empty()
+                && execution_state.order_manager.bid_orders.is_empty()
+                && execution_state.order_manager.ask_orders.is_empty()
                 && execution_state.order_manager.orders_owner.is_empty(),
             "execution order manager should be empty after take back"
         );

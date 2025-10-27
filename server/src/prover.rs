@@ -109,26 +109,21 @@ impl OrderbookProverModule {
             .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &orderbook_action)
             .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
 
+        debug!(
+            tx_hash = %tx_hash,
+            events = ?events,
+            "Transaction processed for proving"
+        );
+
+        self.orderbook
+            .apply_events_and_update_roots(&user_info, events)
+            .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
+
         let permissioned_private_input = PermissionnedPrivateInput {
             secret: vec![1, 2, 3],
             user_info: user_info.clone(),
             private_input: action_private_input.clone(),
         };
-
-        let execution_events = self
-            .orderbook
-            .execute_and_update_roots(
-                &user_info,
-                &orderbook_action,
-                &permissioned_private_input.private_input,
-            )
-            .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
-
-        // This should NEVER happen. If it happens, it means there is a difference in execution logic between api and prover.
-        // FIXME: we should compare elements and not lengths
-        if events.len() != execution_events.len() {
-            bail!("The provided events do not match the executed events. This should NEVER happen. Provided: {events:#?}, Executed: {execution_events:#?}");
-        }
 
         let private_input = borsh::to_vec(&permissioned_private_input)?;
 
@@ -151,12 +146,6 @@ impl OrderbookProverModule {
             commitment_metadata,
             calldata,
         };
-
-        debug!(
-            tx_hash = %tx_hash,
-            events = ?events,
-            "Transaction processed for proving"
-        );
 
         Ok(pending_tx)
     }

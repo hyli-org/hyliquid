@@ -196,6 +196,10 @@ impl OrderbookModule {
                 .deposit(&symbol, amount_u64, &user_info)
                 .map_err(|e| anyhow!("Failed to apply deposit on orderbook: {e}"))?;
 
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| anyhow!("Failed to update orderbook state after deposit: {e}"))?;
+
             (user_info, events)
         };
 
@@ -470,6 +474,10 @@ async fn create_pair(
             .create_pair(&pair, &info)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
+        orderbook
+            .apply_events(&user_info, &events)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
         (user_info, events)
     };
 
@@ -522,6 +530,9 @@ async fn add_session_key(
             }
         };
 
+        orderbook
+            .apply_events(&user_info, &events)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
         (user_info, events)
     };
 
@@ -563,6 +574,10 @@ async fn deposit(
 
         let events = orderbook
             .deposit(&request.symbol, request.amount, &user_info)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+        orderbook
+            .apply_events(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -624,6 +639,10 @@ async fn create_order(
 
         let events = orderbook
             .execute_order(&user_info, request.clone())
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+        orderbook
+            .apply_events(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -700,6 +719,10 @@ async fn cancel_order(
             .cancel_order(request.order_id.clone(), &user_info)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
+        orderbook
+            .apply_events(&user_info, &events)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
         (user_info, events)
     };
 
@@ -774,6 +797,10 @@ async fn withdraw(
 
         let events = orderbook
             .withdraw(&request.symbol, &request.amount, &user_info)
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+        orderbook
+            .apply_events(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)

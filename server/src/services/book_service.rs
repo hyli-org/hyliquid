@@ -174,8 +174,8 @@ impl BookService {
 
         Ok(OrderManager {
             orders,
-            buy_orders,
-            sell_orders,
+            bid_orders: buy_orders,
+            ask_orders: sell_orders,
             orders_owner,
         })
     }
