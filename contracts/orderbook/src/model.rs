@@ -389,19 +389,25 @@ impl ExecuteState {
                     session_keys,
                     ..
                 } => {
-                    let mut updated = self
+                    let entry = self
                         .users_info
-                        .get(user)
-                        .cloned()
-                        .unwrap_or_else(|| UserInfo::new(user.clone(), salt.clone()));
-                    updated.salt = salt.clone();
-                    updated.nonce = *nonce;
-                    updated.session_keys = session_keys.clone();
-                    self.users_info.insert(user.clone(), updated);
+                        .entry(user.clone())
+                        .or_insert_with(|| UserInfo {
+                            user: user.clone(),
+                            salt: salt.clone(),
+                            nonce: *nonce,
+                            session_keys: session_keys.clone(),
+                        });
+
+                    entry.salt = salt.clone();
+                    entry.nonce = *nonce;
+                    entry.session_keys = session_keys.clone();
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
-                    let mut ui = user_info.clone();
-                    let entry = self.users_info.get_mut(user).unwrap_or(&mut ui);
+                    let entry = self
+                        .users_info
+                        .entry(user.clone())
+                        .or_insert(user_info.clone());
                     entry.nonce = *nonce;
                 }
                 _ => {}
@@ -563,9 +569,8 @@ impl ExecuteState {
 
             let new_value: u64 = ((balance.0 as i128) + amount).try_into().map_err(|e| {
                 format!(
-                    "User with key {} cannot perform {symbol} exchange: balance is {}, attempted to add {amount}: {e}",
+                    "User with key {} cannot perform {symbol} exchange: balance is {balance:?}, attempted to add {amount}: {e}",
                     hex::encode(user_info_key.as_slice()),
-                    balance.0
                 )
             })?;
 
