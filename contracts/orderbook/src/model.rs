@@ -761,9 +761,6 @@ impl ExecuteState {
             }
         }
 
-        // // Clear executed orders from the order manager
-        // self.order_manager.clear_executed_orders(&events);
-
         // Updating balances
         for (symbol, user_keys) in touched_accounts {
             let symbol_balances = balance_changes

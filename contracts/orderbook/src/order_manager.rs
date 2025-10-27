@@ -366,16 +366,6 @@ impl OrderManager {
 
         Ok(())
     }
-
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn clear_executed_orders(&mut self, events: &[OrderbookEvent]) {
-        for event in events {
-            if let OrderbookEvent::OrderExecuted { order_id, .. } = event {
-                self.orders.remove(order_id);
-                self.orders_owner.remove(order_id);
-            }
-        }
-    }
 }
 
 impl OrderManager {
