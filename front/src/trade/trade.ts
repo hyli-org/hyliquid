@@ -1,4 +1,4 @@
-import { reactive } from "vue";
+import { reactive, watchEffect, watch, ref } from "vue";
 import {
     fetchInstruments,
     fetchPositions,
@@ -10,13 +10,12 @@ import {
 } from "./api";
 import { useSWR } from "../api_call";
 import type { SWRQuery } from "../api_call";
-import { watchEffect } from "vue";
-import { ref } from "vue";
 import { v7 as uuidv7 } from "uuid";
 import { websocketManager } from "./websocket";
 import { BACKEND_API_URL } from "../config";
 import { useWallet } from "hyli-wallet-vue";
 import { encodeToHex } from "../utils";
+import { loadOrderbookTicksPreference, saveOrderbookTicksPreference } from "./preferences";
 
 // Re-export types for components
 export type { PaginationInfo, PaginationParams } from "./api";
@@ -122,15 +121,29 @@ export const instrumentsState = reactive({
         if (!instrument_symbol) return price;
         const quoteAsset = instrument_symbol.split("/")[1];
         const quoteAssetScale = assetsState.list.find((a) => a.symbol === quoteAsset)?.scale ?? 0;
-        const int_price = price * 10 ** quoteAssetScale;
-        return int_price;
+        const factor = 10 ** quoteAssetScale;
+        const scaled = price * factor;
+        const intPrice = Math.round(scaled);
+        const roundingError = Math.abs(intPrice - scaled) / factor;
+        const tolerance = 0.5 / factor; // half of the smallest priced unit
+        if (roundingError > tolerance) {
+            throw new Error("Price precision exceeds asset scale");
+        }
+        return intPrice;
     },
     toIntQty: (instrument_symbol: string | undefined, qty: number) => {
         if (!instrument_symbol) return qty;
         const baseAsset = instrument_symbol.split("/")[0];
         const baseAssetScale = assetsState.list.find((a) => a.symbol === baseAsset)?.scale ?? 0;
-        const int_qty = qty * 10 ** baseAssetScale;
-        return int_qty;
+        const factor = 10 ** baseAssetScale;
+        const scaled = qty * factor;
+        const intQty = Math.round(scaled);
+        const roundingError = Math.abs(intQty - scaled) / factor;
+        const tolerance = 0.5 / factor;
+        if (roundingError > tolerance) {
+            throw new Error("Quantity precision exceeds asset scale");
+        }
+        return intQty;
     },
 });
 
@@ -250,15 +263,57 @@ export const activityState = reactive({
     ordersSortOrder: "desc" as "asc" | "desc",
 });
 
-watchEffect(() => {
-    // Clear the orders when changing instrument
-    instrumentsState.selected;
-    activityState.orders = [];
-    activityState.ordersPagination = null;
-    activityState.ordersCurrentPage = 1;
-    activityState.orderbookTicks =
-        10 ** (assetsState.list.find((a) => a.symbol === instrumentsState.selected?.quote_asset)?.scale ?? 0);
-});
+const applyOrderbookTicksPreference = () => {
+    const selectedInstrument = instrumentsState.selected;
+    if (!selectedInstrument) {
+        return;
+    }
+
+    const quoteAssetScale =
+        assetsState.list.find((asset) => asset.symbol === selectedInstrument.quote_asset)?.scale ?? 0;
+    const defaultTicks = 10 ** quoteAssetScale;
+    const preferredTicks = loadOrderbookTicksPreference(selectedInstrument.symbol, defaultTicks);
+
+    if (preferredTicks !== activityState.orderbookTicks) {
+        activityState.orderbookTicks = preferredTicks;
+    }
+};
+
+watch(
+    () => instrumentsState.selected?.symbol,
+    (symbol) => {
+        activityState.orders = [];
+        activityState.ordersPagination = null;
+        activityState.ordersCurrentPage = 1;
+
+        if (!symbol) {
+            return;
+        }
+
+        applyOrderbookTicksPreference();
+    },
+    { immediate: true }
+);
+
+watch(
+    () => assetsState.list,
+    () => {
+        if (!instrumentsState.selected) {
+            return;
+        }
+        applyOrderbookTicksPreference();
+    }
+);
+
+watch(
+    () => activityState.orderbookTicks,
+    (ticks) => {
+        if (!instrumentsState.selected) {
+            return;
+        }
+        saveOrderbookTicksPreference(instrumentsState.selected.symbol, ticks);
+    }
+);
 
 watchEffect(() => {
     const positions = swPositions.data.value;

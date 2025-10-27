@@ -27,10 +27,8 @@ buck AS (
 ),
 lvl AS (
   SELECT side,
-         -- prix affiché : top pour bids, bottom pour asks
-         CASE WHEN side='bid' THEN bucket_floor + width - tick
-              ELSE bucket_floor
-         END AS price,
+         -- prix affiché : on ancre sur le bas du bucket pour éviter les 9 répétitifs
+         bucket_floor AS price,
          SUM(qty) AS qty
   FROM buck
   -- ⚠️ on ne peut pas grouper par l'alias "price" ici
@@ -57,4 +55,3 @@ ON public.orders (instrument_id, status, price)
 INCLUDE (side, qty_remaining)
 WHERE price IS NOT NULL
   AND status IN ('open','partially_filled');
-

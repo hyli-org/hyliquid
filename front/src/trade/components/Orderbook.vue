@@ -4,7 +4,7 @@ import { orderbookState, instrumentsState, activityState, assetsState } from "..
 
 const midPrice = computed(() => orderbookState.mid);
 
-const lines = 10
+const lines = 10;
 
 // GroupTick options
 const groupTickOptions = computed(() => {
@@ -12,7 +12,10 @@ const groupTickOptions = computed(() => {
     const scale = assetsState.list.find((a) => a.symbol === quoteAsset)?.scale ?? 0;
 
     console.log("quoteAsset", quoteAsset);
-    console.log("assetsState.list", assetsState.list.find((a) => a.symbol === quoteAsset));
+    console.log(
+        "assetsState.list",
+        assetsState.list.find((a) => a.symbol === quoteAsset),
+    );
     console.log("scale", scale);
 
     return [
@@ -22,8 +25,8 @@ const groupTickOptions = computed(() => {
         { value: 1 * 10 ** scale, label: "1" },
         { value: 10 * 10 ** scale, label: "10" },
         { value: 100 * 10 ** scale, label: "100" },
-        { value: 1000 * 10 ** scale, label: "1000" }
-    ].filter(option => option.value >= 1);
+        { value: 1000 * 10 ** scale, label: "1000" },
+    ].filter((option) => option.value >= 1);
 });
 
 // Calculate maximum quantity for percentage calculations
@@ -31,14 +34,12 @@ const maxQuantity = computed(() => {
     const bids = orderbookState.bids || [];
     const asks = orderbookState.asks || [];
 
-    const allQuantities = [...bids, ...asks]
-        .filter(entry => entry.quantity > 0)
-        .map(entry => entry.quantity);
+    const allQuantities = [...bids, ...asks].filter((entry) => entry.quantity > 0).map((entry) => entry.quantity);
 
     return allQuantities.length > 0 ? Math.max(...allQuantities) : 1;
 });
 
-// Ensure we always have exactly 6 lines on each side
+// Ensure we always have exactly 6 lines on each side with cumulative totals
 const displayBids = computed(() => {
     const bids = orderbookState.bids || [];
     const paddedBids = [...bids];
@@ -48,8 +49,19 @@ const displayBids = computed(() => {
         paddedBids.push({ price: 0, quantity: 0 });
     }
 
-    // Limit to 6 entries
-    return paddedBids.slice(0, lines);
+    // Limit to 6 entries and calculate cumulative totals
+    const limitedBids = paddedBids.slice(0, lines);
+    let cumulativeTotal = 0;
+
+    return limitedBids.map((bid) => {
+        if (bid.quantity > 0) {
+            cumulativeTotal += bid.quantity;
+        }
+        return {
+            ...bid,
+            total: bid.quantity > 0 ? cumulativeTotal : 0,
+        };
+    });
 });
 
 const displayAsks = computed(() => {
@@ -61,8 +73,24 @@ const displayAsks = computed(() => {
         paddedAsks.unshift({ price: 0, quantity: 0 });
     }
 
-    // Limit to 6 entries
-    return paddedAsks.slice(0, lines);
+    // Limit to 6 entries and calculate cumulative totals (from bottom to top for asks)
+    const limitedAsks = paddedAsks.slice(0, lines);
+    let cumulativeTotal = 0;
+
+    // Calculate totals from bottom to top (reverse order for asks)
+    const reversedAsks = [...limitedAsks].reverse();
+    const asksWithTotals = reversedAsks.map((ask) => {
+        if (ask.quantity > 0) {
+            cumulativeTotal += ask.quantity;
+        }
+        return {
+            ...ask,
+            total: ask.quantity > 0 ? cumulativeTotal : 0,
+        };
+    });
+
+    // Return in original order (top to bottom)
+    return asksWithTotals.reverse();
 });
 
 // Calculate percentage width for background bars
@@ -70,7 +98,6 @@ const getQuantityPercentage = (quantity: number) => {
     if (quantity === 0) return 0;
     return Math.min((quantity / maxQuantity.value) * 100, 100);
 };
-
 </script>
 
 <template>
@@ -78,9 +105,11 @@ const getQuantityPercentage = (quantity: number) => {
         <div class="flex justify-between items-center mb-2">
             <div class="text-xs text-neutral-400">Orderbook</div>
             <div class="flex items-center gap-2">
-                <label class="text-xs text-neutral-400">Group:</label>
-                <select v-model="activityState.orderbookTicks"
-                    class="text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-neutral-300 focus:outline-none focus:border-neutral-500">
+                <label class="text-xs text-neutral-400"></label>
+                <select
+                    v-model="activityState.orderbookTicks"
+                    class="text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-neutral-300 focus:outline-none focus:border-neutral-500"
+                >
                     <option v-for="option in groupTickOptions" :key="option.value" :value="option.value">
                         {{ option.label }}
                     </option>
@@ -90,23 +119,38 @@ const getQuantityPercentage = (quantity: number) => {
         <div v-if="orderbookState.fetching" class="text-xs text-neutral-400">Loading…</div>
         <div v-else-if="orderbookState.error" class="text-xs text-rose-400">{{ orderbookState.error }}</div>
         <template v-else>
+            <!-- Headers -->
+            <div class="grid grid-cols-3 text-xs text-neutral-400 mb-2 border-b border-neutral-800 pb-1">
+                <span class="text-left">Price</span>
+                <span class="text-center">Size ({{ instrumentsState.selected?.base_asset }})</span>
+                <span class="text-right">Total</span>
+            </div>
             <div class="flex flex-col">
                 <!-- Asks section - top half -->
                 <div class="space-y-1 h-1/2">
-                    <div v-for="(a, index) in displayAsks" :key="'a' + index + '-' + a.price" :class="[
-                        'relative flex justify-between text-sm text-rose-300',
-                        a.price === 0 ? 'opacity-30' : ''
-                    ]">
+                    <div
+                        v-for="(a, index) in displayAsks"
+                        :key="'a' + index + '-' + a.price"
+                        :class="['relative grid grid-cols-3 text-sm text-rose-300', a.price === 0 ? 'opacity-30' : '']"
+                    >
                         <!-- Background bar for ask -->
-                        <div v-if="a.quantity > 0" class="absolute inset-0 bg-rose-500/10"
-                            :style="{ width: getQuantityPercentage(a.quantity) + '%' }"></div>
-                        <span class="relative z-10 tabular-nums">{{
-                            a.price === 0 ? '—' : instrumentsState.toRealPrice(instrumentsState.selected?.symbol,
-                                a.price)
+                        <div
+                            v-if="a.quantity > 0"
+                            class="absolute inset-0 bg-rose-500/10"
+                            :style="{ width: getQuantityPercentage(a.quantity) + '%' }"
+                        ></div>
+                        <span class="relative z-10 tabular-nums text-left">{{
+                            a.price === 0
+                                ? "—"
+                                : instrumentsState.toRealPrice(instrumentsState.selected?.symbol, a.price)
                         }}</span>
-                        <span class="relative z-10 tabular-nums">{{
-                            a.quantity === 0 ? '—' : instrumentsState.toRealQty(instrumentsState.selected?.symbol,
-                                a.quantity)
+                        <span class="relative z-10 tabular-nums text-center">{{
+                            a.quantity === 0
+                                ? "—"
+                                : instrumentsState.toRealQty(instrumentsState.selected?.symbol, a.quantity)
+                        }}</span>
+                        <span class="relative z-10 tabular-nums text-right">{{
+                            a.total === 0 ? "—" : instrumentsState.toRealQty(instrumentsState.selected?.symbol, a.total)
                         }}</span>
                     </div>
                 </div>
@@ -115,25 +159,37 @@ const getQuantityPercentage = (quantity: number) => {
                 <div class="border-t border-b border-neutral-800 py-1 text-center text-neutral-300 flex-shrink-0">
                     <span class="tabular-nums">{{
                         instrumentsState.toRealPrice(instrumentsState.selected?.symbol, midPrice)
-                        }}</span>
+                    }}</span>
                 </div>
 
                 <!-- Bids section - bottom half -->
                 <div class="space-y-1 h-1/2">
-                    <div v-for="(b, index) in displayBids" :key="'b' + index + '-' + b.price" :class="[
-                        'relative flex justify-between text-sm text-emerald-300',
-                        b.price === 0 ? 'opacity-30' : ''
-                    ]">
+                    <div
+                        v-for="(b, index) in displayBids"
+                        :key="'b' + index + '-' + b.price"
+                        :class="[
+                            'relative grid grid-cols-3 text-sm text-emerald-300',
+                            b.price === 0 ? 'opacity-30' : '',
+                        ]"
+                    >
                         <!-- Background bar for bid -->
-                        <div v-if="b.quantity > 0" class="absolute inset-0 bg-emerald-500/10"
-                            :style="{ width: getQuantityPercentage(b.quantity) + '%' }"></div>
-                        <span class="relative z-10 tabular-nums">{{
-                            b.price === 0 ? '—' : instrumentsState.toRealPrice(instrumentsState.selected?.symbol,
-                                b.price)
+                        <div
+                            v-if="b.quantity > 0"
+                            class="absolute inset-0 bg-emerald-500/10"
+                            :style="{ width: getQuantityPercentage(b.quantity) + '%' }"
+                        ></div>
+                        <span class="relative z-10 tabular-nums text-left">{{
+                            b.price === 0
+                                ? "—"
+                                : instrumentsState.toRealPrice(instrumentsState.selected?.symbol, b.price)
                         }}</span>
-                        <span class="relative z-10 tabular-nums">{{
-                            b.quantity === 0 ? '—' : instrumentsState.toRealQty(instrumentsState.selected?.symbol,
-                                b.quantity)
+                        <span class="relative z-10 tabular-nums text-center">{{
+                            b.quantity === 0
+                                ? "—"
+                                : instrumentsState.toRealQty(instrumentsState.selected?.symbol, b.quantity)
+                        }}</span>
+                        <span class="relative z-10 tabular-nums text-right">{{
+                            b.total === 0 ? "—" : instrumentsState.toRealQty(instrumentsState.selected?.symbol, b.total)
                         }}</span>
                     </div>
                 </div>
