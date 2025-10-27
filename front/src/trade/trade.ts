@@ -1,4 +1,4 @@
-import { reactive } from "vue";
+import { reactive, watchEffect, watch, ref } from "vue";
 import {
     fetchInstruments,
     fetchPositions,
@@ -10,13 +10,12 @@ import {
 } from "./api";
 import { useSWR } from "../api_call";
 import type { SWRQuery } from "../api_call";
-import { watchEffect } from "vue";
-import { ref } from "vue";
 import { v7 as uuidv7 } from "uuid";
 import { websocketManager } from "./websocket";
 import { BACKEND_API_URL } from "../config";
 import { useWallet } from "hyli-wallet-vue";
 import { encodeToHex } from "../utils";
+import { loadOrderbookTicksPreference, saveOrderbookTicksPreference } from "./preferences";
 
 // Re-export types for components
 export type { PaginationInfo, PaginationParams } from "./api";
@@ -264,15 +263,57 @@ export const activityState = reactive({
     ordersSortOrder: "desc" as "asc" | "desc",
 });
 
-watchEffect(() => {
-    // Clear the orders when changing instrument
-    instrumentsState.selected;
-    activityState.orders = [];
-    activityState.ordersPagination = null;
-    activityState.ordersCurrentPage = 1;
-    activityState.orderbookTicks =
-        10 ** (assetsState.list.find((a) => a.symbol === instrumentsState.selected?.quote_asset)?.scale ?? 0);
-});
+const applyOrderbookTicksPreference = () => {
+    const selectedInstrument = instrumentsState.selected;
+    if (!selectedInstrument) {
+        return;
+    }
+
+    const quoteAssetScale =
+        assetsState.list.find((asset) => asset.symbol === selectedInstrument.quote_asset)?.scale ?? 0;
+    const defaultTicks = 10 ** quoteAssetScale;
+    const preferredTicks = loadOrderbookTicksPreference(selectedInstrument.symbol, defaultTicks);
+
+    if (preferredTicks !== activityState.orderbookTicks) {
+        activityState.orderbookTicks = preferredTicks;
+    }
+};
+
+watch(
+    () => instrumentsState.selected?.symbol,
+    (symbol) => {
+        activityState.orders = [];
+        activityState.ordersPagination = null;
+        activityState.ordersCurrentPage = 1;
+
+        if (!symbol) {
+            return;
+        }
+
+        applyOrderbookTicksPreference();
+    },
+    { immediate: true }
+);
+
+watch(
+    () => assetsState.list,
+    () => {
+        if (!instrumentsState.selected) {
+            return;
+        }
+        applyOrderbookTicksPreference();
+    }
+);
+
+watch(
+    () => activityState.orderbookTicks,
+    (ticks) => {
+        if (!instrumentsState.selected) {
+            return;
+        }
+        saveOrderbookTicksPreference(instrumentsState.selected.symbol, ticks);
+    }
+);
 
 watchEffect(() => {
     const positions = swPositions.data.value;

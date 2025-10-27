@@ -4,10 +4,13 @@ import { createChart, CandlestickSeries } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi, CandlestickData, Time } from 'lightweight-charts'
 import { fetchCandlestickData, type CandlestickParams } from '../api'
 import { instrumentsState } from '../trade'
+import { loadChartPreferences, saveChartPreferences } from '../preferences'
 
 const chartContainer = ref<HTMLDivElement>()
 let chart: IChartApi | null = null
 let candlestickSeries: ISeriesApi<'Candlestick'> | null = null
+
+const chartPreferences = loadChartPreferences()
 
 // Chart state
 const chartState = reactive({
@@ -19,20 +22,19 @@ const chartState = reactive({
 // Get current instrument
 const currentInstrument = computed(() => instrumentsState.selected)
 
-function getFromDate() {
-    const now = new Date();
-    const stepSec = localStorage.getItem('chart_step_sec') ? parseInt(localStorage.getItem('chart_step_sec')!) : 3600;
-    const candlesCount = 1000;
-    const fromDate = new Date(now.getTime() - stepSec * 1000 * candlesCount);
-    return fromDate.toISOString();
+function getFromDate(stepSec: number) {
+    const now = new Date()
+    const candlesCount = 1000
+    const fromDate = new Date(now.getTime() - stepSec * 1000 * candlesCount)
+    return fromDate.toISOString()
 }
 
 // Default parameters for the API call
 const chartParams = reactive<CandlestickParams>({
     instrument_id: currentInstrument.value?.instrument_id ?? 0,
-    t_from: getFromDate(),
+    t_from: getFromDate(chartPreferences.intervalSeconds),
     t_to: new Date().toISOString(),
-    step_sec: localStorage.getItem('chart_step_sec') ? parseInt(localStorage.getItem('chart_step_sec')!) : 3600,
+    step_sec: chartPreferences.intervalSeconds,
 })
 
 // Update chart params when instrument changes
@@ -148,7 +150,16 @@ const timeIntervals = [
 ]
 
 // Selected interval
-const selectedInterval = ref<typeof timeIntervals[0]>(timeIntervals.find(interval => interval.seconds === chartParams.step_sec) ?? timeIntervals[5]!) // Default to 1h
+const matchedInterval = timeIntervals.find(interval => interval.seconds === chartPreferences.intervalSeconds)
+const selectedInterval = ref<typeof timeIntervals[0]>(matchedInterval ?? timeIntervals[5]!) // Default to 1h
+
+if (!matchedInterval) {
+    chartPreferences.intervalSeconds = selectedInterval.value.seconds
+    saveChartPreferences(chartPreferences)
+}
+
+chartParams.step_sec = selectedInterval.value.seconds
+chartParams.t_from = getFromDate(chartParams.step_sec)
 
 // Function to update time scale configuration based on interval
 function updateTimeScaleConfig() {
@@ -227,7 +238,8 @@ function updateTimeScaleConfig() {
 function updateStepInterval(interval: typeof timeIntervals[0]) {
     selectedInterval.value = interval
     chartParams.step_sec = interval.seconds
-    localStorage.setItem('chart_step_sec', interval.seconds.toString())
+    chartPreferences.intervalSeconds = interval.seconds
+    saveChartPreferences(chartPreferences)
 
     // Adjust time range based on interval for better data density
     const now = new Date()
