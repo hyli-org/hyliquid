@@ -29,7 +29,7 @@ peer_check_interval.nanos = 100_000_000
 [bridge]
 eth_contract_vault_address = "0x2ffCC85Db88Dbb4047d4d1528CE7739CFB961302"
 eth_contract_address = "0x22CE25BFa5Dcd58A3B52c2A5fa262bDF079A5456"
-eth_contract_deploy_block = 9464981
+eth_contract_deploy_block = 9500311
 eth_rpc_ws_url = "wss://eth-sepolia.g.alchemy.com/v2/aQBmpGJwCJZnOMUnvsLlC"
 eth_rpc_http_url = "https://eth-sepolia.g.alchemy.com/v2/aQBmpGJwCJZnOMUnvsLlC"
 eth_signer_private_key = "0x02caa170f44fa6218889783833f519818ade0a57b7878b9971f0cf9f3bb781dd"

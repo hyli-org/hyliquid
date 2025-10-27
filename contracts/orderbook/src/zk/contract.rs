@@ -69,6 +69,7 @@ impl sdk::ZkContract for ZkVmState {
 
                 if let PermissionnedOrderbookAction::Identify = action {
                     // Identify action does not change the state
+                    self.take_changes_back(&mut state)?;
                     return Ok((vec![], ctx, vec![]));
                 }
 
