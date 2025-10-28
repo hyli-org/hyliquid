@@ -1,8 +1,16 @@
 import { Pool } from "pg";
-import { L2BookData, L2BookSubscription, Order, Trade } from "@/types";
+import {
+  CandlestickSubscription,
+  L2BookData,
+  L2BookSubscription,
+  Order,
+  Trade,
+} from "@/types";
 import { DatabaseConfig } from "@/config/database";
 import { UserService } from "@/services/user-service";
 import { DatabaseQueries } from "./queries";
+import { getAppConfig } from "@/config/app";
+import { CandlestickData } from "@/types/api";
 
 export class DatabaseCallbacks {
   private static instance: DatabaseCallbacks;
@@ -12,10 +20,14 @@ export class DatabaseCallbacks {
     new Map();
   private orderNotifCallbacks: Map<string, (payload: Order[]) => void> =
     new Map();
-  private bookNotifCallbacks: Map<string, (instrument: string) => void> =
+  private bookNotifCallbacks: Map<string, (data: L2BookData) => void> =
     new Map();
   private instrumentNotifCallbacks: Map<string, () => void> = new Map();
-  private notificationChannels = ["book", "orders", "trades", "instruments"];
+  private candlestickNotifCallbacks: Map<
+    string,
+    (data: CandlestickData[]) => void
+  > = new Map();
+  private notificationChannels = ["orders", "trades", "instruments"];
   // TODO: store this in db to be retrieved when restarting the server
   private last_seen_trade_id: number = 0;
   private last_seen_order_id: number = 0;
@@ -23,13 +35,34 @@ export class DatabaseCallbacks {
   private userService: UserService;
   private queries: DatabaseQueries;
   private isShuttingDown: boolean = false;
+  private pollingInterval: NodeJS.Timeout | null = null;
+  private pollingIntervalMs: number;
+  private activeBookSubscriptions: Set<L2BookSubscription> = new Set();
+  private activeCandlestickSubscriptions: Set<CandlestickSubscription> =
+    new Set();
 
   private constructor(pool: Pool) {
     this.pool = pool;
     this.userService = new UserService(new DatabaseQueries(this.pool));
     this.queries = new DatabaseQueries(this.pool);
+    this.pollingIntervalMs = getAppConfig().wsPollingIntervalMs;
     this.initializeNotificationConnection();
     this.initializeLastSeenIds();
+    this.startPolling();
+  }
+
+  private getBookCallbackKey(
+    client_id: string,
+    subscription: L2BookSubscription
+  ): string {
+    return `${client_id}:${subscription.type}:${subscription.instrument}:${subscription.groupTicks}`;
+  }
+
+  private getCandlestickCallbackKey(
+    client_id: string,
+    subscription: CandlestickSubscription
+  ): string {
+    return `${client_id}:${subscription.type}:${subscription.instrument}:${subscription.stepSec}`;
   }
 
   public static getInstance(): DatabaseCallbacks {
@@ -67,9 +100,6 @@ export class DatabaseCallbacks {
         }
         if (message.channel === "orders") {
           this.handleNewOrders();
-        }
-        if (message.channel === "book") {
-          this.handleL2BookUpdate(message.payload);
         }
         if (message.channel === "instruments") {
           this.handleInstrumentsUpdate();
@@ -233,15 +263,84 @@ export class DatabaseCallbacks {
       });
   }
 
-  private handleL2BookUpdate(instrument: string) {
-    console.log(
-      "Handling L2 book update for instrument",
-      instrument,
-      this.bookNotifCallbacks.size
-    );
-    for (const callback of this.bookNotifCallbacks.values()) {
-      if (callback) {
-        callback(instrument);
+  private startPolling() {
+    this.pollingInterval = setInterval(() => {
+      this.pollUpdates();
+    }, this.pollingIntervalMs);
+    console.log(`Started polling with interval ${this.pollingIntervalMs}ms`);
+  }
+
+  private async pollUpdates() {
+    // Poll L2 book updates for active instruments
+    for (const subscription of this.activeBookSubscriptions) {
+      const { instrument, groupTicks } = subscription;
+      try {
+        console.log(
+          `Polling L2 book for ${instrument} with groupTicks ${groupTicks}`
+        );
+        const rawBookData = await this.queries.getOrderbook(
+          instrument,
+          20,
+          groupTicks
+        );
+
+        // Transform raw data to L2BookData format
+        const l2BookData: L2BookData = {
+          bids: rawBookData
+            .filter((entry) => entry.side === "bid")
+            .map((entry) => ({
+              price: entry.price,
+              quantity: entry.qty,
+            })),
+          asks: rawBookData
+            .filter((entry) => entry.side === "ask")
+            .map((entry) => ({
+              price: entry.price,
+              quantity: entry.qty,
+            })),
+        };
+
+        console.log("book notif subscriptions", this.bookNotifCallbacks.keys());
+        const callbacks = Array.from(this.bookNotifCallbacks.entries())
+          .filter(([key, _]) => {
+            // Parse the key to check if it matches the subscription
+            const parts = key.split(":");
+            return (
+              parts[1] === subscription.type &&
+              parts[2] === subscription.instrument &&
+              parseInt(parts[3]) === subscription.groupTicks
+            );
+          })
+          .map(([_, callback]) => callback);
+
+        for (const callback of callbacks) {
+          callback(l2BookData);
+        }
+      } catch (error) {
+        console.error(`Error polling L2Book for ${instrument}:`, error);
+      }
+    }
+
+    // Poll candlestick updates for active subscriptions
+    for (const subscription of this.activeCandlestickSubscriptions) {
+      const { instrument, stepSec } = subscription;
+      const candlestickData = await this.getCandlestickData(
+        instrument,
+        stepSec
+      );
+      const callbacks = Array.from(this.candlestickNotifCallbacks.entries())
+        .filter(([key, _]) => {
+          // Parse the key to check if it matches the subscription
+          const parts = key.split(":");
+          return (
+            parts[1] === subscription.type &&
+            parts[2] === subscription.instrument &&
+            parseInt(parts[3]) === subscription.stepSec
+          );
+        })
+        .map(([_, callback]) => callback);
+      for (const callback of callbacks) {
+        callback(candlestickData);
       }
     }
   }
@@ -268,16 +367,145 @@ export class DatabaseCallbacks {
   }
   addBookNotificationCallback(
     client_id: string,
-    callback: (instrument: string) => void
+    subscription: L2BookSubscription,
+    callback: (data: L2BookData) => void
   ) {
-    this.bookNotifCallbacks.set(client_id, callback);
+    const key = this.getBookCallbackKey(client_id, subscription);
+    this.bookNotifCallbacks.set(key, callback);
+    this.activeBookSubscriptions.add(subscription);
   }
   addInstrumentsCallback(client_id: string, callback: () => void) {
     this.instrumentNotifCallbacks.set(client_id, callback);
   }
-  removeBookNotificationCallback(client_id: string) {
-    this.bookNotifCallbacks.delete(client_id);
+
+  // Candlestick callback methods
+  addCandlestickNotificationCallback(
+    client_id: string,
+    subscription: CandlestickSubscription,
+    callback: (data: CandlestickData[]) => void
+  ) {
+    const key = this.getCandlestickCallbackKey(client_id, subscription);
+    this.candlestickNotifCallbacks.set(key, callback);
+    this.activeCandlestickSubscriptions.add(subscription);
   }
+
+  removeCandlestickNotificationCallback(
+    client_id: string,
+    subscription: CandlestickSubscription
+  ) {
+    const key = this.getCandlestickCallbackKey(client_id, subscription);
+    this.candlestickNotifCallbacks.delete(key);
+
+    // Check if any other client is still subscribed to this subscription
+    const hasOtherSubscriptions = Array.from(
+      this.candlestickNotifCallbacks.keys()
+    ).some((key) => {
+      const parts = key.split(":");
+      return (
+        parts[1] === subscription.type &&
+        parts[2] === subscription.instrument &&
+        parseInt(parts[3]) === subscription.stepSec
+      );
+    });
+    if (!hasOtherSubscriptions) {
+      this.activeCandlestickSubscriptions.delete(subscription);
+      console.log(
+        `Stopped polling candlestick: ${subscription.instrument}_${subscription.stepSec}`
+      );
+    }
+  }
+
+  // Candlestick data methods
+  async getInitialCandlestickData(
+    instrument: string,
+    stepSec: number
+  ): Promise<CandlestickData[]> {
+    const now = new Date();
+    const fromDate = new Date(now.getTime() - stepSec * 1000 * 1000); // 1000 candles back
+    const toDate = now;
+
+    const rawData = await this.queries.getCandlestickData(
+      parseInt(instrument.split("/")[0]), // Assuming instrument_id is first part
+      fromDate.toISOString(),
+      toDate.toISOString(),
+      stepSec
+    );
+
+    return rawData.map((row) => ({
+      time: Math.floor(new Date(row.bucket).getTime() / 1000),
+      open: row.open,
+      high: row.high,
+      low: row.low,
+      close: row.close,
+      volume_trades: row.volume_trades,
+      trade_count: row.trade_count,
+    }));
+  }
+
+  async getCandlestickData(
+    instrument: string,
+    stepSec: number
+  ): Promise<CandlestickData[]> {
+    const now = new Date();
+    const fromDate = new Date(now.getTime() - stepSec * 1000 * 10); // Last 10 candles
+    const toDate = now;
+
+    const rawData = await this.queries.getCandlestickData(
+      parseInt(instrument.split("/")[0]), // Assuming instrument_id is first part
+      fromDate.toISOString(),
+      toDate.toISOString(),
+      stepSec
+    );
+
+    return rawData.map((row) => ({
+      time: Math.floor(new Date(row.bucket).getTime() / 1000),
+      open: row.open,
+      high: row.high,
+      low: row.low,
+      close: row.close,
+      volume_trades: row.volume_trades,
+      trade_count: row.trade_count,
+    }));
+  }
+
+  removeBookNotificationCallback(
+    client_id: string,
+    subscription: L2BookSubscription
+  ) {
+    console.log("RemoveBookNotificationCallback", client_id, subscription);
+    const key = this.getBookCallbackKey(client_id, subscription);
+    const callback = this.bookNotifCallbacks.get(key);
+
+    console.log("callback", callback);
+    console.log("key", key);
+    console.log("book notif callbacks", this.bookNotifCallbacks.keys());
+    if (!this.bookNotifCallbacks.delete(key)) {
+      console.error("Failed to remove book notification callback");
+      console.log("book notif callbacks", this.bookNotifCallbacks.keys());
+      return;
+    }
+    console.log("book notif callbacks", this.bookNotifCallbacks.keys());
+
+    // Check if any other client is still subscribed to this instrument
+    const hasOtherSubscriptions = Array.from(
+      this.bookNotifCallbacks.keys()
+    ).some((key) => {
+      const parts = key.split(":");
+      return (
+        parts[1] === subscription.type &&
+        parts[2] === subscription.instrument &&
+        parseInt(parts[3]) === subscription.groupTicks
+      );
+    });
+
+    if (!hasOtherSubscriptions) {
+      this.activeBookSubscriptions.delete(subscription);
+      console.log(
+        `Stopped polling L2 book: ${subscription.instrument}_${subscription.groupTicks}`
+      );
+    }
+  }
+
   removeTradeNotificationCallback(user: string) {
     this.tradeNotifCallbacks.delete(user);
   }
@@ -288,6 +516,13 @@ export class DatabaseCallbacks {
   async close() {
     console.log("Closing database callbacks...");
     this.isShuttingDown = true;
+
+    // Clear polling interval
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+      console.log("Polling interval cleared");
+    }
 
     if (this.notificationClient) {
       try {

@@ -34,6 +34,11 @@ export interface OrdersSubscription extends WebSocketSubscription {
   user: string;
 }
 
+export interface CandlestickSubscription extends WebSocketSubscription {
+  type: "candlestick";
+  stepSec: number;
+}
+
 export interface L2BookEntry {
   price: number;
   quantity: number;

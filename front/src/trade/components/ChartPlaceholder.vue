@@ -1,10 +1,10 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
 import { createChart, CandlestickSeries } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi, CandlestickData, Time } from 'lightweight-charts'
-import { fetchCandlestickData, type CandlestickParams } from '../api'
 import { instrumentsState } from '../trade'
 import { loadChartPreferences, saveChartPreferences } from '../preferences'
+import { websocketManager } from '../websocket'
 
 const chartContainer = ref<HTMLDivElement>()
 let chart: IChartApi | null = null
@@ -22,32 +22,26 @@ const chartState = reactive({
 // Get current instrument
 const currentInstrument = computed(() => instrumentsState.selected)
 
-function getFromDate(stepSec: number) {
-    const now = new Date()
-    const candlesCount = 1000
-    const fromDate = new Date(now.getTime() - stepSec * 1000 * candlesCount)
-    return fromDate.toISOString()
-}
+// WebSocket candlestick callback
+const handleCandlestickUpdate = (candlesticks: any[]) => {
+    if (!candlesticks || candlesticks.length === 0) return;
 
-// Default parameters for the API call
-const chartParams = reactive<CandlestickParams>({
-    instrument_id: currentInstrument.value?.instrument_id ?? 0,
-    t_from: getFromDate(chartPreferences.intervalSeconds),
-    t_to: new Date().toISOString(),
-    step_sec: chartPreferences.intervalSeconds,
-})
+    // Transform WebSocket data to TradingView format
+    const transformedData: CandlestickData[] = candlesticks.map((item) => ({
+        time: item.time as Time,
+        open: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.open),
+        high: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.high),
+        low: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.low),
+        close: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.close),
+    }));
 
-// Update chart params when instrument changes
-const updateInstrumentId = () => {
-    if (currentInstrument.value) {
-        chartParams.instrument_id = currentInstrument.value.instrument_id
-        chartState.loading = true
-        fetchChartData()
+    chartState.data = transformedData;
+
+    // Update chart if it exists
+    if (candlestickSeries) {
+        candlestickSeries.setData(transformedData);
     }
 }
-
-// Watch for instrument changes
-watch(currentInstrument, updateInstrumentId, { immediate: false })
 
 // Function to get bucket time for a given timestamp
 function getBucketTime(timestamp: number): number {
@@ -103,28 +97,19 @@ function updateCandlestickWithTrade(trade: { price: number; qty: number; time: n
     }
 }
 
-// Periodic fetch interval
-let fetchInterval: number | null = null
-
-// Function to start periodic data fetching
-function startPeriodicFetch() {
-    if (fetchInterval) {
-        clearInterval(fetchInterval)
+// Subscribe to candlestick updates via WebSocket
+function subscribeToCandlestick() {
+    if (currentInstrument.value) {
+        websocketManager.subscribeToCandlestick(
+            currentInstrument.value.symbol,
+            chartPreferences.intervalSeconds
+        );
     }
-
-    // Fetch data every 1 second
-    fetchInterval = window.setInterval(() => {
-        chartParams.t_to = new Date().toISOString()
-        fetchChartData()
-    }, 1000)
 }
 
-// Function to stop periodic data fetching
-function stopPeriodicFetch() {
-    if (fetchInterval) {
-        clearInterval(fetchInterval)
-        fetchInterval = null
-    }
+// Unsubscribe from candlestick updates
+function unsubscribeFromCandlestick() {
+    websocketManager.unsubscribeCandlestick();
 }
 
 // Computed property to check if interval is selected
@@ -157,9 +142,6 @@ if (!matchedInterval) {
     chartPreferences.intervalSeconds = selectedInterval.value.seconds
     saveChartPreferences(chartPreferences)
 }
-
-chartParams.step_sec = selectedInterval.value.seconds
-chartParams.t_from = getFromDate(chartParams.step_sec)
 
 // Function to update time scale configuration based on interval
 function updateTimeScaleConfig() {
@@ -237,66 +219,12 @@ function updateTimeScaleConfig() {
 // Function to update step interval
 function updateStepInterval(interval: typeof timeIntervals[0]) {
     selectedInterval.value = interval
-    chartParams.step_sec = interval.seconds
     chartPreferences.intervalSeconds = interval.seconds
     saveChartPreferences(chartPreferences)
 
-    // Adjust time range based on interval for better data density
-    const now = new Date()
-    let timeRange: number
-
-    if (interval.seconds <= 300) { // 5 minutes or less
-        timeRange = 24 * 60 * 60 * 1000 // 1 day
-    } else if (interval.seconds <= 1800) { // 30 minutes or less
-        timeRange = 7 * 24 * 60 * 60 * 1000 // 1 week
-    } else if (interval.seconds <= 86400) { // 1 day or less
-        timeRange = 30 * 24 * 60 * 60 * 1000 // 1 month
-    } else {
-        timeRange = 365 * 24 * 60 * 60 * 1000 // 1 year
-    }
-
-    chartParams.t_from = new Date(now.getTime() - timeRange).toISOString()
-    chartParams.t_to = now.toISOString()
-
-    fetchChartData()
-}
-
-// Fetch candlestick data from API
-async function fetchChartData() {
-    // chartState.loading = true
-    chartState.error = null
-
-    try {
-        const result = await fetchCandlestickData(chartParams)
-
-        // Transform API data to TradingView format
-        const transformedData: CandlestickData[] = result.data.map((item) => ({
-            time: item.time as Time,
-            open: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.open),
-            high: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.high),
-            low: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.low),
-            close: instrumentsState.toRealPriceNumber(currentInstrument.value?.symbol, item.close),
-        }))
-
-        chartState.data = transformedData
-
-        // Update chart if it exists
-        if (candlestickSeries) {
-            candlestickSeries.setData(transformedData)
-        }
-
-    } catch (error) {
-        console.error('Error fetching candlestick data:', error)
-        chartState.error = error instanceof Error ? error.message : 'Failed to fetch chart data'
-    } finally {
-        chartState.loading = false
-    }
-}
-
-// Function to update chart parameters and refresh data
-function updateChartParams(newParams: Partial<typeof chartParams>) {
-    Object.assign(chartParams, newParams)
-    fetchChartData()
+    // Resubscribe to candlestick with new interval
+    unsubscribeFromCandlestick()
+    subscribeToCandlestick()
 }
 
 // Function to manually add a trade (useful for testing)
@@ -307,19 +235,15 @@ function addTrade(price: number, qty: number, time?: number) {
 
 // Expose functions and state for parent components
 defineExpose({
-    chartParams,
     chartState,
-    fetchChartData,
-    updateChartParams,
-    updateInstrumentId,
     currentInstrument,
     timeIntervals,
     selectedInterval,
     updateStepInterval,
     updateTimeScaleConfig,
     updateCandlestickWithTrade,
-    startPeriodicFetch,
-    stopPeriodicFetch,
+    subscribeToCandlestick,
+    unsubscribeFromCandlestick,
     addTrade,
 })
 
@@ -367,14 +291,12 @@ onMounted(async () => {
         wickDownColor: '#EF4444',
     })
 
-    // Fetch initial data
-    await fetchChartData()
+    // Subscribe to WebSocket candlestick updates
+    websocketManager.onCandlestickUpdate(handleCandlestickUpdate)
+    subscribeToCandlestick()
 
     // Configure time scale based on current interval
     updateTimeScaleConfig()
-
-    // Start periodic data fetching
-    startPeriodicFetch()
 
     // Handle resize
     const handleResize = () => {
@@ -391,7 +313,8 @@ onMounted(async () => {
     // Cleanup function
     onUnmounted(() => {
         window.removeEventListener('resize', handleResize)
-        stopPeriodicFetch()
+        websocketManager.offCandlestickUpdate(handleCandlestickUpdate)
+        unsubscribeFromCandlestick()
         if (chart) {
             chart.remove()
         }
@@ -440,10 +363,6 @@ onMounted(async () => {
                 <div class="text-center text-neutral-400">
                     <div class="text-red-400 mb-2">⚠️ Error loading chart</div>
                     <div class="text-sm mb-4">{{ chartState.error }}</div>
-                    <button @click="fetchChartData"
-                        class="px-3 py-1 bg-neutral-700 hover:bg-neutral-600 rounded text-sm transition-colors">
-                        Retry
-                    </button>
                 </div>
             </div>
 

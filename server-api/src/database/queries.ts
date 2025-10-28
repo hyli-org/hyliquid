@@ -224,6 +224,7 @@ export class DatabaseQueries {
       qty: number;
     }>
   > {
+    console.log("Getting orderbook for", symbol, levels, groupTicks);
     const result = await this.pool.query(
       "SELECT * FROM get_orderbook_grouped_by_ticks($1, $2, $3)",
       [symbol, levels, groupTicks]
