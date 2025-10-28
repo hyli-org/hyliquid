@@ -155,15 +155,21 @@ impl OrderbookProverModule {
             NodeStateEvent::NewBlock(block) => {
                 tracing::debug!("New block received: {:?}", block);
 
+                // Use signed_block to efficiently filter transactions by lane_id
                 let tx_hashes: Vec<TxHash> = block
-                    .parsed_block
-                    .txs
-                    .iter()
-                    .map(|(tx_id, _)| tx_id.1.clone())
+                    .signed_block
+                    .iter_txs_with_id()
+                    .filter_map(|(lane_id, tx_id, _)| {
+                        if lane_id == self.ctx.lane_id {
+                            Some(tx_id.1)
+                        } else {
+                            None
+                        }
+                    })
                     .collect();
 
                 if tx_hashes.is_empty() {
-                    // No transactions to prove
+                    // No transactions to prove on validator's lane
                     return Ok(());
                 }
 
