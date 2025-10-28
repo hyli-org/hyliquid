@@ -10,6 +10,7 @@ import {
   TradesSubscription,
   OrdersSubscription,
   L2BookData,
+  WebSocketSubscription,
 } from "../types/websocket";
 import { BookService } from "./book-service";
 import { Order, Trade } from "@/types";
@@ -261,6 +262,9 @@ export class WebSocketService {
 
     if (client.subscriptions.has(subscriptionKey)) {
       client.subscriptions.delete(subscriptionKey);
+      this.databaseCallbacks.removeBookNotificationCallback(clientId);
+      this.databaseCallbacks.removeTradeNotificationCallback(clientId);
+      this.databaseCallbacks.removeOrderNotificationCallback(clientId);
       console.log(
         `Client ${clientId} unsubscribed from ${subscription.type}: ${subscription.instrument}. Key: ${subscriptionKey}`
       );
@@ -430,6 +434,10 @@ export class WebSocketService {
 
     console.log(`WebSocket client disconnected: ${clientId}`);
 
+    for (const subscription of client.subscriptions.values()) {
+      this.handleUnsubscribe(clientId, subscription);
+    }
+
     // Clean up subscriptions and message queue
     client.subscriptions.clear();
     client.messageQueue = [];
@@ -562,10 +570,15 @@ export class WebSocketService {
   /**
    * Generate subscription key for tracking
    */
-  private getSubscriptionKey(subscription: any): string {
-    return `${subscription.type}_${subscription.instrument.toLowerCase()}_${
-      subscription.groupTicks || "default"
-    }`;
+  private getSubscriptionKey(
+    subscription: L2BookSubscription | TradesSubscription | OrdersSubscription
+  ): string {
+    if (subscription.type === "l2Book") {
+      return `${subscription.type}_${subscription.instrument.toLowerCase()}_${
+        (subscription as L2BookSubscription).groupTicks || "default"
+      }`;
+    }
+    return `${subscription.type}_${subscription.instrument.toLowerCase()}`;
   }
 
   /**

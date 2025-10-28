@@ -57,10 +57,11 @@ export class DatabaseCallbacks {
 
       // Set up notification listener on the dedicated connection
       this.notificationClient.on("notification", (message: any) => {
-        // console.log("Database notification received", {
-        //   channel: message.channel,
-        //   payload: message.payload,
-        // });
+        console.log(
+          "Database notification received",
+          message.channel,
+          message.payload
+        );
         if (message.channel === "trades") {
           this.handleNewTrades();
         }
@@ -233,6 +234,11 @@ export class DatabaseCallbacks {
   }
 
   private handleL2BookUpdate(instrument: string) {
+    console.log(
+      "Handling L2 book update for instrument",
+      instrument,
+      this.bookNotifCallbacks.size
+    );
     for (const callback of this.bookNotifCallbacks.values()) {
       if (callback) {
         callback(instrument);
@@ -268,6 +274,15 @@ export class DatabaseCallbacks {
   }
   addInstrumentsCallback(client_id: string, callback: () => void) {
     this.instrumentNotifCallbacks.set(client_id, callback);
+  }
+  removeBookNotificationCallback(client_id: string) {
+    this.bookNotifCallbacks.delete(client_id);
+  }
+  removeTradeNotificationCallback(user: string) {
+    this.tradeNotifCallbacks.delete(user);
+  }
+  removeOrderNotificationCallback(user: string) {
+    this.orderNotifCallbacks.delete(user);
   }
 
   async close() {
