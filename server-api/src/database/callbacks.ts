@@ -178,8 +178,16 @@ class CandlestickSubscriptionHandler extends PolledSubscriptionHandler<
     const fromDate = new Date(now.getTime() - subscription.stepSec * 1000 * 10); // Last 10 candles
     const toDate = now;
 
+    const instrument = await this.queries.getInstrument(
+      subscription.instrument
+    );
+
+    if (!instrument) {
+      throw new Error(`Instrument not found: ${subscription.instrument}`);
+    }
+
     const rawData = await this.queries.getCandlestickData(
-      parseInt(subscription.instrument.split("/")[0]),
+      instrument?.instrument_id,
       fromDate.toISOString(),
       toDate.toISOString(),
       subscription.stepSec
@@ -226,7 +234,7 @@ export class DatabaseCallbacks {
     L2BookData,
     L2BookSubscription
   >;
-  private candlestickHandler: PolledSubscriptionHandler<
+  public candlestickHandler: PolledSubscriptionHandler<
     CandlestickData[],
     CandlestickSubscription
   >;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, reactive, computed } from 'vue'
+import { ref, onMounted, onUnmounted, reactive, computed, watch } from 'vue'
 import { createChart, CandlestickSeries } from 'lightweight-charts'
 import type { IChartApi, ISeriesApi, CandlestickData, Time } from 'lightweight-charts'
 import { instrumentsState } from '../trade'
@@ -21,6 +21,28 @@ const chartState = reactive({
 
 // Get current instrument
 const currentInstrument = computed(() => instrumentsState.selected)
+
+// Watch for instrument changes and resubscribe to candlestick data
+watch(
+    () => instrumentsState.selected?.symbol,
+    (newSymbol, oldSymbol) => {
+        if (newSymbol !== oldSymbol) {
+            // Unsubscribe from previous candlestick subscription
+            unsubscribeFromCandlestick()
+
+            // Clear existing chart data
+            chartState.data = []
+            if (candlestickSeries) {
+                candlestickSeries.setData([])
+            }
+
+            // Subscribe to new candlestick data if instrument is selected
+            if (newSymbol) {
+                subscribeToCandlestick()
+            }
+        }
+    }
+)
 
 // WebSocket candlestick callback
 const handleCandlestickUpdate = (candlesticks: any[]) => {

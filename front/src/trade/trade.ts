@@ -214,6 +214,12 @@ watchEffect(() => {
             websocketManager.subscribeToTrades(instrumentsState.selected.symbol, address);
             websocketManager.subscribeToOrders(instrumentsState.selected.symbol, address);
         }
+    } else if (!instrumentsState.selected && websocketManager.state.connected) {
+        // Unsubscribe from all subscriptions when no instrument is selected
+        websocketManager.unsubscribe();
+        websocketManager.unsubscribeTrades();
+        websocketManager.unsubscribeOrders();
+        websocketManager.unsubscribeCandlestick();
     }
 });
 
@@ -292,7 +298,7 @@ watch(
 
         applyOrderbookTicksPreference();
     },
-    { immediate: true }
+    { immediate: true },
 );
 
 watch(
@@ -302,7 +308,7 @@ watch(
             return;
         }
         applyOrderbookTicksPreference();
-    }
+    },
 );
 
 watch(
@@ -312,7 +318,7 @@ watch(
             return;
         }
         saveOrderbookTicksPreference(instrumentsState.selected.symbol, ticks);
-    }
+    },
 );
 
 watchEffect(() => {

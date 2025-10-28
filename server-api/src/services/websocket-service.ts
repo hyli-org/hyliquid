@@ -18,10 +18,46 @@ import { Order, Trade, CandlestickData } from "@/types";
 import { DatabaseCallbacks } from "@/database/callbacks";
 import { CustomError } from "@/middleware";
 
+// Subscription configuration type
+type SubscriptionConfig<T> = {
+  subscribe: (
+    clientId: string,
+    subscription: any,
+    callback: (data: T) => void
+  ) => void;
+  getInitialData?: (subscription: any) => Promise<T>;
+};
+
+// Subscription handlers map
+type SubscriptionHandlers = {
+  [K in WebSocketSubscription["type"]]: SubscriptionConfig<any>;
+};
+
 export class WebSocketService {
   private channelManager: ChannelManager;
   private bookService: BookService;
   private databaseCallbacks: DatabaseCallbacks;
+
+  // Subscription configuration
+  private readonly subscriptionConfigs: SubscriptionHandlers;
+
+  // Unsubscribe handlers map
+  private readonly unsubscribeHandlers = {
+    l2Book: (id: string, sub: WebSocketSubscription) =>
+      this.databaseCallbacks.removeBookNotificationCallback(
+        id,
+        sub as L2BookSubscription
+      ),
+    candlestick: (id: string, sub: WebSocketSubscription) =>
+      this.databaseCallbacks.removeCandlestickNotificationCallback(
+        id,
+        sub as CandlestickSubscription
+      ),
+    trades: (id: string) =>
+      this.databaseCallbacks.removeTradeNotificationCallback(id),
+    orders: (id: string) =>
+      this.databaseCallbacks.removeOrderNotificationCallback(id),
+  };
 
   constructor(bookService: BookService) {
     this.bookService = bookService;
@@ -30,6 +66,65 @@ export class WebSocketService {
       intervals: new Map(),
     };
     this.databaseCallbacks = DatabaseCallbacks.getInstance();
+
+    // Initialize subscription configurations
+    this.subscriptionConfigs = {
+      l2Book: {
+        subscribe: (clientId, subscription, callback) => {
+          this.databaseCallbacks.addBookNotificationCallback(
+            clientId,
+            subscription as L2BookSubscription,
+            callback
+          );
+        },
+        getInitialData: async (subscription) => {
+          const { instrument, groupTicks = 20 } =
+            subscription as L2BookSubscription;
+          const [baseAsset, quoteAsset] = instrument.split("/");
+          if (!this.bookService.hasPair(baseAsset, quoteAsset)) {
+            throw new CustomError(`Instrument not found: ${instrument}`, 404);
+          }
+          return await this.bookService.getOrderBook(
+            baseAsset,
+            quoteAsset,
+            20,
+            groupTicks
+          );
+        },
+      },
+      trades: {
+        subscribe: (clientId, subscription, callback) => {
+          this.databaseCallbacks.addTradeNotificationCallback(
+            (subscription as TradesSubscription).user,
+            callback
+          );
+        },
+      },
+      orders: {
+        subscribe: (clientId, subscription, callback) => {
+          this.databaseCallbacks.addOrderNotificationCallback(
+            (subscription as OrdersSubscription).user,
+            callback
+          );
+        },
+      },
+      candlestick: {
+        subscribe: (clientId, subscription, callback) => {
+          this.databaseCallbacks.addCandlestickNotificationCallback(
+            clientId,
+            subscription as CandlestickSubscription,
+            callback
+          );
+        },
+        getInitialData: async (subscription) => {
+          const { instrument, stepSec } =
+            subscription as CandlestickSubscription;
+          return await this.databaseCallbacks.candlestickHandler.fetchData(
+            subscription as CandlestickSubscription
+          );
+        },
+      },
+    };
   }
 
   /**
@@ -126,7 +221,7 @@ export class WebSocketService {
    * Enqueue a message for processing
    */
   private enqueueMessage(clientId: string, message: any) {
-    const client = this.channelManager.clients.get(clientId);
+    const client = this.getClient(clientId);
     if (!client) {
       console.error(`Client not found: ${clientId}`);
       return;
@@ -143,7 +238,7 @@ export class WebSocketService {
    * Process the message queue for a client
    */
   private async processQueue(clientId: string) {
-    const client = this.channelManager.clients.get(clientId);
+    const client = this.getClient(clientId);
     if (!client) {
       return;
     }
@@ -174,7 +269,7 @@ export class WebSocketService {
    * Handle incoming WebSocket messages
    */
   private async handleMessage(clientId: string, message: any) {
-    const client = this.channelManager.clients.get(clientId);
+    const client = this.getClient(clientId);
     if (!client) {
       console.error(`Client not found: ${clientId}`);
       return;
@@ -201,7 +296,7 @@ export class WebSocketService {
    * Handle subscription requests
    */
   private async handleSubscribe(clientId: string, subscription: any) {
-    const client = this.channelManager.clients.get(clientId);
+    const client = this.getClient(clientId);
     if (!client) return;
 
     if (subscription.instrument) {
@@ -209,41 +304,19 @@ export class WebSocketService {
     }
 
     const subscriptionKey = this.getSubscriptionKey(subscription);
+    const config =
+      this.subscriptionConfigs[subscription.type as keyof SubscriptionHandlers];
+
+    if (!config) {
+      this.sendError(
+        clientId,
+        `Unknown subscription type: ${subscription.type}`
+      );
+      return;
+    }
 
     try {
-      switch (subscription.type) {
-        case "l2Book":
-          await this.subscribeToL2Book(
-            clientId,
-            subscription as L2BookSubscription
-          );
-          break;
-        case "trades":
-          await this.subscribeToTrades(
-            clientId,
-            subscription as TradesSubscription
-          );
-          break;
-        case "orders":
-          await this.subscribeToOrders(
-            clientId,
-            subscription as OrdersSubscription
-          );
-          break;
-        case "candlestick":
-          await this.subscribeToCandlestick(
-            clientId,
-            subscription as CandlestickSubscription
-          );
-          break;
-        default:
-          this.sendError(
-            clientId,
-            `Unknown subscription type: ${subscription.type}`
-          );
-          return;
-      }
-
+      await this.subscribeToChannel(clientId, subscription, config);
       client.subscriptions.set(subscriptionKey, subscription);
       console.log(
         `Client ${clientId} subscribed to ${subscription.type}: ${subscription.instrument}. Key: ${subscriptionKey}`
@@ -263,30 +336,22 @@ export class WebSocketService {
    * Handle unsubscription requests
    */
   private handleUnsubscribe(clientId: string, subscription: any) {
-    const client = this.channelManager.clients.get(clientId);
+    const client = this.getClient(clientId);
     if (!client) return;
 
     const subscriptionKey = this.getSubscriptionKey(subscription);
-
     const existingSubscription = client.subscriptions.get(subscriptionKey);
+
     if (existingSubscription) {
       client.subscriptions.delete(subscriptionKey);
 
-      // Clean up based on subscription type
-      if (existingSubscription?.type === "l2Book") {
-        this.databaseCallbacks.removeBookNotificationCallback(
-          clientId,
-          existingSubscription as L2BookSubscription
-        );
-      } else if (existingSubscription?.type === "candlestick") {
-        this.databaseCallbacks.removeCandlestickNotificationCallback(
-          clientId,
-          existingSubscription as CandlestickSubscription
-        );
-      } else if (existingSubscription?.type === "trades") {
-        this.databaseCallbacks.removeTradeNotificationCallback(clientId);
-      } else if (existingSubscription?.type === "orders") {
-        this.databaseCallbacks.removeOrderNotificationCallback(clientId);
+      // Use the unsubscribe handlers map
+      const handler =
+        this.unsubscribeHandlers[
+          existingSubscription.type as keyof typeof this.unsubscribeHandlers
+        ];
+      if (handler) {
+        handler(clientId, existingSubscription);
       }
 
       console.log(
@@ -299,221 +364,87 @@ export class WebSocketService {
     }
   }
 
-  private async subscribeToOrders(
+  /**
+   * Generic subscription handler
+   */
+  private async subscribeToChannel<T>(
     clientId: string,
-    subscription: OrdersSubscription
+    subscription: WebSocketSubscription,
+    config: SubscriptionConfig<T>
   ) {
-    const client = this.channelManager.clients.get(clientId);
+    const client = this.getClient(clientId);
     if (!client) return;
 
-    this.databaseCallbacks.addOrderNotificationCallback(
-      subscription.user,
-      (payload: Order[]) => {
-        this.sendOrdersUpdate(clientId, subscription.instrument, payload);
-      }
-    );
-  }
-
-  private sendOrdersUpdate(
-    clientId: string,
-    instrument: string,
-    payload: Order[]
-  ) {
-    const client = this.channelManager.clients.get(clientId);
-    if (!client || client.ws.raw.readyState !== 1) return;
-
-    const response: WebSocketResponse = {
-      type: "orders",
-      instrument: instrument,
-      data: { orders: payload },
-      timestamp: Date.now(),
+    // Create callback that sends data to client
+    const callback = (data: T) => {
+      this.sendUpdate(
+        clientId,
+        subscription.type,
+        subscription.instrument,
+        data
+      );
     };
 
-    try {
-      client.ws.send(JSON.stringify(response));
-    } catch (error) {
-      console.error(
-        `Error sending orders update to client ${clientId}:`,
-        error
-      );
+    // Register the subscription
+    config.subscribe(clientId, subscription, callback);
+
+    // Send initial data if available
+    if (config.getInitialData) {
+      try {
+        const initialData = await config.getInitialData(subscription);
+        this.sendUpdate(
+          clientId,
+          subscription.type,
+          subscription.instrument,
+          initialData
+        );
+      } catch (error) {
+        throw new CustomError(
+          `Failed to get initial data: ${
+            error instanceof Error ? error.message : "Unknown error"
+          }`,
+          500
+        );
+      }
     }
   }
 
-  private async subscribeToTrades(
+  /**
+   * Generic method to send updates to clients
+   */
+  private sendUpdate<T>(
     clientId: string,
-    subscription: TradesSubscription
-  ) {
-    const client = this.channelManager.clients.get(clientId);
-    if (!client) return;
-
-    this.databaseCallbacks.addTradeNotificationCallback(
-      subscription.user,
-      (payload: Trade[]) => {
-        this.sendTradesUpdate(clientId, subscription.instrument, payload);
-      }
-    );
-  }
-
-  private sendTradesUpdate(
-    clientId: string,
+    type: string,
     instrument: string,
-    payload: Trade[]
+    data: T
   ) {
-    const client = this.channelManager.clients.get(clientId);
-    if (!client || client.ws.raw.readyState !== 1) return;
+    const client = this.getClient(clientId);
+    if (!client || !this.isWebSocketOpen(client)) return;
 
     const response: WebSocketResponse = {
-      type: "trades",
-      instrument: instrument,
-      data: { trades: payload },
-      timestamp: Date.now(),
-    };
-
-    try {
-      client.ws.send(JSON.stringify(response));
-    } catch (error) {
-      console.error(
-        `Error sending trades update to client ${clientId}:`,
-        error
-      );
-    }
-  }
-
-  private async subscribeToCandlestick(
-    clientId: string,
-    subscription: CandlestickSubscription
-  ) {
-    const { instrument, stepSec } = subscription;
-    const key = this.getSubscriptionKey(subscription);
-
-    // Register callback for candlestick updates
-    this.databaseCallbacks.addCandlestickNotificationCallback(
-      clientId,
-      subscription,
-      (candlestickData: CandlestickData[]) => {
-        this.sendCandlestickUpdate(clientId, instrument, candlestickData);
-      }
-    );
-
-    // Send initial data
-    try {
-      await this.sendInitialCandlestickData(clientId, instrument, stepSec);
-    } catch (error) {
-      throw new CustomError(
-        `Failed to get initial candlestick data: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-        500
-      );
-    }
-  }
-
-  private async sendInitialCandlestickData(
-    clientId: string,
-    instrument: string,
-    stepSec: number
-  ) {
-    // Request initial data from DatabaseCallbacks
-    const candlestickData =
-      await this.databaseCallbacks.getInitialCandlestickData(
-        instrument,
-        stepSec
-      );
-    this.sendCandlestickUpdate(clientId, instrument, candlestickData);
-  }
-
-  private sendCandlestickUpdate(
-    clientId: string,
-    instrument: string,
-    data: CandlestickData[]
-  ) {
-    const client = this.channelManager.clients.get(clientId);
-    if (!client || client.ws.raw.readyState !== 1) return;
-
-    const response: WebSocketResponse = {
-      type: "candlestick",
+      type,
       instrument,
-      data: { candlesticks: data },
+      data: this.formatDataForType(type, data),
       timestamp: Date.now(),
     };
 
-    try {
-      client.ws.send(JSON.stringify(response));
-    } catch (error) {
-      console.error(
-        `Error sending candlestick update to client ${clientId}:`,
-        error
-      );
-    }
+    this.safeJsonSend(client, response);
   }
 
   /**
-   * Subscribe to L2 book updates
+   * Format data based on subscription type
    */
-  private async subscribeToL2Book(
-    clientId: string,
-    subscription: L2BookSubscription
-  ) {
-    // Validate instrument exists
-    const { instrument, groupTicks = 10 } = subscription;
-    const [baseAsset, quoteAsset] = instrument.split("/");
-    if (!this.bookService.hasPair(baseAsset, quoteAsset)) {
-      throw new CustomError(`Instrument not found: ${instrument}`, 404);
-    }
-
-    this.databaseCallbacks.addBookNotificationCallback(
-      clientId,
-      subscription,
-      (l2BookData: L2BookData) => {
-        this.sendL2BookUpdate(clientId, subscription, l2BookData);
-      }
-    );
-
-    // Send initial data
-    try {
-      const bookData = await this.bookService.getOrderBook(
-        baseAsset,
-        quoteAsset,
-        10, // default levels
-        groupTicks
-      );
-
-      this.sendL2BookUpdate(clientId, subscription, bookData);
-    } catch (error) {
-      throw new CustomError(
-        `Failed to get initial book data: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-        500
-      );
-    }
-  }
-
-  /**
-   * Send L2 book update to a specific client
-   */
-  private sendL2BookUpdate(
-    clientId: string,
-    subscription: L2BookSubscription,
-    bookData: L2BookData
-  ) {
-    const client = this.channelManager.clients.get(clientId);
-    if (!client || client.ws.raw.readyState !== 1) return; // 1 = OPEN
-
-    const response: WebSocketResponse = {
-      type: "l2Book",
-      instrument: subscription.instrument,
-      data: bookData,
-      timestamp: Date.now(),
-    };
-
-    try {
-      client.ws.send(JSON.stringify(response));
-    } catch (error) {
-      console.error(
-        `Error sending L2 book update to client ${clientId}:`,
-        error
-      );
+  private formatDataForType<T>(type: string, data: T): any {
+    switch (type) {
+      case "orders":
+        return { orders: data };
+      case "trades":
+        return { trades: data };
+      case "candlestick":
+        return { candlesticks: data };
+      case "l2Book":
+      default:
+        return data;
     }
   }
 
@@ -521,7 +452,7 @@ export class WebSocketService {
    * Handle client disconnect
    */
   private handleDisconnect(clientId: string) {
-    const client = this.channelManager.clients.get(clientId);
+    const client = this.getClient(clientId);
     if (!client) return;
 
     console.log(`WebSocket client disconnected: ${clientId}`);
@@ -542,8 +473,8 @@ export class WebSocketService {
    * Send error message to client
    */
   private sendError(clientId: string, message: string) {
-    const client = this.channelManager.clients.get(clientId);
-    if (!client || client.ws.raw.readyState !== 1) return;
+    const client = this.getClient(clientId);
+    if (!client || !this.isWebSocketOpen(client)) return;
 
     const errorResponse = {
       type: "error",
@@ -551,13 +482,31 @@ export class WebSocketService {
       timestamp: Date.now(),
     };
 
+    this.safeJsonSend(client, errorResponse);
+  }
+
+  /**
+   * Helper method to get client by ID
+   */
+  private getClient(clientId: string): ClientConnection | undefined {
+    return this.channelManager.clients.get(clientId);
+  }
+
+  /**
+   * Helper method to check if WebSocket is open
+   */
+  private isWebSocketOpen(client: ClientConnection): boolean {
+    return client.ws.raw.readyState === 1; // 1 = OPEN
+  }
+
+  /**
+   * Helper method to safely send JSON data
+   */
+  private safeJsonSend(client: ClientConnection, data: any) {
     try {
-      client.ws.send(JSON.stringify(errorResponse));
+      client.ws.send(JSON.stringify(data));
     } catch (error) {
-      console.error(
-        `Error sending error message to client ${clientId}:`,
-        error
-      );
+      console.error(`Error sending data to client ${client.id}:`, error);
     }
   }
 

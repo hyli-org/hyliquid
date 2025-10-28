@@ -61,9 +61,7 @@ export interface CandlestickCallback {
 class WebSocketManager {
     private ws: WebSocket | null = null;
     private currentBookSubscription: Subscription | null = null;
-    // @ts-expect-error
     private currentTradesSubscription: Subscription | null = null;
-    // @ts-expect-error
     private currentOrdersSubscription: Subscription | null = null;
     private currentCandlestickSubscription: Subscription | null = null;
     private reconnectTimeout: number | null = null;
@@ -202,6 +200,11 @@ class WebSocketManager {
     }
 
     subscribeToTrades(instrument: string, user: string): void {
+        // Unsubscribe from previous trades subscription
+        if (this.currentTradesSubscription) {
+            this.unsubscribeTrades();
+        }
+
         const subscription: Subscription = {
             type: "trades",
             instrument: instrument.toLowerCase(),
@@ -214,6 +217,11 @@ class WebSocketManager {
     }
 
     subscribeToOrders(instrument: string, user: string): void {
+        // Unsubscribe from previous orders subscription
+        if (this.currentOrdersSubscription) {
+            this.unsubscribeOrders();
+        }
+
         const subscription: Subscription = {
             type: "orders",
             instrument: instrument.toLowerCase(),
@@ -272,6 +280,38 @@ class WebSocketManager {
         this.currentCandlestickSubscription = null;
 
         console.log("Unsubscribed from candlestick");
+    }
+
+    unsubscribeTrades(): void {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.currentTradesSubscription) {
+            return;
+        }
+
+        const message = {
+            method: "unsubscribe",
+            subscription: this.currentTradesSubscription,
+        };
+
+        this.ws.send(JSON.stringify(message));
+        this.currentTradesSubscription = null;
+
+        console.log("Unsubscribed from trades");
+    }
+
+    unsubscribeOrders(): void {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.currentOrdersSubscription) {
+            return;
+        }
+
+        const message = {
+            method: "unsubscribe",
+            subscription: this.currentOrdersSubscription,
+        };
+
+        this.ws.send(JSON.stringify(message));
+        this.currentOrdersSubscription = null;
+
+        console.log("Unsubscribed from orders");
     }
 
     private handleMessage(event: MessageEvent): void {
