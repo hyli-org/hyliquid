@@ -54,7 +54,10 @@ impl sdk::ZkContract for ZkVmState {
         let mut events = match action {
             OrderbookAction::PermissionnedOrderbookAction(action, _) => {
                 if tx_ctx.lane_id != self.lane_id {
-                    return Err("Invalid lane id".to_string());
+                    panic!(
+                        "Invalid lane id: expected {:?}, got {:?}",
+                        self.lane_id, tx_ctx.lane_id
+                    );
                 }
 
                 let permissionned_private_input: PermissionnedPrivateInput =
