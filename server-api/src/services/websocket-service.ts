@@ -12,6 +12,7 @@ import {
   CandlestickSubscription,
   L2BookData,
   WebSocketSubscription,
+  getSubscriptionKey,
 } from "../types/websocket";
 import { BookService } from "./book-service";
 import { Order, Trade, CandlestickData } from "@/types";
@@ -22,10 +23,10 @@ import { CustomError } from "@/middleware";
 type SubscriptionConfig<T> = {
   subscribe: (
     clientId: string,
-    subscription: any,
+    subscription: WebSocketSubscription,
     callback: (data: T) => void
   ) => void;
-  getInitialData?: (subscription: any) => Promise<T>;
+  getInitialData?: (subscription: WebSocketSubscription) => Promise<T>;
 };
 
 // Subscription handlers map
@@ -53,10 +54,16 @@ export class WebSocketService {
         id,
         sub as CandlestickSubscription
       ),
-    trades: (id: string) =>
-      this.databaseCallbacks.removeTradeNotificationCallback(id),
-    orders: (id: string) =>
-      this.databaseCallbacks.removeOrderNotificationCallback(id),
+    trades: (id: string, sub: WebSocketSubscription) =>
+      this.databaseCallbacks.removeTradeNotificationCallback(
+        id,
+        sub as TradesSubscription
+      ),
+    orders: (id: string, sub: WebSocketSubscription) =>
+      this.databaseCallbacks.removeOrderNotificationCallback(
+        id,
+        sub as OrdersSubscription
+      ),
   };
 
   constructor(bookService: BookService) {
@@ -95,7 +102,8 @@ export class WebSocketService {
       trades: {
         subscribe: (clientId, subscription, callback) => {
           this.databaseCallbacks.addTradeNotificationCallback(
-            (subscription as TradesSubscription).user,
+            clientId,
+            subscription as TradesSubscription,
             callback
           );
         },
@@ -103,7 +111,8 @@ export class WebSocketService {
       orders: {
         subscribe: (clientId, subscription, callback) => {
           this.databaseCallbacks.addOrderNotificationCallback(
-            (subscription as OrdersSubscription).user,
+            clientId,
+            subscription as OrdersSubscription,
             callback
           );
         },
@@ -303,7 +312,7 @@ export class WebSocketService {
       subscription.instrument = subscription.instrument.toUpperCase();
     }
 
-    const subscriptionKey = this.getSubscriptionKey(subscription);
+    const subscriptionKey = getSubscriptionKey(subscription);
     const config =
       this.subscriptionConfigs[subscription.type as keyof SubscriptionHandlers];
 
@@ -339,7 +348,7 @@ export class WebSocketService {
     const client = this.getClient(clientId);
     if (!client) return;
 
-    const subscriptionKey = this.getSubscriptionKey(subscription);
+    const subscriptionKey = getSubscriptionKey(subscription);
     const existingSubscription = client.subscriptions.get(subscriptionKey);
 
     if (existingSubscription) {
@@ -377,6 +386,11 @@ export class WebSocketService {
 
     // Create callback that sends data to client
     const callback = (data: T) => {
+      console.log(
+        `Sending update for ${getSubscriptionKey(
+          subscription as any
+        )} to client ${clientId}`
+      );
       this.sendUpdate(
         clientId,
         subscription.type,
@@ -515,29 +529,6 @@ export class WebSocketService {
    */
   private generateClientId(): string {
     return `client_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  }
-
-  /**
-   * Generate subscription key for tracking
-   */
-  private getSubscriptionKey(
-    subscription:
-      | L2BookSubscription
-      | TradesSubscription
-      | OrdersSubscription
-      | CandlestickSubscription
-  ): string {
-    if (subscription.type === "l2Book") {
-      return `${subscription.type}_${subscription.instrument.toLowerCase()}_${
-        (subscription as L2BookSubscription).groupTicks || "default"
-      }`;
-    }
-    if (subscription.type === "candlestick") {
-      return `${subscription.type}_${subscription.instrument.toLowerCase()}_${
-        (subscription as CandlestickSubscription).stepSec
-      }`;
-    }
-    return `${subscription.type}_${subscription.instrument.toLowerCase()}`;
   }
 
   /**

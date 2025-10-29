@@ -3,18 +3,15 @@ import {
   L2BookData,
   L2BookSubscription,
   CandlestickData,
+  getSubscriptionKey,
+  WebSocketSubscription,
 } from "@/types";
 import { DatabaseQueries } from "./queries";
 
 // Generic subscription manager for type-safe callback handling
-export class SubscriptionManager<T, S> {
+export class SubscriptionManager<T, S extends WebSocketSubscription> {
   private callbacks: Map<string, (payload: T) => void> = new Map();
   private activeSubscriptions: Set<S> = new Set();
-  private keyGenerator: (clientId: string, subscription: S) => string;
-
-  constructor(keyGenerator: (clientId: string, subscription: S) => string) {
-    this.keyGenerator = keyGenerator;
-  }
 
   addCallback(
     clientId: string,
@@ -22,6 +19,7 @@ export class SubscriptionManager<T, S> {
     callback: (payload: T) => void
   ): void {
     const key = this.keyGenerator(clientId, subscription);
+    console.log(`Adding callback for ${key}`);
     this.callbacks.set(key, callback);
     this.activeSubscriptions.add(subscription);
   }
@@ -33,8 +31,7 @@ export class SubscriptionManager<T, S> {
     // Check if any other client is still subscribed to this subscription
     const hasOtherSubscriptions = Array.from(this.callbacks.keys()).some(
       (key) => {
-        const parts = key.split(":");
-        return this.matchesSubscription(parts, subscription);
+        return this.matchesSubscription(key, subscription);
       }
     );
 
@@ -46,10 +43,11 @@ export class SubscriptionManager<T, S> {
   }
 
   getCallbacksForSubscription(subscription: S): Array<(payload: T) => void> {
+    console.log(`Getting callbacks for ${getSubscriptionKey(subscription)}`);
+    console.log(Array.from(this.callbacks.keys()));
     return Array.from(this.callbacks.entries())
       .filter(([key, _]) => {
-        const parts = key.split(":");
-        return this.matchesSubscription(parts, subscription);
+        return this.matchesSubscription(key, subscription);
       })
       .map(([_, callback]) => callback);
   }
@@ -62,28 +60,25 @@ export class SubscriptionManager<T, S> {
     return this.callbacks;
   }
 
-  protected matchesSubscription(parts: string[], subscription: S): boolean {
-    // Generate the expected key for this subscription and compare with the parts
-    // This is a generic implementation that works for most cases
-    const expectedKey = this.keyGenerator(parts[0], subscription);
-    const expectedParts = expectedKey.split(":");
-    return (
-      expectedParts.length === parts.length &&
-      expectedParts.every((part, index) => part === parts[index])
-    );
+  private matchesSubscription(key: string, subscription: S): boolean {
+    return key.endsWith(getSubscriptionKey(subscription));
+  }
+
+  private keyGenerator(clientId: string, subscription: S): string {
+    return `${clientId}:${getSubscriptionKey(subscription)}`;
   }
 }
 
 // Base class for polled subscriptions
-export abstract class PolledSubscriptionHandler<T, S> {
+export abstract class PolledSubscriptionHandler<
+  T,
+  S extends WebSocketSubscription
+> {
   protected subscriptionManager: SubscriptionManager<T, S>;
   protected queries: DatabaseQueries;
 
-  constructor(
-    keyGenerator: (clientId: string, subscription: S) => string,
-    queries: DatabaseQueries
-  ) {
-    this.subscriptionManager = new SubscriptionManager(keyGenerator);
+  constructor(queries: DatabaseQueries) {
+    this.subscriptionManager = new SubscriptionManager();
     this.queries = queries;
   }
 
@@ -91,6 +86,11 @@ export abstract class PolledSubscriptionHandler<T, S> {
   abstract transformData(rawData: any): T;
 
   async pollUpdates(): Promise<void> {
+    console.log(
+      `Polling updates for ${JSON.stringify(
+        Array.from(this.subscriptionManager.getActiveSubscriptions())
+      )}`
+    );
     for (const subscription of this.subscriptionManager.getActiveSubscriptions()) {
       try {
         const data = await this.fetchData(subscription);
@@ -124,14 +124,6 @@ export class BookSubscriptionHandler extends PolledSubscriptionHandler<
   L2BookData,
   L2BookSubscription
 > {
-  constructor(queries: DatabaseQueries) {
-    super(
-      (clientId, subscription) =>
-        `${clientId}:${subscription.type}:${subscription.instrument}:${subscription.groupTicks}`,
-      queries
-    );
-  }
-
   async fetchData(subscription: L2BookSubscription): Promise<L2BookData> {
     const rawBookData = await this.queries.getOrderbook(
       subscription.instrument,
@@ -163,14 +155,6 @@ export class CandlestickSubscriptionHandler extends PolledSubscriptionHandler<
   CandlestickData[],
   CandlestickSubscription
 > {
-  constructor(queries: DatabaseQueries) {
-    super(
-      (clientId, subscription) =>
-        `${clientId}:${subscription.type}:${subscription.instrument}:${subscription.stepSec}`,
-      queries
-    );
-  }
-
   async fetchData(
     subscription: CandlestickSubscription
   ): Promise<CandlestickData[]> {

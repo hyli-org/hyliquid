@@ -1,10 +1,13 @@
 import { Pool } from "pg";
 import {
   CandlestickSubscription,
+  InstrumentsSubscription,
   L2BookData,
   L2BookSubscription,
   Order,
+  OrdersSubscription,
   Trade,
+  TradesSubscription,
 } from "@/types";
 import { DatabaseConfig } from "@/config/database";
 import { UserService } from "@/services/user-service";
@@ -36,9 +39,9 @@ export class DatabaseCallbacks {
   private pollingIntervalMs: number;
 
   // Subscription managers
-  private tradeManager: SubscriptionManager<Trade[], string>;
-  private orderManager: SubscriptionManager<Order[], string>;
-  private instrumentManager: SubscriptionManager<void, string>;
+  private tradeManager: SubscriptionManager<Trade[], TradesSubscription>;
+  private orderManager: SubscriptionManager<Order[], OrdersSubscription>;
+  private instrumentManager: SubscriptionManager<void, InstrumentsSubscription>;
   private bookHandler: PolledSubscriptionHandler<
     L2BookData,
     L2BookSubscription
@@ -55,15 +58,12 @@ export class DatabaseCallbacks {
     this.pollingIntervalMs = getAppConfig().wsPollingIntervalMs;
 
     // Initialize subscription managers
-    this.tradeManager = new SubscriptionManager<Trade[], string>(
-      (clientId, user) => user
-    );
-    this.orderManager = new SubscriptionManager<Order[], string>(
-      (clientId, user) => user
-    );
-    this.instrumentManager = new SubscriptionManager<void, string>(
-      (clientId, client) => client
-    );
+    this.tradeManager = new SubscriptionManager<Trade[], TradesSubscription>();
+    this.orderManager = new SubscriptionManager<Order[], OrdersSubscription>();
+    this.instrumentManager = new SubscriptionManager<
+      void,
+      InstrumentsSubscription
+    >();
 
     // Initialize polled subscription handlers
     this.bookHandler = new BookSubscriptionHandler(this.queries);
@@ -290,17 +290,19 @@ export class DatabaseCallbacks {
   }
 
   addTradeNotificationCallback(
-    user: string,
+    client_id: string,
+    subscription: TradesSubscription,
     callback: (payload: Trade[]) => void
   ) {
-    this.tradeManager.addCallback(user, user, callback);
+    this.tradeManager.addCallback(client_id, subscription, callback);
   }
 
   addOrderNotificationCallback(
-    user: string,
+    client_id: string,
+    subscription: OrdersSubscription,
     callback: (payload: Order[]) => void
   ) {
-    this.orderManager.addCallback(user, user, callback);
+    this.orderManager.addCallback(client_id, subscription, callback);
   }
 
   addBookNotificationCallback(
@@ -312,7 +314,11 @@ export class DatabaseCallbacks {
   }
 
   addInstrumentsCallback(client_id: string, callback: () => void) {
-    this.instrumentManager.addCallback(client_id, client_id, callback);
+    this.instrumentManager.addCallback(
+      client_id,
+      { type: "instruments", instrument: "ALL" },
+      callback
+    );
   }
 
   addCandlestickNotificationCallback(
@@ -337,12 +343,18 @@ export class DatabaseCallbacks {
     this.bookHandler.removeCallback(client_id, subscription);
   }
 
-  removeTradeNotificationCallback(user: string) {
-    this.tradeManager.removeCallback(user, user);
+  removeTradeNotificationCallback(
+    client_id: string,
+    subscription: TradesSubscription
+  ) {
+    this.tradeManager.removeCallback(client_id, subscription);
   }
 
-  removeOrderNotificationCallback(user: string) {
-    this.orderManager.removeCallback(user, user);
+  removeOrderNotificationCallback(
+    client_id: string,
+    subscription: OrdersSubscription
+  ) {
+    this.orderManager.removeCallback(client_id, subscription);
   }
 
   async close() {
