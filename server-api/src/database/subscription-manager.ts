@@ -165,7 +165,7 @@ export class CandlestickSubscriptionHandler extends PolledSubscriptionHandler<
     }
 
     const rawData = await this.queries.getCandlestickData(
-      instrument?.instrument_id,
+      instrument.instrument_id,
       fromDate.toISOString(),
       toDate.toISOString(),
       subscription.stepSec
