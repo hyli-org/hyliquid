@@ -10,12 +10,10 @@ import {
   TradesSubscription,
   OrdersSubscription,
   CandlestickSubscription,
-  L2BookData,
   WebSocketSubscription,
   getSubscriptionKey,
 } from "../types/websocket";
 import { BookService } from "./book-service";
-import { Order, Trade, CandlestickData } from "@/types";
 import { DatabaseCallbacks } from "@/database/callbacks";
 import { CustomError } from "@/middleware";
 
@@ -88,7 +86,7 @@ export class WebSocketService {
           const { instrument, groupTicks = 20 } =
             subscription as L2BookSubscription;
           const [baseAsset, quoteAsset] = instrument.split("/");
-          if (!this.bookService.hasPair(baseAsset, quoteAsset)) {
+          if (!(await this.bookService.hasPair(baseAsset, quoteAsset))) {
             throw new CustomError(`Instrument not found: ${instrument}`, 404);
           }
           return await this.bookService.getOrderBook(
@@ -126,8 +124,6 @@ export class WebSocketService {
           );
         },
         getInitialData: async (subscription) => {
-          const { instrument, stepSec } =
-            subscription as CandlestickSubscription;
           return await this.databaseCallbacks.candlestickHandler.fetchData(
             subscription as CandlestickSubscription
           );

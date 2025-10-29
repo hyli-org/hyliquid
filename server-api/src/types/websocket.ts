@@ -66,6 +66,16 @@ export function getSubscriptionKey(
       (subscription as CandlestickSubscription).stepSec
     }`;
   }
+  if (subscription.type === "trades") {
+    return `${
+      (subscription as TradesSubscription).user
+    }:trades:${subscription.instrument.toLowerCase()}`;
+  }
+  if (subscription.type === "orders") {
+    return `${
+      (subscription as OrdersSubscription).user
+    }:orders:${subscription.instrument.toLowerCase()}`;
+  }
   return `${subscription.type}_${subscription.instrument.toLowerCase()}`;
 }
 

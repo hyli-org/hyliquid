@@ -216,8 +216,16 @@ export class DatabaseCallbacks {
         }
 
         for (const [user_id, payload] of payloads) {
-          const callback = this.tradeManager.getAllCallbacks().get(user_id);
-          callback?.(payload);
+          const callbacks = Array.from(
+            this.tradeManager.getAllCallbacks().entries()
+          )
+            .filter(([key, _]) => {
+              return key.split(":")[1] === user_id;
+            })
+            .map(([_, callback]) => callback);
+          for (const callback of callbacks) {
+            callback?.(payload);
+          }
         }
       })
       .catch((error: Error) => {
@@ -264,8 +272,16 @@ export class DatabaseCallbacks {
           }
         }
         for (const [user_id, payload] of payloads) {
-          const callback = this.orderManager.getAllCallbacks().get(user_id);
-          callback?.(payload);
+          const callbacks = Array.from(
+            this.orderManager.getAllCallbacks().entries()
+          )
+            .filter(([key, _]) => {
+              return key.split(":")[1] === user_id;
+            })
+            .map(([_, callback]) => callback);
+          for (const callback of callbacks) {
+            callback?.(payload);
+          }
         }
       });
   }
