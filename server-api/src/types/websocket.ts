@@ -34,6 +34,51 @@ export interface OrdersSubscription extends WebSocketSubscription {
   user: string;
 }
 
+export interface InstrumentsSubscription extends WebSocketSubscription {
+  type: "instruments";
+}
+
+export interface CandlestickSubscription extends WebSocketSubscription {
+  type: "candlestick";
+  stepSec: number;
+}
+
+/**
+ * Generate subscription key for tracking
+ */
+export function getSubscriptionKey(
+  subscription: WebSocketSubscription
+): string {
+  if (!subscription.type || !subscription.instrument) {
+    throw new Error(
+      `Subscription ${JSON.stringify(
+        subscription
+      )} is not a valid WebSocketSubscription`
+    );
+  }
+  if (subscription.type === "l2Book") {
+    return `${subscription.type}_${subscription.instrument.toLowerCase()}_${
+      (subscription as L2BookSubscription).groupTicks || "default"
+    }`;
+  }
+  if (subscription.type === "candlestick") {
+    return `${subscription.type}_${subscription.instrument.toLowerCase()}_${
+      (subscription as CandlestickSubscription).stepSec
+    }`;
+  }
+  if (subscription.type === "trades") {
+    return `${
+      (subscription as TradesSubscription).user
+    }:trades:${subscription.instrument.toLowerCase()}`;
+  }
+  if (subscription.type === "orders") {
+    return `${
+      (subscription as OrdersSubscription).user
+    }:orders:${subscription.instrument.toLowerCase()}`;
+  }
+  return `${subscription.type}_${subscription.instrument.toLowerCase()}`;
+}
+
 export interface L2BookEntry {
   price: number;
   quantity: number;

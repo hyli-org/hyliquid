@@ -7,6 +7,7 @@ export interface AppConfig {
   host: string;
   serverBaseUrl: string;
   contractName: string;
+  wsPollingIntervalMs: number;
   nodeEnv: string;
 }
 
@@ -16,6 +17,10 @@ export function getAppConfig(): AppConfig {
     host: process.env.HOST || "0.0.0.0",
     serverBaseUrl: process.env.SERVER_BASE_URL || "http://localhost:9002",
     contractName: process.env.CONTRACT_NAME || "orderbook",
+    wsPollingIntervalMs: parseInt(
+      process.env.WS_POLLING_INTERVAL_MS || "1000",
+      10
+    ),
     nodeEnv: process.env.NODE_ENV || "development",
   };
 }

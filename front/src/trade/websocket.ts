@@ -16,15 +16,27 @@ export interface WebSocketMessage {
         asks?: OrderbookEntry[];
         trades?: ApiTrade[];
         orders?: ApiOrder[];
+        candlesticks?: CandlestickApiData[];
     };
     message?: string;
     timestamp?: number;
+}
+
+export interface CandlestickApiData {
+    bucket: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume_trades: number;
+    trade_count: number;
 }
 
 export interface Subscription {
     type: string;
     instrument: string;
     groupTicks?: number;
+    stepSec?: number;
     user?: string;
 }
 
@@ -42,16 +54,20 @@ export interface TradeCallback {
     (trade: { price: number; qty: number; time: number }): void;
 }
 
+export interface CandlestickCallback {
+    (candlesticks: CandlestickApiData[]): void;
+}
+
 class WebSocketManager {
     private ws: WebSocket | null = null;
     private currentBookSubscription: Subscription | null = null;
-    // @ts-expect-error
     private currentTradesSubscription: Subscription | null = null;
-    // @ts-expect-error
     private currentOrdersSubscription: Subscription | null = null;
+    private currentCandlestickSubscription: Subscription | null = null;
     private reconnectTimeout: number | null = null;
     private url: string;
     private tradeCallbacks: Set<TradeCallback> = new Set();
+    private candlestickCallbacks: Set<CandlestickCallback> = new Set();
 
     public state = reactive<WebSocketState>({
         connected: false,
@@ -109,6 +125,7 @@ class WebSocketManager {
         this.currentBookSubscription = null;
         this.currentTradesSubscription = null;
         this.currentOrdersSubscription = null;
+        this.currentCandlestickSubscription = null;
     }
 
     // Trade callback management
@@ -120,12 +137,31 @@ class WebSocketManager {
         this.tradeCallbacks.delete(callback);
     }
 
+    // Candlestick callback management
+    onCandlestickUpdate(callback: CandlestickCallback): void {
+        this.candlestickCallbacks.add(callback);
+    }
+
+    offCandlestickUpdate(callback: CandlestickCallback): void {
+        this.candlestickCallbacks.delete(callback);
+    }
+
     private notifyTradeCallbacks(trade: { price: number; qty: number; time: number }): void {
         this.tradeCallbacks.forEach((callback) => {
             try {
                 callback(trade);
             } catch (error) {
                 console.error("Error in trade callback:", error);
+            }
+        });
+    }
+
+    private notifyCandlestickCallbacks(candlesticks: CandlestickApiData[]): void {
+        this.candlestickCallbacks.forEach((callback) => {
+            try {
+                callback(candlesticks);
+            } catch (error) {
+                console.error("Error in candlestick callback:", error);
             }
         });
     }
@@ -164,6 +200,11 @@ class WebSocketManager {
     }
 
     subscribeToTrades(instrument: string, user: string): void {
+        // Unsubscribe from previous trades subscription
+        if (this.currentTradesSubscription) {
+            this.unsubscribeTrades();
+        }
+
         const subscription: Subscription = {
             type: "trades",
             instrument: instrument.toLowerCase(),
@@ -176,6 +217,11 @@ class WebSocketManager {
     }
 
     subscribeToOrders(instrument: string, user: string): void {
+        // Unsubscribe from previous orders subscription
+        if (this.currentOrdersSubscription) {
+            this.unsubscribeOrders();
+        }
+
         const subscription: Subscription = {
             type: "orders",
             instrument: instrument.toLowerCase(),
@@ -185,6 +231,23 @@ class WebSocketManager {
         this.subscribeTo(subscription);
         this.currentOrdersSubscription = subscription;
         console.log("Subscribed to orders:", instrument);
+    }
+
+    subscribeToCandlestick(instrument: string, stepSec: number): void {
+        // Unsubscribe from previous candlestick subscription
+        if (this.currentCandlestickSubscription) {
+            this.unsubscribeCandlestick();
+        }
+
+        const subscription: Subscription = {
+            type: "candlestick",
+            instrument: instrument.toLowerCase(),
+            stepSec,
+        };
+
+        this.subscribeTo(subscription);
+        this.currentCandlestickSubscription = subscription;
+        console.log("Subscribed to candlestick:", instrument, stepSec);
     }
 
     unsubscribe(): void {
@@ -201,6 +264,54 @@ class WebSocketManager {
         this.currentBookSubscription = null;
 
         console.log("Unsubscribed from orderbook");
+    }
+
+    unsubscribeCandlestick(): void {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.currentCandlestickSubscription) {
+            return;
+        }
+
+        const message = {
+            method: "unsubscribe",
+            subscription: this.currentCandlestickSubscription,
+        };
+
+        this.ws.send(JSON.stringify(message));
+        this.currentCandlestickSubscription = null;
+
+        console.log("Unsubscribed from candlestick");
+    }
+
+    unsubscribeTrades(): void {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.currentTradesSubscription) {
+            return;
+        }
+
+        const message = {
+            method: "unsubscribe",
+            subscription: this.currentTradesSubscription,
+        };
+
+        this.ws.send(JSON.stringify(message));
+        this.currentTradesSubscription = null;
+
+        console.log("Unsubscribed from trades");
+    }
+
+    unsubscribeOrders(): void {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.currentOrdersSubscription) {
+            return;
+        }
+
+        const message = {
+            method: "unsubscribe",
+            subscription: this.currentOrdersSubscription,
+        };
+
+        this.ws.send(JSON.stringify(message));
+        this.currentOrdersSubscription = null;
+
+        console.log("Unsubscribed from orders");
     }
 
     private handleMessage(event: MessageEvent): void {
@@ -240,6 +351,9 @@ class WebSocketManager {
                     return transformOrder(order);
                 });
                 this.state.orders = orders || [];
+            } else if (data.type === "candlestick" && data.data) {
+                console.log("Received candlestick data:", data.data.candlesticks);
+                this.notifyCandlestickCallbacks(data.data.candlesticks || []);
             } else if (data.type === "error") {
                 this.state.error = data.message || "Unknown WebSocket error";
             }

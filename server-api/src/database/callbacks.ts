@@ -1,35 +1,77 @@
 import { Pool } from "pg";
-import { L2BookData, L2BookSubscription, Order, Trade } from "@/types";
+import {
+  CandlestickSubscription,
+  InstrumentsSubscription,
+  L2BookData,
+  L2BookSubscription,
+  Order,
+  OrdersSubscription,
+  Trade,
+  TradesSubscription,
+} from "@/types";
 import { DatabaseConfig } from "@/config/database";
 import { UserService } from "@/services/user-service";
 import { DatabaseQueries } from "./queries";
+import { getAppConfig } from "@/config/app";
+import { CandlestickData } from "@/types/api";
+import {
+  SubscriptionManager,
+  PolledSubscriptionHandler,
+  BookSubscriptionHandler,
+  CandlestickSubscriptionHandler,
+} from "./subscription-manager";
 
 export class DatabaseCallbacks {
   private static instance: DatabaseCallbacks;
   private pool: Pool;
-  private notificationClient: any = null; // Dedicated connection for notifications
-  private tradeNotifCallbacks: Map<string, (payload: Trade[]) => void> =
-    new Map();
-  private orderNotifCallbacks: Map<string, (payload: Order[]) => void> =
-    new Map();
-  private bookNotifCallbacks: Map<string, (instrument: string) => void> =
-    new Map();
-  private instrumentNotifCallbacks: Map<string, () => void> = new Map();
-  private notificationChannels = ["book", "orders", "trades", "instruments"];
+  private notificationClient: any = null;
+  private notificationChannels = ["orders", "trades", "instruments"];
+
   // TODO: store this in db to be retrieved when restarting the server
   private last_seen_trade_id: number = 0;
   private last_seen_order_id: number = 0;
   private last_seen_instrument_id: number = 0;
+
   private userService: UserService;
   private queries: DatabaseQueries;
   private isShuttingDown: boolean = false;
+  private pollingInterval: NodeJS.Timeout | null = null;
+  private pollingIntervalMs: number;
+
+  // Subscription managers
+  private tradeManager: SubscriptionManager<Trade[], TradesSubscription>;
+  private orderManager: SubscriptionManager<Order[], OrdersSubscription>;
+  private instrumentManager: SubscriptionManager<void, InstrumentsSubscription>;
+  private bookHandler: PolledSubscriptionHandler<
+    L2BookData,
+    L2BookSubscription
+  >;
+  public candlestickHandler: PolledSubscriptionHandler<
+    CandlestickData[],
+    CandlestickSubscription
+  >;
 
   private constructor(pool: Pool) {
     this.pool = pool;
     this.userService = new UserService(new DatabaseQueries(this.pool));
     this.queries = new DatabaseQueries(this.pool);
+    this.pollingIntervalMs = getAppConfig().wsPollingIntervalMs;
+
+    // Initialize subscription managers
+    this.tradeManager = new SubscriptionManager<Trade[], TradesSubscription>();
+    this.orderManager = new SubscriptionManager<Order[], OrdersSubscription>();
+    this.instrumentManager = new SubscriptionManager<
+      void,
+      InstrumentsSubscription
+    >();
+
+    // Initialize polled subscription handlers
+    this.bookHandler = new BookSubscriptionHandler(this.queries);
+    this.candlestickHandler = new CandlestickSubscriptionHandler(this.queries);
+
     this.initializeNotificationConnection();
     this.initializeLastSeenIds();
+    this.startPolling();
   }
 
   public static getInstance(): DatabaseCallbacks {
@@ -67,9 +109,6 @@ export class DatabaseCallbacks {
         }
         if (message.channel === "orders") {
           this.handleNewOrders();
-        }
-        if (message.channel === "book") {
-          this.handleL2BookUpdate(message.payload);
         }
         if (message.channel === "instruments") {
           this.handleInstrumentsUpdate();
@@ -124,11 +163,9 @@ export class DatabaseCallbacks {
   private initializeLastSeenIds() {
     this.pool.query("SELECT MAX(trade_id) FROM trade_events").then((result) => {
       this.last_seen_trade_id = result.rows[0].max || 0;
-      console.log("Last seen trade id", this.last_seen_trade_id);
     });
     this.pool.query("SELECT MAX(event_id) FROM order_events").then((result) => {
       this.last_seen_order_id = result.rows[0].max || 0;
-      console.log("Last seen order id", this.last_seen_order_id);
     });
   }
 
@@ -160,7 +197,7 @@ export class DatabaseCallbacks {
             payloads.set(maker_user.identity, []);
           }
           if (taker_user && !payloads.has(taker_user.identity)) {
-            payloads.set(row.taker_user_id, []);
+            payloads.set(taker_user.identity, []);
           }
           const payload = {
             trade_id: row.trade_id,
@@ -171,16 +208,24 @@ export class DatabaseCallbacks {
             side: row.side,
           };
           if (maker_user) {
-            payloads.get(maker_user?.identity)?.push(payload);
+            payloads.get(maker_user.identity)!.push(payload);
           }
           if (taker_user && taker_user.user_id !== maker_user?.user_id) {
-            payloads.get(taker_user.identity)?.push(payload);
+            payloads.get(taker_user.identity)!.push(payload);
           }
         }
 
         for (const [user_id, payload] of payloads) {
-          // console.log("Notifying trade callback for user", user_id, payload);
-          this.tradeNotifCallbacks.get(user_id)?.(payload);
+          const callbacks = Array.from(
+            this.tradeManager.getAllCallbacks().entries()
+          )
+            .filter(([key, _]) => {
+              return key.split(":")[1] === user_id;
+            })
+            .map(([_, callback]) => callback);
+          for (const callback of callbacks) {
+            callback?.(payload);
+          }
         }
       })
       .catch((error: Error) => {
@@ -223,78 +268,124 @@ export class DatabaseCallbacks {
               created_at: new Date(row.event_time), // TODO: fix this
               updated_at: new Date(row.event_time),
             };
-            payloads.get(user.identity)?.push(payload);
+            payloads.get(user.identity)!.push(payload);
           }
         }
         for (const [user_id, payload] of payloads) {
-          // console.log("Notifying order callback for user", user_id, payload);
-          this.orderNotifCallbacks.get(user_id)?.(payload);
+          const callbacks = Array.from(
+            this.orderManager.getAllCallbacks().entries()
+          )
+            .filter(([key, _]) => {
+              return key.split(":")[1] === user_id;
+            })
+            .map(([_, callback]) => callback);
+          for (const callback of callbacks) {
+            callback?.(payload);
+          }
         }
       });
   }
 
-  private handleL2BookUpdate(instrument: string) {
-    console.log(
-      "Handling L2 book update for instrument",
-      instrument,
-      this.bookNotifCallbacks.size
-    );
-    for (const callback of this.bookNotifCallbacks.values()) {
-      if (callback) {
-        callback(instrument);
-      }
-    }
+  private startPolling() {
+    this.pollingInterval = setInterval(() => {
+      this.pollUpdates();
+    }, this.pollingIntervalMs);
+  }
+
+  private async pollUpdates() {
+    await Promise.all([
+      this.bookHandler.pollUpdates(),
+      this.candlestickHandler.pollUpdates(),
+    ]);
   }
 
   private handleInstrumentsUpdate() {
-    for (const callback of this.instrumentNotifCallbacks.values()) {
-      if (callback) {
-        callback();
-      }
+    for (const callback of this.instrumentManager.getAllCallbacks().values()) {
+      callback();
     }
   }
 
   addTradeNotificationCallback(
-    user: string,
+    client_id: string,
+    subscription: TradesSubscription,
     callback: (payload: Trade[]) => void
   ) {
-    this.tradeNotifCallbacks.set(user, callback);
+    this.tradeManager.addCallback(client_id, subscription, callback);
   }
+
   addOrderNotificationCallback(
-    user: string,
+    client_id: string,
+    subscription: OrdersSubscription,
     callback: (payload: Order[]) => void
   ) {
-    this.orderNotifCallbacks.set(user, callback);
+    this.orderManager.addCallback(client_id, subscription, callback);
   }
+
   addBookNotificationCallback(
     client_id: string,
-    callback: (instrument: string) => void
+    subscription: L2BookSubscription,
+    callback: (data: L2BookData) => void
   ) {
-    this.bookNotifCallbacks.set(client_id, callback);
+    this.bookHandler.addCallback(client_id, subscription, callback);
   }
+
   addInstrumentsCallback(client_id: string, callback: () => void) {
-    this.instrumentNotifCallbacks.set(client_id, callback);
+    this.instrumentManager.addCallback(
+      client_id,
+      { type: "instruments", instrument: "ALL" },
+      callback
+    );
   }
-  removeBookNotificationCallback(client_id: string) {
-    this.bookNotifCallbacks.delete(client_id);
+
+  addCandlestickNotificationCallback(
+    client_id: string,
+    subscription: CandlestickSubscription,
+    callback: (data: CandlestickData[]) => void
+  ) {
+    this.candlestickHandler.addCallback(client_id, subscription, callback);
   }
-  removeTradeNotificationCallback(user: string) {
-    this.tradeNotifCallbacks.delete(user);
+
+  removeCandlestickNotificationCallback(
+    client_id: string,
+    subscription: CandlestickSubscription
+  ) {
+    this.candlestickHandler.removeCallback(client_id, subscription);
   }
-  removeOrderNotificationCallback(user: string) {
-    this.orderNotifCallbacks.delete(user);
+
+  removeBookNotificationCallback(
+    client_id: string,
+    subscription: L2BookSubscription
+  ) {
+    this.bookHandler.removeCallback(client_id, subscription);
+  }
+
+  removeTradeNotificationCallback(
+    client_id: string,
+    subscription: TradesSubscription
+  ) {
+    this.tradeManager.removeCallback(client_id, subscription);
+  }
+
+  removeOrderNotificationCallback(
+    client_id: string,
+    subscription: OrdersSubscription
+  ) {
+    this.orderManager.removeCallback(client_id, subscription);
   }
 
   async close() {
-    console.log("Closing database callbacks...");
     this.isShuttingDown = true;
+
+    // Clear polling interval
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+    }
 
     if (this.notificationClient) {
       try {
-        // Remove all event listeners to prevent reconnection attempts
         this.notificationClient.removeAllListeners();
         await this.notificationClient.release();
-        console.log("Notification connection released");
       } catch (error) {
         console.error("Error releasing notification connection:", error);
       }
