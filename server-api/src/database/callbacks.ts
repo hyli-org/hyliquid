@@ -197,7 +197,7 @@ export class DatabaseCallbacks {
             payloads.set(maker_user.identity, []);
           }
           if (taker_user && !payloads.has(taker_user.identity)) {
-            payloads.set(row.taker_user_id, []);
+            payloads.set(taker_user.identity, []);
           }
           const payload = {
             trade_id: row.trade_id,
@@ -208,10 +208,10 @@ export class DatabaseCallbacks {
             side: row.side,
           };
           if (maker_user) {
-            payloads.get(maker_user?.identity)?.push(payload);
+            payloads.get(maker_user.identity)!.push(payload);
           }
           if (taker_user && taker_user.user_id !== maker_user?.user_id) {
-            payloads.get(taker_user.identity)?.push(payload);
+            payloads.get(taker_user.identity)!.push(payload);
           }
         }
 
@@ -268,7 +268,7 @@ export class DatabaseCallbacks {
               created_at: new Date(row.event_time), // TODO: fix this
               updated_at: new Date(row.event_time),
             };
-            payloads.get(user.identity)?.push(payload);
+            payloads.get(user.identity)!.push(payload);
           }
         }
         for (const [user_id, payload] of payloads) {
