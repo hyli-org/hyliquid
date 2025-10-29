@@ -60,7 +60,7 @@ const fetchAccountInfo = async (username: string): Promise<AccountInfo | null> =
 };
 
 export function useEthereumBridge() {
-    const { wallet } = useWallet();
+    const { wallet, getEthereumProvider } = useWallet();
     const userIdentity = computed(() => wallet.value?.address ?? null);
 
     const loadingAssociation = ref(false);
@@ -137,13 +137,15 @@ export function useEthereumBridge() {
         }
     };
 
-    const providerAvailable = computed(() => typeof window !== "undefined" && Boolean(window.ethereum));
+    const providerAvailable = computed(() => Boolean(getEthereumProvider()));
 
     const getProvider = (): EthereumProvider => {
-        if (!providerAvailable.value || !window.ethereum) {
+        let provider = getEthereumProvider();
+        console.log("provider", provider);
+        if (!providerAvailable.value || !provider) {
             throw new Error("Ethereum provider not detected");
         }
-        return window.ethereum as EthereumProvider;
+        return provider;
     };
 
     const getCurrentChainId = async (): Promise<string | null> => {
