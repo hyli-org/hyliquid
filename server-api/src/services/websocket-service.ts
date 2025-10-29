@@ -386,11 +386,6 @@ export class WebSocketService {
 
     // Create callback that sends data to client
     const callback = (data: T) => {
-      console.log(
-        `Sending update for ${getSubscriptionKey(
-          subscription as any
-        )} to client ${clientId}`
-      );
       this.sendUpdate(
         clientId,
         subscription.type,

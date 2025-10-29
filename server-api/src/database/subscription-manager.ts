@@ -11,7 +11,7 @@ import { DatabaseQueries } from "./queries";
 // Generic subscription manager for type-safe callback handling
 export class SubscriptionManager<T, S extends WebSocketSubscription> {
   private callbacks: Map<string, (payload: T) => void> = new Map();
-  private activeSubscriptions: Set<S> = new Set();
+  private activeSubscriptions: Map<string, S> = new Map();
 
   addCallback(
     clientId: string,
@@ -19,9 +19,9 @@ export class SubscriptionManager<T, S extends WebSocketSubscription> {
     callback: (payload: T) => void
   ): void {
     const key = this.keyGenerator(clientId, subscription);
-    console.log(`Adding callback for ${key}`);
+    const subscriptionKey = getSubscriptionKey(subscription);
     this.callbacks.set(key, callback);
-    this.activeSubscriptions.add(subscription);
+    this.activeSubscriptions.set(subscriptionKey, subscription);
   }
 
   removeCallback(clientId: string, subscription: S): boolean {
@@ -36,15 +36,14 @@ export class SubscriptionManager<T, S extends WebSocketSubscription> {
     );
 
     if (!hasOtherSubscriptions) {
-      this.activeSubscriptions.delete(subscription);
+      const subscriptionKey = getSubscriptionKey(subscription);
+      this.activeSubscriptions.delete(subscriptionKey);
     }
 
     return removed;
   }
 
   getCallbacksForSubscription(subscription: S): Array<(payload: T) => void> {
-    console.log(`Getting callbacks for ${getSubscriptionKey(subscription)}`);
-    console.log(Array.from(this.callbacks.keys()));
     return Array.from(this.callbacks.entries())
       .filter(([key, _]) => {
         return this.matchesSubscription(key, subscription);
@@ -53,7 +52,7 @@ export class SubscriptionManager<T, S extends WebSocketSubscription> {
   }
 
   getActiveSubscriptions(): Set<S> {
-    return this.activeSubscriptions;
+    return new Set(this.activeSubscriptions.values());
   }
 
   getAllCallbacks(): Map<string, (payload: T) => void> {
@@ -86,11 +85,6 @@ export abstract class PolledSubscriptionHandler<
   abstract transformData(rawData: any): T;
 
   async pollUpdates(): Promise<void> {
-    console.log(
-      `Polling updates for ${JSON.stringify(
-        Array.from(this.subscriptionManager.getActiveSubscriptions())
-      )}`
-    );
     for (const subscription of this.subscriptionManager.getActiveSubscriptions()) {
       try {
         const data = await this.fetchData(subscription);
