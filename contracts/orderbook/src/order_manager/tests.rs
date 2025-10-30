@@ -509,6 +509,7 @@ fn limit_bid_matches_existing_ask() {
     let events = manager
         .execute_order(&taker_user.get_key(), &taker_order)
         .expect("matching limit bid should succeed");
+    manager.clean(&events);
 
     assert!(!manager.orders.contains_key(&taker_order.order_id));
     assert!(!manager.ask_orders.contains_key(&taker_order.pair));

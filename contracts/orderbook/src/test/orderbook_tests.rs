@@ -17,11 +17,9 @@ use crate::transaction::{
     AddSessionKeyPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, PermissionnedPrivateInput,
 };
+use crate::zk::OrderManagerRoots;
+use crate::zk::{FullState, ZkVmState, H256};
 use crate::ORDERBOOK_ACCOUNT_IDENTITY;
-use crate::{
-    order_manager::OrderManager,
-    zk::{FullState, ZkVmState, H256},
-};
 
 struct TestSigner {
     signing_key: SigningKey,
@@ -73,7 +71,7 @@ struct OwnedCommitment {
     users_info_root: H256,
     balances_roots: HashMap<String, H256>,
     assets: HashMap<String, AssetInfo>,
-    orders: OrderManager,
+    order_commitment: OrderManagerRoots,
     hashed_secret: [u8; 32],
     lane_id: LaneId,
     last_block_number: BlockHeight,
@@ -96,6 +94,7 @@ fn run_action(
     let events = light
         .execute_permissionned_action(user_info.clone(), action.clone(), &private_payload)
         .expect("light execution");
+    light.order_manager.clean(&events);
 
     tracing::debug!("light events: {:?}", events);
 
@@ -130,20 +129,21 @@ fn run_action(
     if !hyli_output.success {
         let metadata_state: ZkVmState =
             borsh::from_slice(&commitment_metadata).expect("decode zkvm metadata");
+        let err = String::from_utf8_lossy(&hyli_output.program_outputs);
         panic!(
-            "execution failed for action {action_repr}: {hyli_output:?}; known owners: {:?}; metadata owners: {:?}",
+            "execution failed for action {action_repr}: {hyli_output:?}; known owners: {:?}; metadata owners: {:?}, err: {err}",
             full
                 .state
                 .order_manager
                 .orders_owner
                 .keys()
                 .collect::<Vec<_>>(),
-            metadata_state
+                metadata_state
                 .order_manager
                 .orders_owner
                 .keys()
                 .collect::<Vec<_>>()
-        );
+            );
     }
 
     let full_commit = full.commit();
@@ -343,6 +343,8 @@ fn execute_deposit_with_zk_checks(
         .execute_permissionned_action(user_info_light.clone(), action.clone(), &[])
         .expect("light execution deposit");
 
+    light.order_manager.clean(&events_light);
+
     let initial_commitment = full.commit();
 
     let user_info_full = full
@@ -429,6 +431,7 @@ fn execute_add_session_key_with_zk_checks(
     let events_light = light
         .execute_permissionned_action(user_info_light.clone(), action.clone(), &private_payload)
         .expect("light execution add session key");
+    light.order_manager.clean(&events_light);
 
     let initial_commitment = full.commit();
 

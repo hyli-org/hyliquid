@@ -8,7 +8,7 @@ use sha3::Digest;
 use sparse_merkle_tree::traits::Value;
 
 use crate::model::{AssetInfo, ExecuteState, Symbol, UserInfo};
-use crate::order_manager::{OrderManager, OrderManagerView};
+use crate::zk::order_merkle::OrderManagerWitnesses;
 use crate::zk::smt::{GetKey, UserBalance};
 
 pub use smt::BorshableH256 as H256;
@@ -16,7 +16,10 @@ pub use smt::SMT;
 
 mod commitment_metadata;
 mod contract;
+mod order_merkle;
 pub mod smt;
+
+pub use order_merkle::{OrderManagerMerkles, OrderManagerRoots};
 
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 enum Proof {
@@ -28,13 +31,15 @@ enum Proof {
 pub struct ZkWitnessSet<
     T: BorshDeserialize
         + BorshSerialize
-        + Default
         + sparse_merkle_tree::traits::Value
         + GetKey
         + Ord
+        + Eq
         + std::hash::Hash
         + Clone,
 > {
+    // TODO: we might want to use initial_values and updated_values
+    // Could we then say that all values that have not been updated will be reset to 0 (and hence removed from the tree)?
     values: HashSet<T>,
     proof: Proof,
 }
@@ -42,10 +47,10 @@ pub struct ZkWitnessSet<
 impl<
         T: BorshDeserialize
             + BorshSerialize
-            + Default
             + sparse_merkle_tree::traits::Value
             + GetKey
             + Ord
+            + Eq
             + std::hash::Hash
             + Clone,
     > ZkWitnessSet<T>
@@ -77,11 +82,31 @@ impl<
     }
 }
 
+impl<
+        T: BorshDeserialize
+            + BorshSerialize
+            + sparse_merkle_tree::traits::Value
+            + GetKey
+            + Ord
+            + Eq
+            + std::hash::Hash
+            + Clone,
+    > Default for ZkWitnessSet<T>
+{
+    fn default() -> Self {
+        ZkWitnessSet {
+            values: HashSet::new(),
+            proof: Proof::CurrentRootHash(H256::zero()),
+        }
+    }
+}
+
 // Full state with commitment structures
 #[derive(Default, Debug)]
 pub struct FullState {
     pub users_info_mt: SMT<UserInfo>,
     pub balances_mt: HashMap<String, SMT<UserBalance>>,
+    pub order_manager_mt: OrderManagerMerkles,
     pub state: ExecuteState,
     pub hashed_secret: [u8; 32],
     pub lane_id: LaneId,
@@ -128,9 +153,13 @@ impl FullState {
             .first_chunk::<32>()
             .ok_or("hashing secret failed".to_string())?;
 
+        let order_manager_mt = OrderManagerMerkles::from_order_manager(&light.order_manager)
+            .map_err(|e| format!("Failed to build order manager SMTs from execute state: {e}"))?;
+
         Ok(FullState {
             users_info_mt,
             balances_mt,
+            order_manager_mt,
             state: light.clone(),
             hashed_secret,
             lane_id,
@@ -153,12 +182,13 @@ impl FullState {
     }
 
     pub fn commit(&self) -> StateCommitment {
+        let order_manager_roots = self.order_manager_mt.commitment();
         StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: self.users_info_mt.root(),
                 balances_roots: self.balance_roots(),
                 assets: &self.state.assets_info,
-                orders: self.state.order_manager.view(),
+                order_manager_roots,
                 hashed_secret: self.hashed_secret,
                 lane_id: &self.lane_id,
                 last_block_number: &self.last_block_number,
@@ -174,7 +204,7 @@ pub struct ParsedStateCommitment<'a> {
     pub users_info_root: H256,
     pub balances_roots: HashMap<Symbol, H256>,
     pub assets: &'a HashMap<Symbol, AssetInfo>,
-    pub orders: OrderManagerView<'a>,
+    pub order_manager_roots: OrderManagerRoots,
     pub hashed_secret: [u8; 32],
     pub lane_id: &'a LaneId,
     pub last_block_number: &'a BlockHeight,
@@ -187,7 +217,7 @@ pub struct ZkVmState {
     pub lane_id: LaneId,
     pub hashed_secret: [u8; 32],
     pub last_block_number: BlockHeight,
-    pub order_manager: OrderManager,
+    pub order_manager: OrderManagerWitnesses,
     pub assets: HashMap<Symbol, AssetInfo>,
 }
 
@@ -223,9 +253,13 @@ impl Clone for FullState {
             balances_mt.insert(symbol.clone(), new_tree);
         }
 
+        let order_manager_mt = OrderManagerMerkles::from_order_manager(&self.state.order_manager)
+            .expect("clone order manager merkle trees");
+
         Self {
             users_info_mt,
             balances_mt,
+            order_manager_mt,
             state: self.state.clone(),
             hashed_secret: self.hashed_secret,
             lane_id: self.lane_id.clone(),

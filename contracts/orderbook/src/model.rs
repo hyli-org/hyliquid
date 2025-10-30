@@ -51,7 +51,19 @@ pub struct PairInfo {
     feature = "sqlx",
     sqlx(type_name = "order_side", rename_all = "lowercase")
 )]
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderSide {
     Bid, // Buy
@@ -63,7 +75,19 @@ pub enum OrderSide {
     feature = "sqlx",
     sqlx(type_name = "order_type", rename_all = "lowercase")
 )]
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderType {
     Market,
@@ -73,7 +97,19 @@ pub enum OrderType {
     StopMarket,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 pub struct Order {
     pub order_id: OrderId,
     pub order_type: OrderType,
@@ -362,6 +398,17 @@ impl ExecuteState {
         user_info: &UserInfo,
         events: &[OrderbookEvent],
     ) -> Result<(), String> {
+        self.apply_events_no_clean(user_info, events)?;
+        self.order_manager.clean(events);
+
+        Ok(())
+    }
+
+    pub fn apply_events_no_clean(
+        &mut self,
+        user_info: &UserInfo,
+        events: &[OrderbookEvent],
+    ) -> Result<(), String> {
         for event in events {
             match event {
                 OrderbookEvent::PairCreated { pair, info } => {
@@ -528,10 +575,6 @@ impl ExecuteState {
         user_info: &UserInfo,
         order: Order,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        if self.order_manager.orders.contains_key(&order.order_id) {
-            return Err(format!("Order with id {} already exists", order.order_id));
-        }
-
         let user_info_key = &user_info.get_key();
         let mut events = Vec::new();
 
@@ -698,7 +741,7 @@ impl ExecuteState {
                 } => {
                     let updated_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
                             format!(
-                                "Executed order owner info (order_id: {order_id}) not found in order manager",
+                                "Updated order owner info (order_id: {order_id}) not found in order manager",
                             )
                         })?;
 

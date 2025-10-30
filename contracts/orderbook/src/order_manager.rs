@@ -16,29 +16,12 @@ pub struct OrderManager {
     pub orders_owner: BTreeMap<OrderId, H256>,
 }
 
-#[derive(BorshSerialize, Debug, Clone, PartialEq, Eq)]
-pub struct OrderManagerView<'a> {
-    pub orders: &'a BTreeMap<OrderId, Order>,
-    pub bid_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
-    pub ask_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
-    pub orders_owner: BTreeMap<OrderId, H256>,
-}
-
 #[cfg(test)]
 mod tests;
 
 impl OrderManager {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn view<'a>(&'a self) -> OrderManagerView<'a> {
-        OrderManagerView {
-            orders: &self.orders,
-            bid_orders: &self.bid_orders,
-            ask_orders: &self.ask_orders,
-            orders_owner: Default::default(),
-        }
     }
 
     pub fn count_buy_orders(&self, pair: &Pair) -> usize {
@@ -101,8 +84,14 @@ impl OrderManager {
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn execute_order_dry_run(&self, order: &Order) -> Result<Vec<OrderbookEvent>, String> {
-        if self.orders.contains_key(&order.order_id) {
-            return Err(format!("Order with id {} already exists", order.order_id));
+        if let Some(existing_order) = self.orders.get(&order.order_id) {
+            // When loaded in the SMT, an existing order with zero quantity means it is not part of the SMT
+            if existing_order.quantity != 0 {
+                return Err(format!(
+                    "Order with id {} already exists with non-zero quantity",
+                    order.order_id
+                ));
+            }
         }
 
         let mut events = Vec::new();
@@ -279,14 +268,9 @@ impl OrderManager {
                         continue;
                     }
 
-                    if let Some(stored_order) = self.orders.get(order_id).cloned() {
-                        self.remove_order_from_orderbook(
-                            &stored_order.order_side,
-                            &stored_order.pair,
-                            stored_order.price,
-                            order_id,
-                        );
-                        self.orders.remove(order_id);
+                    if let Some(order) = self.orders.get_mut(order_id) {
+                        // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
+                        order.quantity = 0;
                     }
 
                     self.orders_owner.remove(order_id);
@@ -305,6 +289,33 @@ impl OrderManager {
         }
 
         Ok(())
+    }
+
+    pub fn clean(&mut self, events: &[OrderbookEvent]) {
+        for event in events {
+            if let OrderbookEvent::OrderExecuted {
+                order_id,
+                taker_order_id,
+                ..
+            } = event
+            {
+                if order_id == taker_order_id {
+                    continue;
+                }
+
+                if let Some(stored_order) = self.orders.get(order_id).cloned() {
+                    self.remove_order_from_orderbook(
+                        &stored_order.order_side,
+                        &stored_order.pair,
+                        stored_order.price,
+                        order_id,
+                    );
+                    self.orders.remove(order_id);
+                }
+
+                self.orders_owner.remove(order_id);
+            }
+        }
     }
 }
 

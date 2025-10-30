@@ -113,7 +113,7 @@ impl ExecuteState {
         let events = self
             .generate_permissionned_execution_events(&user_info, action, private_input)
             .map_err(|e| format!("Could not generate events: {e}"))?;
-        self.apply_events(&user_info, &events)
+        self.apply_events_no_clean(&user_info, &events)
             .map_err(|e| format!("Could not apply events to state: {e}"))?;
 
         Ok(events)
