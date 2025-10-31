@@ -129,6 +129,13 @@ pub enum OrderRetentionMode {
     FinalizeRemovals,
 }
 
+/// Defines how the order manager should collect orders
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderCollectionMode {
+    ForInitialStateWitness,
+    ForExecuting,
+}
+
 impl OrderRetentionMode {
     pub fn should_cleanup(self) -> bool {
         matches!(self, OrderRetentionMode::FinalizeRemovals)

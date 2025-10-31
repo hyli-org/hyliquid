@@ -1,10 +1,9 @@
 use sdk::merkle_utils::BorshableMerkleProof;
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
     model::{
-        Balance, Order, OrderId, OrderRetentionMode, OrderSide, OrderType, OrderbookEvent, Pair,
-        Symbol, UserInfo,
+        Balance, Order, OrderCollectionMode, OrderSide, OrderType, OrderbookEvent, Symbol, UserInfo,
     },
     transaction::PermissionnedOrderbookAction,
     zk::{
@@ -74,10 +73,11 @@ impl FullState {
         Ok((users_info_needed, balances_needed))
     }
 
+    // TODO: code factorization
     pub fn collect_orders_updates(
         &self,
         events: &[OrderbookEvent],
-        retention_mode: OrderRetentionMode,
+        collection_mode: OrderCollectionMode,
     ) -> Result<OrdersNeeded, String> {
         let mut orders_to_update: HashSet<Order> = HashSet::new();
         let mut bid_order_price_levels: HashSet<OrderPriceLevel> = HashSet::new();
@@ -86,28 +86,145 @@ impl FullState {
         for event in events.iter() {
             match event {
                 OrderbookEvent::OrderCancelled { order_id, pair } => {
-                    if let Some(order) = self.state.order_manager.orders.get(order_id) {
-                        orders_to_update.insert(order.clone());
-                        self.add_price_level_if_present(
-                            order,
-                            pair,
-                            Some(order_id),
-                            &mut bid_order_price_levels,
-                            &mut ask_order_price_levels,
-                        );
+                    let order = self
+                        .state
+                        .order_manager
+                        .orders
+                        .get(order_id)
+                        .ok_or_else(|| format!("Order cancelled {order_id} not found"))?;
+
+                    orders_to_update.insert(order.clone());
+
+                    let price = order
+                        .price
+                        .ok_or_else(|| format!("Order {order_id} has no price"))?;
+
+                    // Get the actual order queue for this price level
+                    let side_map = match order.order_side {
+                        OrderSide::Bid => &self.state.order_manager.bid_orders,
+                        OrderSide::Ask => &self.state.order_manager.ask_orders,
+                    };
+
+                    let price_map = side_map
+                        .get(pair)
+                        .ok_or_else(|| format!("Price map not found for pair {pair:?}"))?;
+
+                    let order_queue = price_map
+                        .get(&price)
+                        .ok_or_else(|| format!("Order queue not found for price {price}"))?;
+
+                    let price_level = OrderPriceLevel {
+                        pair: pair.clone(),
+                        price,
+                        order_ids: order_queue.iter().cloned().collect(),
+                    };
+
+                    match order.order_side {
+                        OrderSide::Bid => {
+                            bid_order_price_levels.insert(price_level);
+                        }
+                        OrderSide::Ask => {
+                            ask_order_price_levels.insert(price_level);
+                        }
                     }
                 }
-                OrderbookEvent::OrderExecuted { order_id, pair, .. }
-                | OrderbookEvent::OrderUpdate { order_id, pair, .. } => {
-                    if let Some(order) = self.state.order_manager.orders.get(order_id) {
-                        orders_to_update.insert(order.clone());
-                        self.add_price_level_if_present(
-                            order,
-                            pair,
-                            None,
-                            &mut bid_order_price_levels,
-                            &mut ask_order_price_levels,
-                        );
+                OrderbookEvent::OrderUpdate { order_id, pair, .. } => {
+                    // Get the order from the current state
+                    let order = self
+                        .state
+                        .order_manager
+                        .orders
+                        .get(order_id)
+                        .ok_or_else(|| format!("Order updated {order_id} not found"))?;
+
+                    orders_to_update.insert(order.clone());
+
+                    let price = order
+                        .price
+                        .ok_or_else(|| format!("Order {order_id} has no price"))?;
+
+                    // Get the actual order queue for this price level
+                    let side_map = match order.order_side {
+                        OrderSide::Bid => &self.state.order_manager.bid_orders,
+                        OrderSide::Ask => &self.state.order_manager.ask_orders,
+                    };
+
+                    let price_map = side_map
+                        .get(pair)
+                        .ok_or_else(|| format!("Price map not found for pair {pair:?}"))?;
+
+                    let order_queue = price_map
+                        .get(&price)
+                        .ok_or_else(|| format!("Order queue not found for price {price}"))?;
+
+                    let price_level = OrderPriceLevel {
+                        pair: pair.clone(),
+                        price,
+                        // Keeping this order for initial state witness
+                        order_ids: order_queue.iter().cloned().collect(),
+                    };
+
+                    match order.order_side {
+                        OrderSide::Bid => {
+                            bid_order_price_levels.insert(price_level);
+                        }
+                        OrderSide::Ask => {
+                            ask_order_price_levels.insert(price_level);
+                        }
+                    }
+                }
+                OrderbookEvent::OrderExecuted {
+                    order_id,
+                    taker_order_id,
+                    pair,
+                    ..
+                } => {
+                    if order_id == taker_order_id {
+                        // Market orders are not stored in the SMT
+                        continue;
+                    }
+
+                    // Get the order from the current state
+                    let order = self
+                        .state
+                        .order_manager
+                        .orders
+                        .get(order_id)
+                        .ok_or_else(|| format!("Order executed {order_id} not found"))?;
+
+                    orders_to_update.insert(order.clone());
+
+                    let price = order
+                        .price
+                        .ok_or_else(|| format!("Order {order_id} has no price"))?;
+
+                    // Get the actual order queue for this price level
+                    let side_map = match order.order_side {
+                        OrderSide::Bid => &self.state.order_manager.bid_orders,
+                        OrderSide::Ask => &self.state.order_manager.ask_orders,
+                    };
+
+                    let price_map = side_map
+                        .get(pair)
+                        .ok_or_else(|| format!("Price map not found for pair {pair:?}"))?;
+
+                    let order_queue = price_map
+                        .get(&price)
+                        .ok_or_else(|| format!("Order queue not found for price {price}"))?;
+
+                    let price_level = OrderPriceLevel {
+                        pair: pair.clone(),
+                        price,
+                        order_ids: order_queue.iter().cloned().collect(),
+                    };
+
+                    match order.order_side {
+                        OrderSide::Bid => {
+                            bid_order_price_levels.insert(price_level);
+                        }
+                        OrderSide::Ask => {
+                            ask_order_price_levels.insert(price_level);
+                        }
                     }
                 }
                 OrderbookEvent::OrderCreated { order } => {
@@ -117,33 +234,38 @@ impl FullState {
                     }
 
                     let mut created_order = order.clone();
-                    if retention_mode.should_annihilate_created_order() {
+                    if matches!(collection_mode, OrderCollectionMode::ForInitialStateWitness) {
                         // Quantity at 0 will make the SMT value be zeroed out. This is necessary to prove the order's non-existence in the tree
                         created_order.quantity = 0;
                     }
                     orders_to_update.insert(created_order);
 
-                    if !self.add_price_level_if_present(
-                        order,
-                        &order.pair,
-                        None,
-                        &mut bid_order_price_levels,
-                        &mut ask_order_price_levels,
-                    ) {
-                        if let Some(price) = order.price {
-                            let price_level = OrderPriceLevel {
-                                pair: order.pair.clone(),
-                                price,
-                                order_ids: Vec::new(),
-                            };
-                            match order.order_side {
-                                OrderSide::Bid => {
-                                    bid_order_price_levels.insert(price_level);
-                                }
-                                OrderSide::Ask => {
-                                    ask_order_price_levels.insert(price_level);
-                                }
-                            }
+                    let price = order
+                        .price
+                        .ok_or_else(|| format!("Order {} has no price", order.order_id))?;
+
+                    // Get the actual order queue for this price level
+                    let side_map = match order.order_side {
+                        OrderSide::Bid => &self.state.order_manager.bid_orders,
+                        OrderSide::Ask => &self.state.order_manager.ask_orders,
+                    };
+
+                    let price_map = side_map.get(&order.pair).cloned().unwrap_or_default();
+
+                    let order_queue = price_map.get(&price).cloned().unwrap_or_default();
+
+                    let price_level = OrderPriceLevel {
+                        pair: order.pair.clone(),
+                        price,
+                        order_ids: order_queue.iter().cloned().collect(),
+                    };
+
+                    match order.order_side {
+                        OrderSide::Bid => {
+                            bid_order_price_levels.insert(price_level);
+                        }
+                        OrderSide::Ask => {
+                            ask_order_price_levels.insert(price_level);
                         }
                     }
                 }
@@ -155,70 +277,6 @@ impl FullState {
             bid_order_price_levels,
             ask_order_price_levels,
         ))
-    }
-
-    fn add_price_level_if_present(
-        &self,
-        order: &Order,
-        pair: &Pair,
-        exclude_order_id: Option<&OrderId>,
-        bid_levels: &mut HashSet<OrderPriceLevel>,
-        ask_levels: &mut HashSet<OrderPriceLevel>,
-    ) -> bool {
-        if let Some(price_level) = self.price_level_for_order(order, pair, exclude_order_id) {
-            match order.order_side {
-                OrderSide::Bid => {
-                    bid_levels.insert(price_level);
-                }
-                OrderSide::Ask => {
-                    ask_levels.insert(price_level);
-                }
-            }
-            true
-        } else {
-            false
-        }
-    }
-
-    fn price_level_for_order(
-        &self,
-        order: &Order,
-        pair: &Pair,
-        exclude_order_id: Option<&OrderId>,
-    ) -> Option<OrderPriceLevel> {
-        let price = order.price?;
-        let side_map = match order.order_side {
-            OrderSide::Bid => &self.state.order_manager.bid_orders,
-            OrderSide::Ask => &self.state.order_manager.ask_orders,
-        };
-
-        let price_map = side_map.get(pair)?;
-        let order_queue = price_map.get(&price)?;
-        let order_ids = Self::collect_order_ids(order_queue, exclude_order_id);
-
-        Some(OrderPriceLevel {
-            pair: pair.clone(),
-            price,
-            order_ids,
-        })
-    }
-
-    fn collect_order_ids(
-        queue: &VecDeque<OrderId>,
-        exclude_order_id: Option<&OrderId>,
-    ) -> Vec<OrderId> {
-        match exclude_order_id {
-            Some(exclude) => {
-                let mut order_ids = Vec::with_capacity(queue.len().saturating_sub(1));
-                for order_id in queue {
-                    if order_id != exclude {
-                        order_ids.push(order_id.clone());
-                    }
-                }
-                order_ids
-            }
-            None => queue.iter().cloned().collect(),
-        }
     }
 
     fn create_users_info_witness(
@@ -365,16 +423,19 @@ impl FullState {
         // We collect order updates...
         // NB: We MUST include created order with quantity set to 0. This will prove their non-existence in the SMT
         // This is handled by retaining zeroed orders for proof generation.
-        let (orders_to_update, bid_order_price_levels, ask_order_price_levels) =
-            self.collect_orders_updates(events, OrderRetentionMode::RetainForProof)?;
+        let (
+            orders_initial_state,
+            bid_order_price_levels_initial_state,
+            ask_order_price_levels_initial_state,
+        ) = self.collect_orders_updates(events, OrderCollectionMode::ForInitialStateWitness)?;
 
         // ... and compute their witnesses
         let order_manager = self
             .order_manager_mt
             .create_orders_witnesses(
-                orders_to_update,
-                bid_order_price_levels,
-                ask_order_price_levels,
+                orders_initial_state,
+                bid_order_price_levels_initial_state,
+                ask_order_price_levels_initial_state,
                 orders_owner,
             )
             .map_err(|e| format!("Failed to build order manager witness: {e}"))?;
@@ -439,7 +500,7 @@ impl FullState {
         }
 
         let (orders_to_update, bid_order_price_levels, ask_order_price_levels) =
-            self.collect_orders_updates(&events, OrderRetentionMode::FinalizeRemovals)?;
+            self.collect_orders_updates(&events, OrderCollectionMode::ForExecuting)?;
 
         // Update order manager SMT
         self.order_manager_mt
