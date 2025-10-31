@@ -130,20 +130,20 @@ fn run_action(
         let metadata_state: ZkVmState =
             borsh::from_slice(&commitment_metadata).expect("decode zkvm metadata");
         let err = String::from_utf8_lossy(&hyli_output.program_outputs);
+        let known_owners = full
+            .state
+            .order_manager
+            .orders_owner
+            .values()
+            .collect::<Vec<_>>();
+        let metadata_owners = metadata_state
+            .order_manager
+            .orders_owner
+            .keys()
+            .collect::<Vec<_>>();
         panic!(
-            "execution failed for action {action_repr}: {hyli_output:?}; known owners: {:?}; metadata owners: {:?}, err: {err}",
-            full
-                .state
-                .order_manager
-                .orders_owner
-                .keys()
-                .collect::<Vec<_>>(),
-                metadata_state
-                .order_manager
-                .orders_owner
-                .keys()
-                .collect::<Vec<_>>()
-            );
+            "execution failed for action {action_repr}: {hyli_output:?}; known owners: {known_owners:?}; metadata owners: {metadata_owners:?}, err: {err}",
+        );
     }
 
     let full_commit = full.commit();
@@ -1311,7 +1311,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
         .escape(&last_block_number, &calldata, &light_user_info)
         .expect("light escape should succeed");
     light
-        .apply_events(&light_user_info, &events_light)
+        .apply_events_with_cleanup(&light_user_info, &events_light)
         .expect("Could not apply light escape events");
 
     let events_full = full
@@ -1319,7 +1319,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
         .escape(&last_block_number, &calldata, &full_user_info)
         .expect("full escape should succeed");
     full.state
-        .apply_events(&full_user_info, &events_full)
+        .apply_events_with_cleanup(&full_user_info, &events_full)
         .expect("Could not apply full escape events");
 
     let cancelled_events_light = events_light

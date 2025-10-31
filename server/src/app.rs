@@ -197,7 +197,7 @@ impl OrderbookModule {
                 .map_err(|e| anyhow!("Failed to apply deposit on orderbook: {e}"))?;
 
             orderbook
-                .apply_events(&user_info, &events)
+                .apply_events_with_cleanup(&user_info, &events)
                 .map_err(|e| anyhow!("Failed to update orderbook state after deposit: {e}"))?;
 
             (user_info, events)
@@ -475,7 +475,7 @@ async fn create_pair(
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         orderbook
-            .apply_events(&user_info, &events)
+            .apply_events_with_cleanup(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -531,7 +531,7 @@ async fn add_session_key(
         };
 
         orderbook
-            .apply_events(&user_info, &events)
+            .apply_events_with_cleanup(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
         (user_info, events)
     };
@@ -577,7 +577,7 @@ async fn deposit(
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         orderbook
-            .apply_events(&user_info, &events)
+            .apply_events_with_cleanup(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -642,7 +642,7 @@ async fn create_order(
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         orderbook
-            .apply_events(&user_info, &events)
+            .apply_events_with_cleanup(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -720,7 +720,7 @@ async fn cancel_order(
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         orderbook
-            .apply_events(&user_info, &events)
+            .apply_events_with_cleanup(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)
@@ -800,7 +800,7 @@ async fn withdraw(
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         orderbook
-            .apply_events(&user_info, &events)
+            .apply_events_with_cleanup(&user_info, &events)
             .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
         (user_info, events)

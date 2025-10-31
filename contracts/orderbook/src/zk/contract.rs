@@ -115,7 +115,7 @@ impl sdk::ZkContract for ZkVmState {
                         let events = state.escape(&self.last_block_number, calldata, &user_info)?;
 
                         state
-                            .apply_events(&user_info, &events)
+                            .apply_events_preserving_zeroed_orders(&user_info, &events)
                             .map_err(|e| format!("Could not apply events to state: {e}"))?;
 
                         events

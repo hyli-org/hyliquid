@@ -1,4 +1,6 @@
-use crate::model::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
+use crate::model::{
+    Order, OrderId, OrderRetentionMode, OrderSide, OrderType, OrderbookEvent, Pair,
+};
 use crate::zk::H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -219,6 +221,7 @@ impl OrderManager {
         &mut self,
         user_info_key: H256,
         events: &[OrderbookEvent],
+        retention_mode: OrderRetentionMode,
     ) -> Result<(), String> {
         for event in events {
             match event {
@@ -245,18 +248,13 @@ impl OrderManager {
                         .or_insert(user_info_key);
                 }
                 OrderbookEvent::OrderCancelled { order_id, .. } => {
-                    let stored_order =
-                        self.orders.get(order_id).cloned().ok_or_else(|| {
-                            format!("Order {order_id} not found for cancellation")
-                        })?;
+                    let order = self.orders.get_mut(order_id).ok_or_else(|| {
+                        format!("OrderCancelled event missing order {order_id}").to_string()
+                    })?;
 
-                    self.remove_order_from_orderbook(
-                        &stored_order.order_side,
-                        &stored_order.pair,
-                        stored_order.price,
-                        order_id,
-                    );
-                    self.orders.remove(order_id);
+                    // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
+                    order.quantity = 0;
+
                     self.orders_owner.remove(order_id);
                 }
                 OrderbookEvent::OrderExecuted {
@@ -288,32 +286,51 @@ impl OrderManager {
             }
         }
 
+        if retention_mode.should_cleanup() {
+            self.clean(events);
+        }
+
         Ok(())
     }
 
     pub fn clean(&mut self, events: &[OrderbookEvent]) {
         for event in events {
-            if let OrderbookEvent::OrderExecuted {
-                order_id,
-                taker_order_id,
-                ..
-            } = event
-            {
-                if order_id == taker_order_id {
-                    continue;
-                }
+            match event {
+                OrderbookEvent::OrderExecuted {
+                    order_id,
+                    taker_order_id,
+                    ..
+                } => {
+                    if order_id == taker_order_id {
+                        continue;
+                    }
 
-                if let Some(stored_order) = self.orders.get(order_id).cloned() {
-                    self.remove_order_from_orderbook(
-                        &stored_order.order_side,
-                        &stored_order.pair,
-                        stored_order.price,
-                        order_id,
-                    );
-                    self.orders.remove(order_id);
-                }
+                    if let Some(stored_order) = self.orders.get(order_id).cloned() {
+                        self.remove_order_from_orderbook(
+                            &stored_order.order_side,
+                            &stored_order.pair,
+                            stored_order.price,
+                            order_id,
+                        );
+                        self.orders.remove(order_id);
+                    }
 
-                self.orders_owner.remove(order_id);
+                    self.orders_owner.remove(order_id);
+                }
+                OrderbookEvent::OrderCancelled { order_id, .. } => {
+                    if let Some(stored_order) = self.orders.get(order_id).cloned() {
+                        self.remove_order_from_orderbook(
+                            &stored_order.order_side,
+                            &stored_order.pair,
+                            stored_order.price,
+                            order_id,
+                        );
+                        self.orders.remove(order_id);
+                    }
+
+                    self.orders_owner.remove(order_id);
+                }
+                _ => {}
             }
         }
     }
@@ -528,7 +545,7 @@ impl OrderManager {
         order: &Order,
     ) -> Result<Vec<OrderbookEvent>, String> {
         let events = self.execute_order_dry_run(order)?;
-        self.apply_events(*user_info_key, &events)?;
+        self.apply_events(*user_info_key, &events, OrderRetentionMode::RetainForProof)?;
 
         Ok(events)
     }

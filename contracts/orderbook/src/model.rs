@@ -119,6 +119,26 @@ pub struct Order {
     pub quantity: u64,
 }
 
+/// Defines how the order manager should retain or clean zeroed orders and how events should be
+/// reflected in auxiliary structures (e.g. SMT updates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderRetentionMode {
+    /// Keep cancelled/executed orders with quantity = 0 so that proofs can reference them.
+    RetainForProof,
+    /// Remove cancelled/executed orders from the in-memory structures once processing is done.
+    FinalizeRemovals,
+}
+
+impl OrderRetentionMode {
+    pub fn should_cleanup(self) -> bool {
+        matches!(self, OrderRetentionMode::FinalizeRemovals)
+    }
+
+    pub fn should_annihilate_created_order(self) -> bool {
+        matches!(self, OrderRetentionMode::RetainForProof)
+    }
+}
+
 pub type OrderId = String;
 pub type Symbol = String;
 pub type Pair = (Symbol, Symbol);
@@ -372,7 +392,7 @@ impl ExecuteState {
 
         for (pair, info) in pairs_info {
             let events = orderbook.create_pair(&pair, &info)?;
-            orderbook.apply_events(&UserInfo::default(), &events)?;
+            orderbook.apply_events_with_cleanup(&UserInfo::default(), &events)?;
         }
 
         Ok(orderbook)
@@ -393,21 +413,30 @@ impl ExecuteState {
         self.order_manager.orders.clone()
     }
 
-    pub fn apply_events(
+    /// Applies events and removes zeroed orders from the manager, keeping only the live view.
+    pub fn apply_events_with_cleanup(
         &mut self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
     ) -> Result<(), String> {
-        self.apply_events_no_clean(user_info, events)?;
-        self.order_manager.clean(events);
-
-        Ok(())
+        self.apply_events_with_mode(user_info, events, OrderRetentionMode::FinalizeRemovals)
     }
 
-    pub fn apply_events_no_clean(
+    /// Applies events but keeps zeroed orders so that later steps (e.g. SMT updates or rollbacks)
+    /// can inspect the intermediate state.
+    pub fn apply_events_preserving_zeroed_orders(
         &mut self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
+    ) -> Result<(), String> {
+        self.apply_events_with_mode(user_info, events, OrderRetentionMode::RetainForProof)
+    }
+
+    fn apply_events_with_mode(
+        &mut self,
+        user_info: &UserInfo,
+        events: &[OrderbookEvent],
+        retention_mode: OrderRetentionMode,
     ) -> Result<(), String> {
         for event in events {
             match event {
@@ -461,7 +490,8 @@ impl ExecuteState {
             }
         }
 
-        self.order_manager.apply_events(user_info.get_key(), events)
+        self.order_manager
+            .apply_events(user_info.get_key(), events, retention_mode)
     }
 
     pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {
