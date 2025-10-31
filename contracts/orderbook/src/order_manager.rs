@@ -85,78 +85,18 @@ impl OrderManager {
             .or_default()
     }
 
-    /// Inserts a new order into the appropriate data structures
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn insert_order(
-        &mut self,
-        order: &Order,
-        user_info_key: &H256,
-    ) -> Result<Vec<OrderbookEvent>, String> {
-        // Function only called for Limit orders
-        let price = order.price.ok_or("Price cannot be None for limit orders")?;
-        if price == 0 {
-            return Err("Price cannot be zero".to_string());
-        }
-
-        let order_list = self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
-
-        order_list.push_back(order.order_id.clone());
-
-        self.orders.insert(order.order_id.clone(), order.clone());
-
-        // Keep track of the order owner
-        // Only useful in server execution
-        self.orders_owner
-            .insert(order.order_id.clone(), *user_info_key);
-
-        Ok(vec![OrderbookEvent::OrderCreated {
-            order: order.clone(),
-        }])
-    }
-
     /// Cancels an order and removes it from data structures
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn cancel_order(&mut self, order_id: &OrderId) -> Result<Vec<OrderbookEvent>, String> {
+    pub fn cancel_order_dry_run(&self, order_id: &OrderId) -> Result<Vec<OrderbookEvent>, String> {
         let order = self
             .orders
             .get(order_id)
-            .ok_or(format!("Order {order_id} not found"))?
-            .clone();
-        let price = order.price.ok_or("Price cannot be None for limit orders")?;
-
-        // Remove the order from storage
-        self.orders.remove(order_id);
-
-        // Remove from order lists
-        let order_list = self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
-        order_list.retain(|id| id != order_id);
-
-        if order_list.is_empty() {
-            self.side_map_mut(&order.order_side)
-                .get_mut(&order.pair)
-                .map(|v| v.remove(&price));
-        }
-
-        // Remove owner mapping
-        self.orders_owner.remove(order_id);
+            .ok_or_else(|| format!("Order {order_id} not found"))?;
 
         Ok(vec![OrderbookEvent::OrderCancelled {
             order_id: order_id.clone(),
-            pair: order.pair,
+            pair: order.pair.clone(),
         }])
-    }
-
-    /// Executes an order and returns generated events
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn execute_order(
-        &mut self,
-        user_info_key: &H256,
-        order: &Order,
-    ) -> Result<Vec<OrderbookEvent>, String> {
-        let events = self.execute_order_dry_run(order)?;
-        self.apply_events(*user_info_key, &events)?;
-
-        Ok(events)
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
@@ -538,6 +478,82 @@ impl OrderManager {
     }
 }
 
+/// Impl of functions for testing purposes
+impl OrderManager {
+    /// Inserts a new order into the appropriate data structures
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn insert_order(
+        &mut self,
+        order: &Order,
+        user_info_key: &H256,
+    ) -> Result<Vec<OrderbookEvent>, String> {
+        // Function only called for Limit orders
+        let price = order.price.ok_or("Price cannot be None for limit orders")?;
+        if price == 0 {
+            return Err("Price cannot be zero".to_string());
+        }
+
+        let order_list = self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+
+        order_list.push_back(order.order_id.clone());
+
+        self.orders.insert(order.order_id.clone(), order.clone());
+
+        // Keep track of the order owner
+        // Only useful in server execution
+        self.orders_owner
+            .insert(order.order_id.clone(), *user_info_key);
+
+        Ok(vec![OrderbookEvent::OrderCreated {
+            order: order.clone(),
+        }])
+    }
+
+    /// Executes an order and returns generated events
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn execute_order(
+        &mut self,
+        user_info_key: &H256,
+        order: &Order,
+    ) -> Result<Vec<OrderbookEvent>, String> {
+        let events = self.execute_order_dry_run(order)?;
+        self.apply_events(*user_info_key, &events)?;
+
+        Ok(events)
+    }
+
+    /// Cancels an order and removes it from data structures
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn cancel_order(&mut self, order_id: &OrderId) -> Result<Vec<OrderbookEvent>, String> {
+        let order = self
+            .orders
+            .get(order_id)
+            .ok_or(format!("Order {order_id} not found"))?
+            .clone();
+        let price = order.price.ok_or("Price cannot be None for limit orders")?;
+
+        // Remove the order from storage
+        self.orders.remove(order_id);
+
+        // Remove from order lists
+        let order_list = self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+        order_list.retain(|id| id != order_id);
+
+        if order_list.is_empty() {
+            self.side_map_mut(&order.order_side)
+                .get_mut(&order.pair)
+                .map(|v| v.remove(&price));
+        }
+
+        // Remove owner mapping
+        self.orders_owner.remove(order_id);
+
+        Ok(vec![OrderbookEvent::OrderCancelled {
+            order_id: order_id.clone(),
+            pair: order.pair,
+        }])
+    }
+}
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Default)]

@@ -817,7 +817,7 @@ impl ExecuteState {
     }
 
     pub fn escape(
-        &mut self,
+        &self,
         last_block_number: &BlockHeight,
         calldata: &sdk::Calldata,
         user_info: &UserInfo,
@@ -857,7 +857,7 @@ impl ExecuteState {
 
         for order in user_orders {
             // Cancel order
-            events.extend(self.order_manager.cancel_order(&order.order_id)?);
+            events.extend(self.order_manager.cancel_order_dry_run(&order.order_id)?);
             let required_symbol = match &order.order_side {
                 OrderSide::Bid => order.pair.1.clone(),
                 OrderSide::Ask => order.pair.0.clone(),
@@ -870,9 +870,6 @@ impl ExecuteState {
         // Update all balances in the SMT
         for (symbol, balance) in user_balances {
             // Remove all balance from user
-            self.update_balances(&symbol, vec![(user_info.get_key(), Balance(0))])
-                .map_err(|e| e.to_string())?;
-
             events.push(OrderbookEvent::BalanceUpdated {
                 user: user_info.user.clone(),
                 symbol: symbol.to_string(),
