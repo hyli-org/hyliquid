@@ -111,7 +111,13 @@ impl sdk::ZkContract for ZkVmState {
                         if user_key != std::convert::Into::<[u8; 32]>::into(user_info.get_key()) {
                             panic!("User info does not correspond with user_key used")
                         }
-                        state.escape(&self.last_block_number, calldata, &user_info)?
+                        let events = state.escape(&self.last_block_number, calldata, &user_info)?;
+
+                        state
+                            .apply_events(&user_info, &events)
+                            .map_err(|e| format!("Could not apply events to state: {e}"))?;
+
+                        events
                     }
                 }
             }
