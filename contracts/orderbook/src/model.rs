@@ -395,7 +395,7 @@ impl ExecuteState {
 
         for (pair, info) in pairs_info {
             let events = orderbook.create_pair(&pair, &info)?;
-            orderbook.apply_events_with_cleanup(&UserInfo::default(), &events)?;
+            orderbook.apply_events(&UserInfo::default(), &events)?;
         }
 
         Ok(orderbook)
@@ -417,7 +417,7 @@ impl ExecuteState {
     }
 
     /// Applies events and removes zeroed orders from the manager, keeping only the live view.
-    pub fn apply_events_with_cleanup(
+    pub fn apply_events(
         &mut self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],

@@ -1361,7 +1361,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
         .escape(&last_block_number, &calldata, &light_user_info)
         .expect("light escape should succeed");
     light
-        .apply_events_with_cleanup(&light_user_info, &events_light)
+        .apply_events(&light_user_info, &events_light)
         .expect("Could not apply light escape events");
 
     let events_full = full
@@ -1369,7 +1369,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
         .escape(&last_block_number, &calldata, &full_user_info)
         .expect("full escape should succeed");
     full.state
-        .apply_events_with_cleanup(&full_user_info, &events_full)
+        .apply_events(&full_user_info, &events_full)
         .expect("Could not apply full escape events");
 
     let cancelled_events_light = events_light
