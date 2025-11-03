@@ -273,12 +273,17 @@ impl OrderbookClient {
 
         let request = GooseRequest::builder().set_request_builder(builder).build();
 
-        let response = user.request(request).await?;
-        let response = response.response?;
+        let goose_response = user.request(request).await?;
+        let response = goose_response.response?;
         if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            tracing::error!("create_order failed with status {status}: {error_text}");
+            tracing::error!(
+                "create_order failed with status {}: {}",
+                response.status(),
+                response.text().await.unwrap_or_default()
+            );
+            return Err(Box::new(TransactionError::RequestFailed {
+                raw_request: goose_response.request,
+            }));
         }
 
         Ok(())
@@ -356,8 +361,8 @@ impl OrderbookClient {
             let base_symbol = pair.0.clone();
             let quote_symbol = pair.1.clone();
             CreatePairRequest {
-                base_contract: base_symbol,
-                quote_contract: quote_symbol,
+                base_contract: base_symbol.to_lowercase(),
+                quote_contract: quote_symbol.to_lowercase(),
             }
         };
 

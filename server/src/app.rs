@@ -18,7 +18,7 @@ use borsh::BorshSerialize;
 use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
-    log_error, module_bus_client, module_handle_messages,
+    log_error, log_warn, module_bus_client, module_handle_messages,
     modules::{BuildApiContextInner, Module},
 };
 use hyli_smt_token::SmtTokenAction;
@@ -637,13 +637,21 @@ async fn create_order(
             )
         })?;
 
-        let events = orderbook
-            .execute_order(&user_info, request.clone())
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        let events = log_warn!(
+            orderbook
+                .execute_order(&user_info, request.clone())
+                .map_err(|e| anyhow::anyhow!(e)),
+            "Failed to execute order"
+        )
+        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
 
-        orderbook
-            .apply_events(&user_info, &events)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        log_error!(
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| anyhow::anyhow!(e)),
+            "Failed to apply events"
+        )
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
 
         (user_info, events)
     };

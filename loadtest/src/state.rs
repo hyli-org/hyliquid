@@ -180,6 +180,11 @@ impl UserState {
         current
     }
 
+    /// Revert the nonce to the previous value
+    pub fn revert_nonce(&mut self) {
+        self.nonce -= 1;
+    }
+
     /// Generate a unique order ID
     pub fn generate_order_id(&self, prefix: &str) -> String {
         format!(
