@@ -51,7 +51,19 @@ pub struct PairInfo {
     feature = "sqlx",
     sqlx(type_name = "order_side", rename_all = "lowercase")
 )]
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderSide {
     Bid, // Buy
@@ -63,7 +75,19 @@ pub enum OrderSide {
     feature = "sqlx",
     sqlx(type_name = "order_type", rename_all = "lowercase")
 )]
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum OrderType {
     Market,
@@ -73,7 +97,19 @@ pub enum OrderType {
     StopMarket,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, BorshSerialize, BorshDeserialize, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Serialize,
+    Deserialize,
+    Clone,
+    BorshSerialize,
+    BorshDeserialize,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+)]
 pub struct Order {
     pub order_id: OrderId,
     pub order_type: OrderType,
@@ -81,6 +117,29 @@ pub struct Order {
     pub price: Option<u64>,
     pub pair: Pair,
     pub quantity: u64,
+}
+
+/// Defines how the order manager should retain or clean zeroed orders and how events should be
+/// reflected in auxiliary structures (e.g. SMT updates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderRetentionMode {
+    /// Keep cancelled/executed orders with quantity = 0 so that proofs can reference them.
+    RetainForProof,
+    /// Remove cancelled/executed orders from the in-memory structures once processing is done.
+    FinalizeRemovals,
+}
+
+/// Defines how the order manager should collect orders
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrderCollectionMode {
+    ForInitialStateWitness,
+    ForExecuting,
+}
+
+impl OrderRetentionMode {
+    pub fn should_cleanup(self) -> bool {
+        matches!(self, OrderRetentionMode::FinalizeRemovals)
+    }
 }
 
 pub type OrderId = String;
@@ -357,10 +416,30 @@ impl ExecuteState {
         self.order_manager.orders.clone()
     }
 
+    /// Applies events and removes zeroed orders from the manager, keeping only the live view.
     pub fn apply_events(
         &mut self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
+    ) -> Result<(), String> {
+        self.apply_events_with_mode(user_info, events, OrderRetentionMode::FinalizeRemovals)
+    }
+
+    /// Applies events but keeps zeroed orders so that later steps (e.g. SMT updates or rollbacks)
+    /// can inspect the intermediate state.
+    pub fn apply_events_preserving_zeroed_orders(
+        &mut self,
+        user_info: &UserInfo,
+        events: &[OrderbookEvent],
+    ) -> Result<(), String> {
+        self.apply_events_with_mode(user_info, events, OrderRetentionMode::RetainForProof)
+    }
+
+    fn apply_events_with_mode(
+        &mut self,
+        user_info: &UserInfo,
+        events: &[OrderbookEvent],
+        retention_mode: OrderRetentionMode,
     ) -> Result<(), String> {
         for event in events {
             match event {
@@ -414,7 +493,8 @@ impl ExecuteState {
             }
         }
 
-        self.order_manager.apply_events(user_info.get_key(), events)
+        self.order_manager
+            .apply_events(user_info.get_key(), events, retention_mode)
     }
 
     pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {
@@ -528,10 +608,6 @@ impl ExecuteState {
         user_info: &UserInfo,
         order: Order,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        if self.order_manager.orders.contains_key(&order.order_id) {
-            return Err(format!("Order with id {} already exists", order.order_id));
-        }
-
         let user_info_key = &user_info.get_key();
         let mut events = Vec::new();
 
@@ -698,7 +774,7 @@ impl ExecuteState {
                 } => {
                     let updated_order_user_info = self.order_manager.orders_owner.get(order_id).ok_or_else(|| {
                             format!(
-                                "Executed order owner info (order_id: {order_id}) not found in order manager",
+                                "Updated order owner info (order_id: {order_id}) not found in order manager",
                             )
                         })?;
 

@@ -1,4 +1,6 @@
-use crate::model::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
+use crate::model::{
+    Order, OrderId, OrderRetentionMode, OrderSide, OrderType, OrderbookEvent, Pair,
+};
 use crate::zk::H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use std::collections::{BTreeMap, VecDeque};
@@ -16,29 +18,12 @@ pub struct OrderManager {
     pub orders_owner: BTreeMap<OrderId, H256>,
 }
 
-#[derive(BorshSerialize, Debug, Clone, PartialEq, Eq)]
-pub struct OrderManagerView<'a> {
-    pub orders: &'a BTreeMap<OrderId, Order>,
-    pub bid_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
-    pub ask_orders: &'a BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
-    pub orders_owner: BTreeMap<OrderId, H256>,
-}
-
 #[cfg(test)]
 mod tests;
 
 impl OrderManager {
     pub fn new() -> Self {
         Self::default()
-    }
-
-    pub fn view<'a>(&'a self) -> OrderManagerView<'a> {
-        OrderManagerView {
-            orders: &self.orders,
-            bid_orders: &self.bid_orders,
-            ask_orders: &self.ask_orders,
-            orders_owner: Default::default(),
-        }
     }
 
     pub fn count_buy_orders(&self, pair: &Pair) -> usize {
@@ -101,8 +86,14 @@ impl OrderManager {
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn execute_order_dry_run(&self, order: &Order) -> Result<Vec<OrderbookEvent>, String> {
-        if self.orders.contains_key(&order.order_id) {
-            return Err(format!("Order with id {} already exists", order.order_id));
+        if let Some(existing_order) = self.orders.get(&order.order_id) {
+            // When loaded in the SMT, an existing order with zero quantity means it is not part of the SMT
+            if existing_order.quantity != 0 {
+                return Err(format!(
+                    "Order with id {} already exists with non-zero quantity",
+                    order.order_id
+                ));
+            }
         }
 
         let mut events = Vec::new();
@@ -230,6 +221,7 @@ impl OrderManager {
         &mut self,
         user_info_key: H256,
         events: &[OrderbookEvent],
+        retention_mode: OrderRetentionMode,
     ) -> Result<(), String> {
         for event in events {
             match event {
@@ -256,18 +248,26 @@ impl OrderManager {
                         .or_insert(user_info_key);
                 }
                 OrderbookEvent::OrderCancelled { order_id, .. } => {
-                    let stored_order =
-                        self.orders.get(order_id).cloned().ok_or_else(|| {
-                            format!("Order {order_id} not found for cancellation")
-                        })?;
+                    let order = self
+                        .orders
+                        .get(order_id)
+                        .ok_or_else(|| {
+                            format!("OrderCancelled event missing order {order_id}").to_string()
+                        })?
+                        .clone();
 
-                    self.remove_order_from_orderbook(
-                        &stored_order.order_side,
-                        &stored_order.pair,
-                        stored_order.price,
-                        order_id,
-                    );
-                    self.orders.remove(order_id);
+                    // Remove order from price level
+                    if let Some(price) = order.price {
+                        let order_list =
+                            self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+                        // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
+                        order_list.retain(|id| id != order_id);
+                    }
+
+                    // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
+                    let order_mut = self.orders.get_mut(order_id).unwrap();
+                    order_mut.quantity = 0;
+
                     self.orders_owner.remove(order_id);
                 }
                 OrderbookEvent::OrderExecuted {
@@ -279,15 +279,26 @@ impl OrderManager {
                         continue;
                     }
 
-                    if let Some(stored_order) = self.orders.get(order_id).cloned() {
-                        self.remove_order_from_orderbook(
-                            &stored_order.order_side,
-                            &stored_order.pair,
-                            stored_order.price,
-                            order_id,
-                        );
-                        self.orders.remove(order_id);
+                    let order = self
+                        .orders
+                        .get(order_id)
+                        .ok_or_else(|| {
+                            format!("OrderExecuted event missing order {order_id}").to_string()
+                        })?
+                        .clone();
+
+                    // Remove order from price level
+                    if let Some(price) = order.price {
+                        let order_list =
+                            self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+
+                        // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
+                        order_list.retain(|id| id != order_id);
                     }
+
+                    // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
+                    let order_mut = self.orders.get_mut(order_id).unwrap();
+                    order_mut.quantity = 0;
 
                     self.orders_owner.remove(order_id);
                 }
@@ -296,44 +307,68 @@ impl OrderManager {
                     remaining_quantity,
                     ..
                 } => {
-                    if let Some(order) = self.orders.get_mut(order_id) {
-                        order.quantity = *remaining_quantity;
-                    }
+                    let order = self.orders.get_mut(order_id).ok_or_else(|| {
+                        format!("OrderUpdate event missing order {order_id}").to_string()
+                    })?;
+                    order.quantity = *remaining_quantity;
                 }
                 _ => {}
             }
         }
 
+        if retention_mode.should_cleanup() {
+            self.clean(events);
+        }
+
         Ok(())
+    }
+
+    pub fn clean(&mut self, events: &[OrderbookEvent]) {
+        for event in events {
+            match event {
+                OrderbookEvent::OrderExecuted {
+                    order_id,
+                    taker_order_id,
+                    ..
+                } => {
+                    if order_id == taker_order_id {
+                        continue;
+                    }
+
+                    if let Some(stored_order) = self.orders.get(order_id).cloned() {
+                        self.clean_empty_price_levels(&stored_order.order_side, &stored_order.pair);
+                        self.orders.remove(order_id);
+                    }
+
+                    self.orders_owner.remove(order_id);
+                }
+                OrderbookEvent::OrderCancelled { order_id, .. } => {
+                    if let Some(stored_order) = self.orders.get(order_id).cloned() {
+                        self.clean_empty_price_levels(&stored_order.order_side, &stored_order.pair);
+                        self.orders.remove(order_id);
+                    }
+
+                    self.orders_owner.remove(order_id);
+                }
+                _ => {}
+            }
+        }
     }
 }
 
 impl OrderManager {
-    fn remove_order_from_orderbook(
-        &mut self,
-        side: &OrderSide,
-        pair: &Pair,
-        price: Option<u64>,
-        order_id: &OrderId,
-    ) {
-        if let Some(price) = price {
-            let side_book = self.side_map_mut(side);
-            let should_remove_pair = if let Some(price_levels) = side_book.get_mut(pair) {
-                if let Some(order_ids) = price_levels.get_mut(&price) {
-                    order_ids.retain(|existing_id| existing_id != order_id);
-                    if order_ids.is_empty() {
-                        price_levels.remove(&price);
-                    }
-                }
+    fn clean_empty_price_levels(&mut self, side: &OrderSide, pair: &Pair) {
+        let side_book = self.side_map_mut(side);
+        let should_remove_pair = if let Some(price_levels) = side_book.get_mut(pair) {
+            // Remove empty price levels
+            price_levels.retain(|_, order_ids| !order_ids.is_empty());
+            price_levels.is_empty()
+        } else {
+            false
+        };
 
-                price_levels.is_empty()
-            } else {
-                false
-            };
-
-            if should_remove_pair {
-                side_book.remove(pair);
-            }
+        if should_remove_pair {
+            side_book.remove(pair);
         }
     }
 
@@ -517,7 +552,7 @@ impl OrderManager {
         order: &Order,
     ) -> Result<Vec<OrderbookEvent>, String> {
         let events = self.execute_order_dry_run(order)?;
-        self.apply_events(*user_info_key, &events)?;
+        self.apply_events(*user_info_key, &events, OrderRetentionMode::RetainForProof)?;
 
         Ok(events)
     }

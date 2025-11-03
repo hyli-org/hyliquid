@@ -5,7 +5,10 @@ use sdk::merkle_utils::SHA256Hasher;
 use sha2::{Digest, Sha256};
 use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkleTree, H256};
 
-use crate::model::{Balance, UserInfo};
+use crate::{
+    model::{Balance, Order, OrderSide, OrderType, UserInfo},
+    zk::order_merkle::OrderPriceLevel,
+};
 
 #[derive(
     Debug, Default, Clone, BorshSerialize, BorshDeserialize, Eq, PartialEq, PartialOrd, Ord, Hash,
@@ -108,6 +111,83 @@ impl Value for UserInfo {
             salt: Vec::new(),
             nonce: 0,
             session_keys: Vec::new(),
+        }
+    }
+}
+
+impl GetKey for Order {
+    fn get_key(&self) -> BorshableH256 {
+        let mut hasher = Sha256::new();
+        hasher.update(self.order_id.as_bytes());
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        BorshableH256::from(bytes)
+    }
+}
+
+impl Value for Order {
+    fn to_h256(&self) -> H256 {
+        if self.quantity == 0 {
+            return H256::zero();
+        }
+
+        let serialized =
+            borsh::to_vec(self).expect("Order should serialize for Merkle tree hashing");
+        let mut hasher = Sha256::new();
+        hasher.update(&serialized);
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        H256::from(bytes)
+    }
+
+    fn zero() -> Self {
+        Order {
+            order_id: String::new(),
+            order_type: OrderType::Limit,
+            order_side: OrderSide::Bid,
+            price: None,
+            pair: (String::new(), String::new()),
+            quantity: 0,
+        }
+    }
+}
+
+impl GetKey for OrderPriceLevel {
+    fn get_key(&self) -> BorshableH256 {
+        let mut hasher = Sha256::new();
+        hasher.update(self.pair.0.as_bytes());
+        hasher.update(self.pair.1.as_bytes());
+        hasher.update(self.price.to_le_bytes());
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        BorshableH256::from(bytes)
+    }
+}
+
+impl Value for OrderPriceLevel {
+    fn to_h256(&self) -> H256 {
+        if self.order_ids.is_empty() {
+            return H256::zero();
+        }
+
+        let serialized =
+            borsh::to_vec(self).expect("OrderPriceLevel should serialize for Merkle tree hashing");
+        let mut hasher = Sha256::new();
+        hasher.update(&serialized);
+        let result = hasher.finalize();
+        let mut bytes = [0u8; 32];
+        bytes.copy_from_slice(&result);
+        H256::from(bytes)
+    }
+
+    fn zero() -> Self {
+        OrderPriceLevel {
+            pair: (String::new(), String::new()),
+            price: 0,
+            order_ids: Vec::new(),
         }
     }
 }

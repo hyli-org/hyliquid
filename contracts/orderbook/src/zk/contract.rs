@@ -12,6 +12,7 @@ use crate::{
         PermissionnedOrderbookAction, PermissionnedPrivateInput,
     },
     zk::{
+        order_merkle::collect_price_levels,
         smt::{BorshableH256 as H256, GetKey, UserBalance},
         ParsedStateCommitment, ZkVmState,
     },
@@ -114,7 +115,7 @@ impl sdk::ZkContract for ZkVmState {
                         let events = state.escape(&self.last_block_number, calldata, &user_info)?;
 
                         state
-                            .apply_events(&user_info, &events)
+                            .apply_events_preserving_zeroed_orders(&user_info, &events)
                             .map_err(|e| format!("Could not apply events to state: {e}"))?;
 
                         events
@@ -142,6 +143,7 @@ impl sdk::ZkContract for ZkVmState {
     }
 
     fn commit(&self) -> StateCommitment {
+        let order_manager_roots = self.order_manager.commitment();
         StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: self
@@ -161,7 +163,7 @@ impl sdk::ZkContract for ZkVmState {
                     })
                     .collect(),
                 assets: &self.assets,
-                orders: self.order_manager.view(),
+                order_manager_roots,
                 hashed_secret: self.hashed_secret,
                 lane_id: &self.lane_id,
                 last_block_number: &self.last_block_number,
@@ -173,6 +175,13 @@ impl sdk::ZkContract for ZkVmState {
 
 impl ZkVmState {
     pub fn into_orderbook_state(&mut self) -> ExecuteState {
+        // TODO: use std::mem::take
+        let order_manager = self
+            .order_manager
+            .clone()
+            .into_order_manager()
+            .expect("materialize order manager witness into concrete state");
+
         ExecuteState {
             assets_info: std::mem::take(&mut self.assets), // Assets info is not part of zkvm state
             users_info: self
@@ -195,7 +204,7 @@ impl ZkVmState {
                     )
                 })
                 .collect(),
-            order_manager: std::mem::take(&mut self.order_manager), // OrderManager is not part of zkvm state
+            order_manager,
         }
     }
 
@@ -219,6 +228,7 @@ impl ZkVmState {
                 .any(|info| &info.contract_name == contract_name)
     }
 
+    /// This function applies to self all the changes that happened in the execution state
     pub fn take_changes_back(&mut self, state: &mut ExecuteState) -> Result<(), String> {
         self.users_info
             .values
@@ -236,7 +246,18 @@ impl ZkVmState {
         }
 
         std::mem::swap(&mut self.assets, &mut state.assets_info);
-        std::mem::swap(&mut self.order_manager, &mut state.order_manager);
+
+        // Update orders
+        self.order_manager.orders.values = std::mem::take(&mut state.order_manager.orders)
+            .into_values()
+            .collect();
+        self.order_manager.orders_owner = std::mem::take(&mut state.order_manager.orders_owner);
+
+        // Update bid orders
+        let bid_orders = std::mem::take(&mut state.order_manager.bid_orders);
+        self.order_manager.bid_orders.values = collect_price_levels(&bid_orders);
+        let ask_orders = std::mem::take(&mut state.order_manager.ask_orders);
+        self.order_manager.ask_orders.values = collect_price_levels(&ask_orders);
 
         Ok(())
     }
@@ -247,7 +268,10 @@ mod tests {
     use super::*;
     use crate::model::{AssetInfo, Balance, Order, OrderSide, OrderType, UserInfo};
     use crate::order_manager::OrderManager;
-    use crate::zk::{ZkWitnessSet, H256, SMT};
+    use crate::zk::{
+        order_merkle::{collect_price_levels, OrderManagerWitnesses},
+        OrderManagerMerkles, ZkWitnessSet, H256, SMT,
+    };
     use borsh::{BorshDeserialize, BorshSerialize};
     use sdk::merkle_utils::BorshableMerkleProof;
     use sdk::{BlockHeight, ContractName, LaneId, ZkContract};
@@ -265,6 +289,32 @@ mod tests {
             user.session_keys.push(key);
         }
         user
+    }
+
+    fn order_manager_witness_from_manager(order_manager: &OrderManager) -> OrderManagerWitnesses {
+        let orders_values = order_manager
+            .orders
+            .values()
+            .cloned()
+            .collect::<HashSet<Order>>();
+        let bid_levels = collect_price_levels(&order_manager.bid_orders);
+        let ask_levels = collect_price_levels(&order_manager.ask_orders);
+
+        OrderManagerWitnesses {
+            orders: ZkWitnessSet {
+                values: orders_values,
+                proof: Proof::CurrentRootHash(H256::default()),
+            },
+            bid_orders: ZkWitnessSet {
+                values: bid_levels,
+                proof: Proof::CurrentRootHash(H256::default()),
+            },
+            ask_orders: ZkWitnessSet {
+                values: ask_levels,
+                proof: Proof::CurrentRootHash(H256::default()),
+            },
+            orders_owner: order_manager.orders_owner.clone(),
+        }
     }
 
     fn sample_zk_state() -> ZkVmState {
@@ -350,13 +400,15 @@ mod tests {
             .orders_owner
             .insert(order_id.clone(), alice_key);
 
+        let order_manager_witness = order_manager_witness_from_manager(&order_manager);
+
         ZkVmState {
             users_info,
             balances,
             lane_id: LaneId::default(),
             hashed_secret: [42; 32],
             last_block_number: BlockHeight::default(),
-            order_manager,
+            order_manager: order_manager_witness,
             assets,
         }
     }
@@ -412,11 +464,23 @@ mod tests {
         }
     }
 
+    fn assert_order_manager_witness_equal(
+        actual: &OrderManagerWitnesses,
+        expected: &OrderManagerWitnesses,
+    ) {
+        assert_witness_equal(&actual.orders, &expected.orders, "orders");
+        assert_witness_equal(&actual.bid_orders, &expected.bid_orders, "bid orders");
+        assert_witness_equal(&actual.ask_orders, &expected.ask_orders, "ask orders");
+        assert_eq!(
+            actual.orders_owner, expected.orders_owner,
+            "orders_owner witness differs"
+        );
+    }
+
     fn assert_witness_equal<T>(actual: &ZkWitnessSet<T>, expected: &ZkWitnessSet<T>, label: &str)
     where
         T: BorshDeserialize
             + BorshSerialize
-            + Default
             + Value
             + crate::zk::smt::GetKey
             + Ord
@@ -447,13 +511,18 @@ mod tests {
         let expected_state = zk_state.clone();
 
         let mut execution_state = zk_state.into_orderbook_state();
+        let expected_order_manager = expected_state
+            .order_manager
+            .clone()
+            .into_order_manager()
+            .expect("expected order manager from witness");
 
         assert_eq!(
             execution_state.assets_info, expected_state.assets,
             "asset info mismatch after into_orderbook_state"
         );
         assert_eq!(
-            execution_state.order_manager, expected_state.order_manager,
+            execution_state.order_manager, expected_order_manager,
             "order manager mismatch after into_orderbook_state"
         );
         assert_users_match(&execution_state.users_info, &expected_state.users_info);
@@ -464,10 +533,7 @@ mod tests {
             .expect("take_changes_back should succeed");
 
         assert_eq!(zk_state.assets, expected_state.assets, "assets mismatch");
-        assert_eq!(
-            zk_state.order_manager, expected_state.order_manager,
-            "order manager mismatch"
-        );
+        assert_order_manager_witness_equal(&zk_state.order_manager, &expected_state.order_manager);
         assert_eq!(zk_state.lane_id, expected_state.lane_id, "lane id mismatch");
         assert_eq!(
             zk_state.hashed_secret, expected_state.hashed_secret,
@@ -544,6 +610,7 @@ mod tests {
         let last_block_number = BlockHeight::default();
         let hashed_secret = [7u8; 32];
         let order_manager = OrderManager::default();
+        let zk_order_manager = order_manager_witness_from_manager(&order_manager);
         let assets: HashMap<String, AssetInfo> = HashMap::new();
 
         let zk_state = ZkVmState {
@@ -552,7 +619,7 @@ mod tests {
             lane_id: lane_id.clone(),
             hashed_secret,
             last_block_number,
-            order_manager: order_manager.clone(),
+            order_manager: zk_order_manager,
             assets: assets.clone(),
         };
 
@@ -561,12 +628,16 @@ mod tests {
         let mut expected_balances = HashMap::new();
         expected_balances.insert("NONZERO".to_string(), non_zero_root);
 
+        let expected_orders_commitment = OrderManagerMerkles::from_order_manager(&order_manager)
+            .expect("expected order manager commitment")
+            .commitment();
+
         let expected_commitment = StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: users_witness.clone().compute_root().expect("users root"),
                 balances_roots: expected_balances,
                 assets: &assets,
-                orders: order_manager.view(),
+                order_manager_roots: expected_orders_commitment,
                 hashed_secret,
                 lane_id: &lane_id,
                 last_block_number: &last_block_number,
@@ -614,6 +685,7 @@ mod tests {
         let last_block_number = BlockHeight::default();
         let hashed_secret = [11u8; 32];
         let order_manager = OrderManager::default();
+        let zk_order_manager = order_manager_witness_from_manager(&order_manager);
         let assets: HashMap<String, AssetInfo> = HashMap::new();
 
         let zk_state = ZkVmState {
@@ -622,18 +694,22 @@ mod tests {
             lane_id: lane_id.clone(),
             hashed_secret,
             last_block_number,
-            order_manager: order_manager.clone(),
+            order_manager: zk_order_manager,
             assets: assets.clone(),
         };
 
         let commit = zk_state.commit();
+
+        let expected_orders_commitment = OrderManagerMerkles::from_order_manager(&order_manager)
+            .expect("expected order manager commitment")
+            .commitment();
 
         let expected_commitment = StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: users_witness.compute_root().expect("users root"),
                 balances_roots: HashMap::from([("TOKEN".to_string(), balance_root)]),
                 assets: &assets,
-                orders: order_manager.view(),
+                order_manager_roots: expected_orders_commitment,
                 hashed_secret,
                 lane_id: &lane_id,
                 last_block_number: &last_block_number,
