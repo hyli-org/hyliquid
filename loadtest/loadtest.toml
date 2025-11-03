@@ -5,8 +5,8 @@ base_url = "http://localhost:3000"
 
 [instrument]
 # Trading pair configuration
-base_asset = "bitcoin"
-quote_asset = "usdt"
+base_asset = "ORANJ"
+quote_asset = "USDT"
 
 # Price and quantity scaling (integer-based to avoid floats)
 price_tick = 1000000 # Minimum price increment
@@ -95,10 +95,10 @@ max_requests_per_second = 0 # 0 = unlimited
 
 [user_setup]
 # Initial deposit amounts for test users
-initial_deposit_base = 1000000000   # Large initial deposit for base asset
-initial_deposit_quote = 10000000000 # Large initial deposit for quote asset
-minimal_balance_base = 100000000
-minimal_balance_quote = 100000000
+initial_deposit_base =  100000000000000   # Large initial deposit for base asset
+initial_deposit_quote = 100000000000000 # Large initial deposit for quote asset
+minimal_balance_base =  100000000000
+minimal_balance_quote = 100000000000
 
 [rng]
 # Random number generator

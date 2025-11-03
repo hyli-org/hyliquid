@@ -86,6 +86,8 @@ async fn place_bid_orders_transaction(user: &mut GooseUser) -> TransactionResult
         let signature = user_state.auth.sign_create_order(nonce, &order_id).unwrap();
 
         // Send order
+        let mut err = false;
+
         match client
             .create_order(user, &user_auth, &order, &signature)
             .await
@@ -105,7 +107,13 @@ async fn place_bid_orders_transaction(user: &mut GooseUser) -> TransactionResult
             Err(e) => {
                 warn!("Maker: failed to place bid: {:?}", e);
                 // Don't fail the entire scenario, just log and continue
+                err = true;
             }
+        }
+
+        if err {
+            let user_state = user.get_session_data_mut::<UserState>().unwrap();
+            user_state.revert_nonce();
         }
 
         // Small delay between orders to avoid overwhelming the server
