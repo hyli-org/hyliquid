@@ -140,10 +140,6 @@ impl OrderRetentionMode {
     pub fn should_cleanup(self) -> bool {
         matches!(self, OrderRetentionMode::FinalizeRemovals)
     }
-
-    pub fn should_annihilate_created_order(self) -> bool {
-        matches!(self, OrderRetentionMode::RetainForProof)
-    }
 }
 
 pub type OrderId = String;

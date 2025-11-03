@@ -248,12 +248,25 @@ impl OrderManager {
                         .or_insert(user_info_key);
                 }
                 OrderbookEvent::OrderCancelled { order_id, .. } => {
-                    let order = self.orders.get_mut(order_id).ok_or_else(|| {
-                        format!("OrderCancelled event missing order {order_id}").to_string()
-                    })?;
+                    let order = self
+                        .orders
+                        .get(order_id)
+                        .ok_or_else(|| {
+                            format!("OrderCancelled event missing order {order_id}").to_string()
+                        })?
+                        .clone();
+
+                    // Remove order from price level
+                    if let Some(price) = order.price {
+                        let order_list =
+                            self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+                        // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
+                        order_list.retain(|id| id != order_id);
+                    }
 
                     // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
-                    order.quantity = 0;
+                    let order_mut = self.orders.get_mut(order_id).unwrap();
+                    order_mut.quantity = 0;
 
                     self.orders_owner.remove(order_id);
                 }
@@ -266,10 +279,26 @@ impl OrderManager {
                         continue;
                     }
 
-                    if let Some(order) = self.orders.get_mut(order_id) {
-                        // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
-                        order.quantity = 0;
+                    let order = self
+                        .orders
+                        .get(order_id)
+                        .ok_or_else(|| {
+                            format!("OrderExecuted event missing order {order_id}").to_string()
+                        })?
+                        .clone();
+
+                    // Remove order from price level
+                    if let Some(price) = order.price {
+                        let order_list =
+                            self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+
+                        // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
+                        order_list.retain(|id| id != order_id);
                     }
+
+                    // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
+                    let order_mut = self.orders.get_mut(order_id).unwrap();
+                    order_mut.quantity = 0;
 
                     self.orders_owner.remove(order_id);
                 }
@@ -278,9 +307,10 @@ impl OrderManager {
                     remaining_quantity,
                     ..
                 } => {
-                    if let Some(order) = self.orders.get_mut(order_id) {
-                        order.quantity = *remaining_quantity;
-                    }
+                    let order = self.orders.get_mut(order_id).ok_or_else(|| {
+                        format!("OrderUpdate event missing order {order_id}").to_string()
+                    })?;
+                    order.quantity = *remaining_quantity;
                 }
                 _ => {}
             }
@@ -306,12 +336,7 @@ impl OrderManager {
                     }
 
                     if let Some(stored_order) = self.orders.get(order_id).cloned() {
-                        self.remove_order_from_orderbook(
-                            &stored_order.order_side,
-                            &stored_order.pair,
-                            stored_order.price,
-                            order_id,
-                        );
+                        self.clean_empty_price_levels(&stored_order.order_side, &stored_order.pair);
                         self.orders.remove(order_id);
                     }
 
@@ -319,12 +344,7 @@ impl OrderManager {
                 }
                 OrderbookEvent::OrderCancelled { order_id, .. } => {
                     if let Some(stored_order) = self.orders.get(order_id).cloned() {
-                        self.remove_order_from_orderbook(
-                            &stored_order.order_side,
-                            &stored_order.pair,
-                            stored_order.price,
-                            order_id,
-                        );
+                        self.clean_empty_price_levels(&stored_order.order_side, &stored_order.pair);
                         self.orders.remove(order_id);
                     }
 
@@ -337,31 +357,18 @@ impl OrderManager {
 }
 
 impl OrderManager {
-    fn remove_order_from_orderbook(
-        &mut self,
-        side: &OrderSide,
-        pair: &Pair,
-        price: Option<u64>,
-        order_id: &OrderId,
-    ) {
-        if let Some(price) = price {
-            let side_book = self.side_map_mut(side);
-            let should_remove_pair = if let Some(price_levels) = side_book.get_mut(pair) {
-                if let Some(order_ids) = price_levels.get_mut(&price) {
-                    order_ids.retain(|existing_id| existing_id != order_id);
-                    if order_ids.is_empty() {
-                        price_levels.remove(&price);
-                    }
-                }
+    fn clean_empty_price_levels(&mut self, side: &OrderSide, pair: &Pair) {
+        let side_book = self.side_map_mut(side);
+        let should_remove_pair = if let Some(price_levels) = side_book.get_mut(pair) {
+            // Remove empty price levels
+            price_levels.retain(|_, order_ids| !order_ids.is_empty());
+            price_levels.is_empty()
+        } else {
+            false
+        };
 
-                price_levels.is_empty()
-            } else {
-                false
-            };
-
-            if should_remove_pair {
-                side_book.remove(pair);
-            }
+        if should_remove_pair {
+            side_book.remove(pair);
         }
     }
 

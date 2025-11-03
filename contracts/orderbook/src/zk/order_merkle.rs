@@ -181,9 +181,6 @@ pub fn collect_price_levels(
     let mut levels = HashSet::new();
     for (pair, price_map) in side_map {
         for (price, queue) in price_map {
-            if queue.is_empty() {
-                continue;
-            }
             levels.insert(OrderPriceLevel::from_queue(pair, *price, queue));
         }
     }

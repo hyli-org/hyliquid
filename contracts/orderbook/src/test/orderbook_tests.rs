@@ -102,6 +102,8 @@ fn run_action(
         .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &action)
         .expect("derive metadata");
 
+    let full_initial_commitment = full.commit();
+
     full.apply_events_and_update_roots(&user_info, events.clone())
         .expect("full execution deposit");
 
@@ -146,9 +148,13 @@ fn run_action(
         );
     }
 
-    let full_commit = full.commit();
     assert_eq!(
-        hyli_output.next_state, full_commit,
+        hyli_output.initial_state, full_initial_commitment,
+        "Full initial state mismatch for action {action_repr}"
+    );
+    let full_next_commitment = full.commit();
+    assert_eq!(
+        hyli_output.next_state, full_next_commitment,
         "Full next state mismatch for action {action_repr}"
     );
 
@@ -977,7 +983,7 @@ fn test_complex_multi_user_orderbook() {
     execute_market_order(
         "after clearing ask-lim6 and half of ask-lim5",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market2".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
@@ -1003,7 +1009,7 @@ fn test_complex_multi_user_orderbook() {
     execute_market_order(
         "after clearing ask-lim5",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market3".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
@@ -1027,7 +1033,7 @@ fn test_complex_multi_user_orderbook() {
     execute_market_order(
         "after self match on ask-lim4",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market4".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
@@ -1051,7 +1057,7 @@ fn test_complex_multi_user_orderbook() {
     execute_market_order(
         "after clearing remaining ask orders",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market5".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Bid,
             price: None,
@@ -1084,7 +1090,7 @@ fn test_complex_multi_user_orderbook() {
     execute_market_order(
         "after partially filling bid-lim1",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market6".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
@@ -1108,7 +1114,7 @@ fn test_complex_multi_user_orderbook() {
     execute_market_order(
         "after clearing bid-lim1 and half of bid-lim2",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market7".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
@@ -1134,7 +1140,7 @@ fn test_complex_multi_user_orderbook() {
     execute_market_order(
         "after clearing bid-lim2",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market8".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
@@ -1153,14 +1159,14 @@ fn test_complex_multi_user_orderbook() {
     );
 
     execute_market_order(
-        "after clearing remaining bid orders",
+        "after clearing bid-lim3 and bid-lim4 and partially bid-lim5",
         Order {
-            order_id: "market1".to_string(),
+            order_id: "market9".to_string(),
             order_type: OrderType::Market,
             order_side: OrderSide::Ask,
             price: None,
             pair: pair.clone(),
-            quantity: 70,
+            quantity: 55,
         },
         alice,
         &mut light,
@@ -1173,12 +1179,56 @@ fn test_complex_multi_user_orderbook() {
         &[
             delta(alice, -qty(25), notional(25, 6)),
             delta(alice, -qty(20), notional(20, 5)),
-            delta(alice, -qty(15), notional(15, 4)),
-            delta(alice, -qty(10), notional(10, 3)),
+            delta(alice, -qty(10), notional(10, 4)),
             delta(charlie, qty(25), 0),
             delta(alice, qty(20), 0),
-            delta(bob, qty(15), 0),
+            delta(bob, qty(10), 0),
+        ],
+    );
+
+    // Add a new bid order before market10 to be consumed by it
+    submit_signed_order(
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        bob,
+        Order {
+            order_id: "bid-extra".to_string(),
+            order_type: OrderType::Limit,
+            order_side: OrderSide::Bid,
+            price: Some(2),
+            pair: pair.clone(),
+            quantity: 12,
+        },
+    );
+    apply_balance_deltas(&mut expected_balances, &[delta(bob, 0, -notional(12, 2))]);
+
+    execute_market_order(
+        "after clearing remaining bid orders",
+        Order {
+            order_id: "market10".to_string(),
+            order_type: OrderType::Market,
+            order_side: OrderSide::Ask,
+            price: None,
+            pair: pair.clone(),
+            quantity: 27, // Increased from 15 to consume the new bid order too
+        },
+        alice,
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        &mut expected_balances,
+        &base_symbol,
+        &quote_symbol,
+        &[
+            delta(alice, -qty(5), notional(5, 4)),
+            delta(alice, -qty(10), notional(10, 3)),
+            delta(alice, -qty(12), notional(12, 2)),
+            delta(bob, qty(5), 0),
             delta(charlie, qty(10), 0),
+            delta(bob, qty(12), 0),
         ],
     );
 

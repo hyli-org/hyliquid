@@ -67,7 +67,7 @@ impl<
                     .collect();
 
                 if leaves.is_empty() {
-                    return Err("No leaves in users_info proof, proof should be empty".to_string());
+                    return Err("No leaves in merkle proof, proof should be empty".to_string());
                 }
 
                 let derived_root = proof
