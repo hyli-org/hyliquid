@@ -273,7 +273,13 @@ impl OrderbookClient {
 
         let request = GooseRequest::builder().set_request_builder(builder).build();
 
-        let _response = user.request(request).await?;
+        let response = user.request(request).await?;
+        let response = response.response?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!("create_order failed with status {status}: {error_text}");
+        }
 
         Ok(())
     }
