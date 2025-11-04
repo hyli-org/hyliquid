@@ -14,7 +14,7 @@ use crate::model::{
     AssetInfo, ExecuteState, Order, OrderSide, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo,
 };
 use crate::transaction::{
-    AddSessionKeyPrivateInput, CreateOrderPrivateInput, OrderbookAction,
+    AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
     PermissionnedOrderbookAction, PermissionnedPrivateInput,
 };
 use crate::zk::OrderManagerRoots;
@@ -283,6 +283,38 @@ fn submit_signed_order<'a>(
         PermissionnedOrderbookAction::CreateOrder(order),
         private_payload,
     );
+}
+
+fn cancel_signed_order<'a>(
+    light: &mut ExecuteState,
+    full: &mut FullState,
+    users: &[&'a str],
+    signers: &'a [TestSigner],
+    user: &str,
+    order_id: &str,
+) -> Vec<OrderbookEvent> {
+    let signer = signer_for(users, signers, user);
+    let user_info = full
+        .state
+        .get_user_info(user)
+        .expect("user info for signature");
+    let msg = format!("{}:{}:cancel:{order_id}", user, user_info.nonce);
+    let signature = signer.sign(&msg);
+    let private_input = CancelOrderPrivateInput {
+        signature,
+        public_key: signer.public_key.clone(),
+    };
+    let private_payload = borsh::to_vec(&private_input).expect("serialize cancel order input");
+
+    run_action(
+        light,
+        full,
+        user,
+        PermissionnedOrderbookAction::Cancel {
+            order_id: order_id.to_string(),
+        },
+        private_payload,
+    )
 }
 
 fn add_session_key<'a>(
@@ -744,6 +776,277 @@ fn execute_market_order<'a>(
         users,
         base_symbol,
         quote_symbol,
+    );
+}
+
+#[test_log::test]
+fn test_cancel_order_restores_balance_and_removes_state() {
+    let (_, _, _, lane_id, secret) = get_ctx();
+
+    let mut light = ExecuteState::default();
+    let mut full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
+
+    let pair: Pair = ("HYLLAR".to_string(), "ORANJ".to_string());
+    let base_symbol = pair.0.clone();
+    let quote_symbol = pair.1.clone();
+    let pair_info = PairInfo {
+        base: AssetInfo::new(0, ContractName(base_symbol.clone())),
+        quote: AssetInfo::new(0, ContractName(quote_symbol.clone())),
+    };
+
+    let users = ["alice"];
+    let signers = vec![TestSigner::new(1)];
+    let user = users[0];
+
+    add_session_key(&mut light, &mut full, &users, &signers, user);
+
+    let _ = run_action(
+        &mut light,
+        &mut full,
+        user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: pair_info,
+        },
+        Vec::new(),
+    );
+
+    let initial_base_deposit = 100_u64;
+    let initial_quote_deposit = 1_000_u64;
+    let _ = deposit(
+        &mut light,
+        &mut full,
+        user,
+        &base_symbol,
+        initial_base_deposit,
+    );
+    let _ = deposit(
+        &mut light,
+        &mut full,
+        user,
+        &quote_symbol,
+        initial_quote_deposit,
+    );
+
+    let light_user_info = light
+        .get_user_info(user)
+        .expect("light user info after deposit");
+    let full_user_info = full
+        .state
+        .get_user_info(user)
+        .expect("full user info after deposit");
+    assert_eq!(
+        light.get_balance(&light_user_info, &base_symbol).0,
+        initial_base_deposit
+    );
+    assert_eq!(
+        light.get_balance(&light_user_info, &quote_symbol).0,
+        initial_quote_deposit
+    );
+    assert_eq!(
+        full.state.get_balance(&full_user_info, &base_symbol).0,
+        initial_base_deposit
+    );
+    assert_eq!(
+        full.state.get_balance(&full_user_info, &quote_symbol).0,
+        initial_quote_deposit
+    );
+
+    let ask_order_id = "ask-to-cancel";
+    let ask_quantity = 40_u64;
+    let ask_price = 12_u64;
+    submit_signed_order(
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        user,
+        Order {
+            order_id: ask_order_id.to_string(),
+            order_type: OrderType::Limit,
+            order_side: OrderSide::Ask,
+            price: Some(ask_price),
+            pair: pair.clone(),
+            quantity: ask_quantity,
+        },
+    );
+
+    let light_user_info = light
+        .get_user_info(user)
+        .expect("light user info after ask");
+    let full_user_info = full
+        .state
+        .get_user_info(user)
+        .expect("full user info after ask");
+    assert_eq!(
+        light.get_balance(&light_user_info, &base_symbol).0,
+        initial_base_deposit - ask_quantity
+    );
+    assert_eq!(
+        full.state.get_balance(&full_user_info, &base_symbol).0,
+        initial_base_deposit - ask_quantity
+    );
+
+    let bid_order_id = "bid-remains";
+    let bid_quantity = 10_u64;
+    let bid_price = 1_u64;
+    submit_signed_order(
+        &mut light,
+        &mut full,
+        &users,
+        &signers,
+        user,
+        Order {
+            order_id: bid_order_id.to_string(),
+            order_type: OrderType::Limit,
+            order_side: OrderSide::Bid,
+            price: Some(bid_price),
+            pair: pair.clone(),
+            quantity: bid_quantity,
+        },
+    );
+
+    let expected_quote_after_bid = initial_quote_deposit - (bid_quantity * bid_price);
+    let light_user_info = light
+        .get_user_info(user)
+        .expect("light user info after bid");
+    let full_user_info = full
+        .state
+        .get_user_info(user)
+        .expect("full user info after bid");
+    assert_eq!(
+        light.get_balance(&light_user_info, &quote_symbol).0,
+        expected_quote_after_bid
+    );
+    assert_eq!(
+        full.state.get_balance(&full_user_info, &quote_symbol).0,
+        expected_quote_after_bid
+    );
+
+    assert!(
+        light.order_manager.orders.contains_key(ask_order_id),
+        "ask order should be present before cancellation in light state"
+    );
+    assert!(
+        full.state.order_manager.orders.contains_key(ask_order_id),
+        "ask order should be present before cancellation in full state"
+    );
+
+    let ask_orders_light = light
+        .order_manager
+        .ask_orders
+        .get(&pair)
+        .expect("light should have ask orders before cancellation");
+    assert!(
+        ask_orders_light
+            .values()
+            .any(|ids| ids.iter().any(|id| id == ask_order_id)),
+        "ask order should be tracked in ask book for light state"
+    );
+    let ask_orders_full = full
+        .state
+        .order_manager
+        .ask_orders
+        .get(&pair)
+        .expect("full should have ask orders before cancellation");
+    assert!(
+        ask_orders_full
+            .values()
+            .any(|ids| ids.iter().any(|id| id == ask_order_id)),
+        "ask order should be tracked in ask book for full state"
+    );
+
+    let events = cancel_signed_order(&mut light, &mut full, &users, &signers, user, ask_order_id);
+
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            OrderbookEvent::OrderCancelled { order_id, .. } if order_id == ask_order_id
+        )),
+        "cancellation should emit OrderCancelled event"
+    );
+
+    let light_user_info = light
+        .get_user_info(user)
+        .expect("light user info after cancellation");
+    let full_user_info = full
+        .state
+        .get_user_info(user)
+        .expect("full user info after cancellation");
+    assert_eq!(
+        light.get_balance(&light_user_info, &base_symbol).0,
+        initial_base_deposit
+    );
+    assert_eq!(
+        full.state.get_balance(&full_user_info, &base_symbol).0,
+        initial_base_deposit
+    );
+    assert_eq!(
+        light.get_balance(&light_user_info, &quote_symbol).0,
+        expected_quote_after_bid
+    );
+    assert_eq!(
+        full.state.get_balance(&full_user_info, &quote_symbol).0,
+        expected_quote_after_bid
+    );
+
+    assert!(
+        !light.order_manager.orders.contains_key(ask_order_id),
+        "cancelled order should be removed from light state storage"
+    );
+    assert!(
+        !full.state.order_manager.orders.contains_key(ask_order_id),
+        "cancelled order should be removed from full state storage"
+    );
+    assert!(
+        light.order_manager.orders.contains_key(bid_order_id),
+        "non-cancelled order should remain in light state"
+    );
+    assert!(
+        full.state.order_manager.orders.contains_key(bid_order_id),
+        "non-cancelled order should remain in full state"
+    );
+
+    if let Some(orders) = light.order_manager.ask_orders.get(&pair) {
+        assert!(
+            orders.values().all(|ids| ids.is_empty()),
+            "ask book should be empty for light state after cancellation"
+        );
+    }
+    if let Some(orders) = full.state.order_manager.ask_orders.get(&pair) {
+        assert!(
+            orders.values().all(|ids| ids.is_empty()),
+            "ask book should be empty for full state after cancellation"
+        );
+    }
+    assert!(
+        !light.order_manager.orders_owner.contains_key(ask_order_id),
+        "cancelled order owner mapping should be cleared in light state"
+    );
+    assert!(
+        !full
+            .state
+            .order_manager
+            .orders_owner
+            .contains_key(ask_order_id),
+        "cancelled order owner mapping should be cleared in full state"
+    );
+    assert!(
+        light.order_manager.orders_owner.contains_key(bid_order_id),
+        "non-cancelled order owner mapping should remain in light state"
+    );
+    assert!(
+        full.state
+            .order_manager
+            .orders_owner
+            .contains_key(bid_order_id),
+        "non-cancelled order owner mapping should remain in full state"
     );
 }
 
