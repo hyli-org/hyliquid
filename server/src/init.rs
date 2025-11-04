@@ -8,7 +8,6 @@ use orderbook::{
     model::{
         AssetInfo, Balance as OrderbookBalance, ExecuteState, Pair, PairInfo, Symbol, UserInfo,
     },
-    order_manager::OrderManager,
     zk::{smt::GetKey, FullState, OrderManagerRoots, H256},
 };
 use reqwest::StatusCode;
