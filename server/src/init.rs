@@ -9,7 +9,7 @@ use orderbook::{
         AssetInfo, Balance as OrderbookBalance, ExecuteState, Pair, PairInfo, Symbol, UserInfo,
     },
     order_manager::OrderManager,
-    zk::{smt::GetKey, FullState, H256},
+    zk::{smt::GetKey, FullState, OrderManagerRoots, H256},
 };
 use reqwest::StatusCode;
 use sdk::{
@@ -307,7 +307,7 @@ pub struct DebugStateCommitment {
     pub users_info_root: H256,
     pub balances_roots: HashMap<Symbol, H256>,
     pub assets: HashMap<Symbol, AssetInfo>,
-    pub orders: OrderManager,
+    pub order_manager_roots: OrderManagerRoots,
     pub hashed_secret: [u8; 32],
     pub lane_id: LaneId,
     pub last_block_number: BlockHeight,
@@ -387,8 +387,14 @@ impl DebugStateCommitment {
             );
         }
 
-        if self.orders != other.orders {
-            diff.extend(self.orders.diff(&other.orders));
+        if self.order_manager_roots != other.order_manager_roots {
+            diff.insert(
+                "order_manager_roots".to_string(),
+                format!(
+                    "{:?} != {:?}",
+                    self.order_manager_roots, other.order_manager_roots
+                ),
+            );
         }
 
         diff
