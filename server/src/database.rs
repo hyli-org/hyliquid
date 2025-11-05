@@ -85,7 +85,23 @@ impl DatabaseModule {
                 blob_tx,
                 prover_request,
             } => {
-                self.write_events(&user, tx_hash, prover_request).await?;
+                match self
+                    .write_events(&user, tx_hash.clone(), prover_request)
+                    .await
+                {
+                    Ok(()) => {
+                        println!(
+                            "Events written successfully for user {user} with tx hash {tx_hash:#}"
+                        );
+                    }
+                    Err(e) => {
+                        println!(
+                            "Error writing events for user {user} with tx hash {tx_hash:#}: {}",
+                            e
+                        );
+                        return Err(anyhow::anyhow!("Failed to write events: {}", e));
+                    }
+                }
                 if !self.ctx.no_blobs {
                     self.ctx.client.send_tx_blob(blob_tx).await?;
                 }
@@ -112,15 +128,22 @@ impl DatabaseModule {
         let mut tx = log_error!(self.ctx.pool.begin().await, "Failed to begin transaction")?;
 
         debug!("Transaction started");
+        println!("Transaction started");
 
-        let row = log_error!(
-            sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
-                .bind(tx_hash.0.clone())
-                .fetch_one(&mut *tx)
-                .await,
-            "Failed to create commit"
-        )?;
+        let row = sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
+            .bind(tx_hash.0.clone())
+            .fetch_one(&mut *tx)
+            .await;
+        if let Err(e) = row {
+            println!("Error creating commit: {}", e);
+            return Err(anyhow::anyhow!("Failed to create commit: {}", e));
+        } else {
+            println!("Commit created");
+        }
+        let row = row.unwrap();
+        println!("Row unwrapped");
         let commit_id: i64 = row.get("commit_id");
+        println!("Commit id: {}", commit_id);
         debug!("Created commit with id {}", commit_id);
 
         let events_user_id = self
@@ -566,7 +589,9 @@ impl DatabaseModule {
             )?;
         }
 
+        println!("Committing transaction");
         log_error!(tx.commit().await, "Failed to commit transaction")?;
+        println!("Transaction committed");
         debug!("Committed transaction with commit id {}", commit_id);
 
         if reload_instrument_map {
