@@ -552,7 +552,7 @@ async fn main() -> Result<()> {
                         trend_direction = "stale";
                     }
                     "random" => {
-                        if order_count % 30 == 0 {
+                        if order_count % (3 * 60) == 0 {
                             trend_direction = match random_between(0, 2) {
                                 0 => "up",
                                 1 => "down",
