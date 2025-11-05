@@ -101,6 +101,7 @@ impl DatabaseModule {
         tx_hash: TxHash,
         prover_request: OrderbookProverRequest,
     ) -> Result<()> {
+        debug!("Writing events for user {user} with tx hash {tx_hash:#}");
         use crate::services::asset_service::MarketStatus;
 
         let mut symbol_book_updated = HashSet::<String>::new();
@@ -118,6 +119,7 @@ impl DatabaseModule {
             "Failed to create commit"
         )?;
         let commit_id: i64 = row.get("commit_id");
+        debug!("Created commit with id {}", commit_id);
 
         let events_user_id = self
             .ctx
@@ -514,7 +516,10 @@ impl DatabaseModule {
             }
         }
 
-        let json_data = serde_json::to_vec(&prover_request)?;
+        let json_data = log_error!(
+            serde_json::to_vec(&prover_request),
+            "Failed to serialize prover request"
+        )?;
 
         log_error!(
             sqlx::query(
@@ -559,7 +564,8 @@ impl DatabaseModule {
             )?;
         }
 
-        tx.commit().await?;
+        log_error!(tx.commit().await, "Failed to commit transaction")?;
+        debug!("Committed transaction with commit id {}", commit_id);
 
         if reload_instrument_map {
             log_error!(

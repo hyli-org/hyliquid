@@ -36,6 +36,7 @@ use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneI
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
+use tracing::debug;
 
 use crate::{
     database::DatabaseRequest, prover::OrderbookProverRequest,
@@ -504,6 +505,11 @@ async fn add_session_key(
     let user = auth.identity;
     let public_key = auth.public_key.expect("Missing public key in headers");
 
+    debug!(
+        "Adding session key for user {user} with public key {}",
+        hex::encode(&public_key)
+    );
+
     // FIXME: locking here makes locking another time in execute_orderbook_action ...
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
@@ -562,6 +568,11 @@ async fn deposit(
     let user = auth.identity;
     // TODO: Check that the user actually has sent the funds to the contract before proceeding to deposit
 
+    debug!(
+        "Depositing {} {} for user {user}",
+        request.amount, request.symbol
+    );
+
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
 
@@ -610,6 +621,8 @@ async fn create_order(
     let user = auth.identity;
     let public_key = auth.public_key.expect("Missing public key in headers");
     let signature = auth.signature.expect("Missing signature in headers");
+
+    debug!("Creating order for user {user}. Order: {:?}", request);
 
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
@@ -683,6 +696,11 @@ async fn cancel_order(
     let user = auth.identity;
     let public_key = auth.public_key.expect("Missing public key in headers");
     let signature = auth.signature.expect("Missing signature in headers");
+
+    debug!(
+        "Cancelling order for user {user}. Order ID: {}",
+        request.order_id
+    );
 
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
@@ -763,6 +781,11 @@ async fn withdraw(
     let user = auth.identity;
     let public_key = auth.public_key.expect("Missing public key in headers");
     let signature = auth.signature.expect("Missing signature in headers");
+
+    debug!(
+        "Withdrawing {} {} for user {user}",
+        request.amount, request.symbol
+    );
 
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
@@ -874,6 +897,7 @@ async fn process_orderbook_action<T: BorshSerialize>(
 
     // Send write events request to database module
     // Database module will send the blob tx to the node
+    debug!("Sending write events request to database module for tx {tx_hash:#}");
     let mut bus = ctx.bus.clone();
     bus.send(DatabaseRequest::WriteEvents {
         user: user_info.user,
