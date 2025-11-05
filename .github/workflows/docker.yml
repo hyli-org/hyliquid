@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "releases/**"
+      - "main"
     tags:
       - "*"
   workflow_dispatch:
