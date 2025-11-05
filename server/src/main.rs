@@ -49,6 +49,9 @@ pub struct Args {
     pub no_prover: bool,
 
     #[arg(long, default_value = "false")]
+    pub no_bridge: bool,
+
+    #[arg(long, default_value = "false")]
     pub no_blobs: bool,
 
     #[arg(long, default_value = "false")]
@@ -214,17 +217,19 @@ async fn actual_main() -> Result<()> {
         .build_module::<ApiModule>(api_module_ctx.clone())
         .await?;
 
-    handler
-        .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
-            api: api_ctx.clone(),
-            collateral_token_cn: args.collateral_token_cn.clone().into(),
-            bridge_config: config.bridge.clone(),
-            pool: pool.clone(),
-            asset_service: asset_service.clone(),
-            bridge_service: bridge_service.clone(),
-            orderbook_cn: args.orderbook_cn.clone().into(),
-        }))
-        .await?;
+    if !args.no_bridge {
+        handler
+            .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
+                api: api_ctx.clone(),
+                collateral_token_cn: args.collateral_token_cn.clone().into(),
+                bridge_config: config.bridge.clone(),
+                pool: pool.clone(),
+                asset_service: asset_service.clone(),
+                bridge_service: bridge_service.clone(),
+                orderbook_cn: args.orderbook_cn.clone().into(),
+            }))
+            .await?;
+    }
 
     // Should come last so the other modules have nested their own routes.
     #[allow(clippy::expect_used, reason = "Fail on misconfiguration")]
