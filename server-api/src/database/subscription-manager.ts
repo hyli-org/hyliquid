@@ -153,7 +153,9 @@ export class CandlestickSubscriptionHandler extends PolledSubscriptionHandler<
     subscription: CandlestickSubscription
   ): Promise<CandlestickData[]> {
     const now = new Date();
-    const fromDate = new Date(now.getTime() - subscription.stepSec * 1000 * 10); // Last 10 candles
+    const fromDate = new Date(
+      now.getTime() - subscription.stepSec * 1000 * 200
+    ); // Last 200 candles
     const toDate = now;
 
     const instrument = await this.queries.getInstrument(
