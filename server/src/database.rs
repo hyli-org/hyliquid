@@ -160,6 +160,7 @@ impl DatabaseModule {
             .map_err(|e| anyhow::anyhow!("{}", e.1))?;
 
         for event in prover_request.events.clone() {
+            println!("Processing event: {:?}", event);
             match event {
                 OrderbookEvent::PairCreated { pair, info: _ } => {
                     let asset_service = self.ctx.asset_service.read().await;
