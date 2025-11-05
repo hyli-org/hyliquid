@@ -1,5 +1,5 @@
 # Stage 1: Prepare the recipe for dependencies
-FROM rust:bookworm AS chef
+FROM rust:bookworm@sha256:b5efaabfd787a695d2e46b37d3d9c54040e11f4c10bc2e714bbadbfcc0cd6c39 AS chef
 
 RUN apt-get update && apt-get -y install curl g++ git libssl-dev pkg-config
 RUN cargo install cargo-chef
@@ -45,7 +45,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release -F nonreproducible -F nobuild --bin server --bin autoprover --bin tx_sender
 
 # Stage 4: Runtime
-FROM rust:latest
+FROM rust:latest@sha256:c0601cfa53ef38705af64f72b6b1f2b8afcd8f76de9aa621a8b45b4fa124694c
 
 WORKDIR /app
 
