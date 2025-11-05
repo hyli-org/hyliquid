@@ -514,18 +514,26 @@ async fn add_session_key(
     let (user_info, events) = {
         let mut orderbook = ctx.orderbook.lock().await;
 
+        debug!(
+            "Getting user info for user {user}. Orderbook users info: {:?}",
+            orderbook.users_info
+        );
+
         // Get user_info if exists, otherwise create a new one with random salt
         let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
+            debug!("Creating new user info for user {user}");
             let mut salt = [0u8; 32];
             rand::rng().fill_bytes(&mut salt);
             UserInfo::new(user.clone(), salt.to_vec())
         });
+        debug!("User info: {:?}", user_info);
 
         let res = orderbook.add_session_key(user_info.clone(), &public_key);
         let events = match res {
             Ok(events) => events,
             Err(e) => {
                 if e.contains("already exists") {
+                    debug!("Session key already exists for user {user}. {e}");
                     return Err(AppError(StatusCode::NOT_MODIFIED, anyhow::anyhow!(e)));
                 } else {
                     return Err(AppError(

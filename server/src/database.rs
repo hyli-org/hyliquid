@@ -13,7 +13,7 @@ use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::services::user_service::UserService;
 use crate::{prover::OrderbookProverRequest, services::asset_service::AssetService};
@@ -96,6 +96,10 @@ impl DatabaseModule {
                     }
                     Err(e) => {
                         println!(
+                            "Error writing events for user {user} with tx hash {tx_hash:#}: {}",
+                            e
+                        );
+                        error!(
                             "Error writing events for user {user} with tx hash {tx_hash:#}: {}",
                             e
                         );

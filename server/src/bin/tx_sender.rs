@@ -443,6 +443,11 @@ async fn main() -> Result<()> {
                 if status != StatusCode::NOT_MODIFIED {
                     let error_text = response.text().await.unwrap_or_default();
                     anyhow::bail!("Server returned error {status}: {error_text}");
+                } else {
+                    let response_text = response.text().await.unwrap_or_default();
+                    println!(
+                        "Session key already exists. Response: {response_text}. Status: {status}"
+                    );
                 }
             }
 
