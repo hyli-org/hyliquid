@@ -109,7 +109,9 @@ impl DatabaseModule {
         let mut trigger_notify_trades = false;
         let mut trigger_notify_orders = false;
 
-        let mut tx = self.ctx.pool.begin().await?;
+        let mut tx = log_error!(self.ctx.pool.begin().await, "Failed to begin transaction")?;
+
+        debug!("Transaction started");
 
         let row = log_error!(
             sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
