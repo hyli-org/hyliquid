@@ -416,7 +416,7 @@ async fn main() -> Result<()> {
                 .find(|asset| asset.symbol == asset_symbol1)
                 .unwrap();
 
-            let deposit_amount_1 = asset_1.scale * 1_000_000_000;
+            let deposit_amount_1 = asset_1.scale * 100_000_000_000;
 
             let asset_2 = assets_info
                 .assets
@@ -424,7 +424,7 @@ async fn main() -> Result<()> {
                 .find(|asset| asset.symbol == asset_symbol2)
                 .unwrap();
 
-            let deposit_amount_2 = asset_2.scale * 1_000_000_000;
+            let deposit_amount_2 = asset_2.scale * 100_000_000_000 * middle_price;
 
             // Add session key
             let response = client
@@ -458,7 +458,9 @@ async fn main() -> Result<()> {
 
             if response.status().is_success() {
                 let response_text = response.text().await?;
-                println!("Deposit successful! Response: {response_text}");
+                println!(
+                    "Deposit successful! Response: {response_text}. Amount: {deposit_amount_1}"
+                );
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();
@@ -477,7 +479,9 @@ async fn main() -> Result<()> {
 
             if response.status().is_success() {
                 let response_text = response.text().await?;
-                println!("Deposit successful! Response: {response_text}");
+                println!(
+                    "Deposit successful! Response: {response_text}. Amount: {deposit_amount_2}"
+                );
             } else {
                 let status = response.status();
                 let error_text = response.text().await.unwrap_or_default();
