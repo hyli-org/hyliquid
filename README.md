@@ -28,7 +28,7 @@ Currently, only Risc0 contracts are supported.
 You can run the docker node and the wallet using
 
 ```bash
-hy devnet start --bake
+hy devnet up --bake
 ```
 
 This will launch a development-mode node and the wallet server and ui.
@@ -39,8 +39,8 @@ From the root of this repository:
 
 ```bash
 # Export devnet env vars first, so that server can connect to your local devnet
-source <(hy devnet env)>
-cargo run -p server
+source <(hy devnet env)
+cargo run --bin server
 ```
 
 This starts the backend service, which handles contract interactions and proofs.
