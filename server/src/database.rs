@@ -486,6 +486,7 @@ impl DatabaseModule {
 
                     let user_id = if let Err(e) = fetched_user_id {
                         if e.0 == StatusCode::NOT_FOUND {
+                            println!("User not found. Creating user {}", user);
                             info!("Creating user {}", user);
                             let row = log_error!(
                                 sqlx::query(
@@ -501,12 +502,16 @@ impl DatabaseModule {
                             )?;
                             row.get::<i64, _>("user_id")
                         } else {
+                            println!("User not found. Error: {}", e.1);
                             return Err(anyhow::anyhow!("{}", e.1));
                         }
                     } else {
-                        fetched_user_id.map_err(|e| anyhow::anyhow!("{}", e.1))?
+                        let user_id = fetched_user_id.map_err(|e| anyhow::anyhow!("{}", e.1))?;
+                        println!("User found. User id: {}", user_id);
+                        user_id
                     };
 
+                    println!("Setting user session keys for user {}", user);
                     debug!("Setting user session keys for user {}", user);
 
                     log_error!(
@@ -520,6 +525,7 @@ impl DatabaseModule {
                     )?;
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
+                    println!("Incrementing nonce for user {}", user);
                     debug!("Incrementing nonce for user {}", user);
                     let row = log_error!(
                         sqlx::query(
