@@ -282,7 +282,7 @@ async fn check(
         }
         info!("✅ No differences found between onchain and db");
 
-        if db_state != onchain {
+        if full_orderbook.commit() != existing.state_commitment {
             error!("No differences found, but commitment mismatch! Diff algo is broken!");
             error!("Onchain commitment: {:?}", existing.state_commitment);
             error!("DB commitment: {:?}", db_state);

@@ -153,7 +153,10 @@ impl OrderbookProverModule {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         match event {
             NodeStateEvent::NewBlock(block) => {
-                tracing::debug!("New block received: {:?}", block);
+                if block.signed_block.height().0 % 1000 == 0 {
+                    info!("Prover received block: {}", block.signed_block.height());
+                }
+                tracing::trace!("New block received: {:?}", block);
 
                 // Use signed_block to efficiently filter transactions by lane_id
                 let tx_hashes: Vec<TxHash> = block
