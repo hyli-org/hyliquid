@@ -2,7 +2,7 @@ use client_sdk::contract_indexer::AppError;
 use orderbook::model::UserInfo;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgPool, Row};
+use sqlx::{PgConnection, PgPool, Row};
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -30,10 +30,10 @@ impl UserService {
 
     /// Return the user_id for a given identity
     /// Store it in memory for faster access
-    pub async fn get_user_id(&self, user: &str) -> Result<i64, AppError> {
+    pub async fn get_user_id(&self, user: &str, tx: &mut PgConnection) -> Result<i64, AppError> {
         let row = sqlx::query("SELECT user_id, salt, nonce FROM users WHERE identity = $1")
             .bind(user)
-            .fetch_one(&self.pool)
+            .fetch_one(tx)
             .await
             .map_err(|_e| {
                 AppError(
@@ -48,7 +48,8 @@ impl UserService {
     }
 
     pub async fn get_balances(&self, user: &str) -> Result<UserBalances, AppError> {
-        let user_id = self.get_user_id(user).await?;
+        let mut tx = self.pool.begin().await?;
+        let user_id = self.get_user_id(user, &mut tx).await?;
         let rows = sqlx::query(
             "
         SELECT 
@@ -63,8 +64,10 @@ impl UserService {
         ",
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         let balances = rows
             .iter()
@@ -84,7 +87,8 @@ impl UserService {
         user: &str,
         commit_id: i64,
     ) -> Result<UserBalances, AppError> {
-        let user_id = self.get_user_id(user).await?;
+        let mut tx = self.pool.begin().await?;
+        let user_id = self.get_user_id(user, &mut tx).await?;
         let rows = sqlx::query(
             "
             SELECT 
@@ -107,8 +111,10 @@ impl UserService {
         )
         .bind(user_id)
         .bind(commit_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await?;
+
+        tx.commit().await?;
 
         let balances = rows
             .iter()
@@ -124,11 +130,14 @@ impl UserService {
     }
 
     pub async fn get_nonce(&self, user: &str) -> Result<u32, AppError> {
-        let user_id = self.get_user_id(user).await?;
+        let mut tx = self.pool.begin().await?;
+        let user_id = self.get_user_id(user, &mut tx).await?;
         let row = sqlx::query("SELECT nonce FROM users WHERE user_id = $1")
             .bind(user_id)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *tx)
             .await?;
+
+        tx.commit().await?;
 
         Ok(row.get::<i64, _>("nonce") as u32)
     }

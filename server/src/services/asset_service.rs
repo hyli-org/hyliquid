@@ -122,7 +122,7 @@ impl AssetService {
         Ok(())
     }
 
-    pub async fn get_instrument<'a>(&'a self, symbol: &str) -> Option<&'a Instrument> {
+    pub fn get_instrument<'a>(&'a self, symbol: &str) -> Option<&'a Instrument> {
         self.instrument_map.get(symbol)
     }
 
@@ -181,7 +181,7 @@ impl AssetService {
             .find(|asset| asset.contract_name == contract_name)
     }
 
-    pub async fn get_asset<'a>(&'a self, symbol: &str) -> Option<&'a Asset> {
+    pub fn get_asset<'a>(&'a self, symbol: &str) -> Option<&'a Asset> {
         self.asset_map.get(symbol)
     }
 

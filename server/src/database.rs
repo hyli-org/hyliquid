@@ -119,17 +119,24 @@ impl DatabaseModule {
         )?;
         let commit_id: i64 = row.get("commit_id");
 
+        let events_user_id = self
+            .ctx
+            .user_service
+            .read()
+            .await
+            .get_user_id(user, &mut tx)
+            .await
+            .map_err(|e| anyhow::anyhow!("{}", e.1))?;
+
         for event in prover_request.events.clone() {
             match event {
                 OrderbookEvent::PairCreated { pair, info: _ } => {
                     let asset_service = self.ctx.asset_service.read().await;
                     let base_asset = asset_service
                         .get_asset(&pair.0)
-                        .await
                         .ok_or_else(|| anyhow::anyhow!("Base asset not found: {}", pair.0))?;
                     let quote_asset = asset_service
                         .get_asset(&pair.1)
-                        .await
                         .ok_or_else(|| anyhow::anyhow!("Quote asset not found: {}", pair.1))?;
                     log_error!(
                         sqlx::query(
@@ -163,14 +170,13 @@ impl DatabaseModule {
                     let asset_service = self.ctx.asset_service.read().await;
                     let asset = asset_service
                         .get_asset(&symbol)
-                        .await
                         .ok_or_else(|| anyhow::anyhow!("Asset not found: {symbol}"))?;
                     let user_id = self
                         .ctx
                         .user_service
                         .read()
                         .await
-                        .get_user_id(&user)
+                        .get_user_id(&user, &mut tx)
                         .await
                         .map_err(|e| anyhow::anyhow!("{}", e.1))?;
 
@@ -210,19 +216,10 @@ impl DatabaseModule {
                 OrderbookEvent::OrderCreated { order } => {
                     trigger_notify_orders = true;
 
-                    let user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(user)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
                     let symbol = format!("{}/{}", order.pair.0, order.pair.1);
                     let asset_service = self.ctx.asset_service.read().await;
                     let instrument = asset_service
                         .get_instrument(&symbol)
-                        .await
                         .ok_or_else(|| anyhow::anyhow!("Instrument not found: {symbol}"))?;
 
                     debug!(
@@ -237,7 +234,7 @@ impl DatabaseModule {
                                      VALUES ($1, $2, $3, $4, $5, $6, $7)")
                         .bind(order.order_id.clone())
                         .bind(instrument.instrument_id)
-                        .bind(user_id)
+                        .bind(events_user_id)
                         .bind(order.order_side.clone())
                         .bind(order.order_type.clone())
                         .bind(order.price.map(|p| p as i64))
@@ -254,7 +251,7 @@ impl DatabaseModule {
                         )
                         .bind(commit_id)
                         .bind(order.order_id.clone())
-                        .bind(user_id)
+                        .bind(events_user_id)
                         .bind(instrument.instrument_id)
                         .bind(order.order_side)
                         .bind(order.order_type)
@@ -311,18 +308,9 @@ impl DatabaseModule {
                     trigger_notify_orders = true;
                     trigger_notify_trades = true;
 
-                    let user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(user)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
                     let asset_service = self.ctx.asset_service.read().await;
                     let instrument = asset_service
                         .get_instrument(&format!("{}/{}", pair.0, pair.1))
-                        .await
                         .ok_or_else(|| {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
@@ -372,7 +360,7 @@ impl DatabaseModule {
                         .bind(order_id)
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
-                        .bind(user_id)
+                        .bind(events_user_id)
                         .execute(&mut *tx)
                         .await,
                         "Failed to insert trade event"
@@ -392,18 +380,9 @@ impl DatabaseModule {
                     trigger_notify_trades = true;
                     trigger_notify_orders = true;
 
-                    let user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(user)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
                     let asset_service = self.ctx.asset_service.read().await;
                     let instrument = asset_service
                         .get_instrument(&format!("{}/{}", pair.0, pair.1))
-                        .await
                         .ok_or_else(|| {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
@@ -454,7 +433,7 @@ impl DatabaseModule {
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
                         .bind(executed_quantity as i64)
-                        .bind(user_id)
+                        .bind(events_user_id)
                         .execute(&mut *tx)
                         .await,
                         "Failed to insert trade event"
@@ -466,8 +445,13 @@ impl DatabaseModule {
                     nonce,
                     session_keys,
                 } => {
-                    let fetched_user_id =
-                        self.ctx.user_service.read().await.get_user_id(&user).await;
+                    let fetched_user_id = self
+                        .ctx
+                        .user_service
+                        .read()
+                        .await
+                        .get_user_id(&user, &mut tx)
+                        .await;
 
                     let user_id = if let Err(e) = fetched_user_id {
                         if e.0 == StatusCode::NOT_FOUND {
