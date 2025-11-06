@@ -79,22 +79,26 @@ const isDepositOpen = ref(false);
 </script>
 
 <template>
-    <div class="min-h-screen w-full flex flex-col bg-neutral-950 text-neutral-200">
+    <div
+        class="min-h-screen w-full flex flex-col bg-gradient-to-bl from-[var(--gradient-start)] via-[var(--gradient-mid)] to-[var(--gradient-end)] text-[var(--text-primary)]"
+    >
         <DepositModal v-model:is-open="isDepositOpen" />
-        <div class="flex w-full h-16 justify-between items-center px-4">
-            <h3>HYLILILILILIQUID</h3>
-            <div class="flex justify-between items-center gap-4">
+        <div
+            class="flex w-full h-16 items-center justify-between border-b border-[var(--border-strong)] bg-[var(--surface-header)] px-6 shadow-sm backdrop-blur"
+        >
+            <h3 class="text-xl font-semibold tracking-wider text-[var(--text-accent)]">Hyliquid</h3>
+            <div class="flex items-center gap-4 text-sm">
                 <button
                     @click="createPair"
-                    class="px-3 py-1 bg-cyan-600 hover:bg-cyan-700 rounded text-sm cursor-pointer"
+                    class="rounded border border-[var(--border-default)] px-3 py-1.5 text-[var(--text-secondary)] transition hover:border-[var(--border-hover)] hover:text-[var(--text-primary)]"
                 >
                     Create all pairs
                 </button>
-                <p v-if="wallet?.address">Logged in as {{ wallet?.address }}</p>
+                <p v-if="wallet?.address" class="text-[var(--text-secondary)]">Logged in as {{ wallet?.address }}</p>
                 <button
                     v-if="wallet?.address"
                     @click="isDepositOpen = true"
-                    class="px-3 py-1 rounded bg-indigo-600 text-sm font-semibold text-neutral-100 transition hover:bg-indigo-500"
+                    class="rounded-[2rem] hover:cursor-pointer bg-(image:--accent-gradient) px-6 py-3 font-semibold text-[var(--text-on-accent)] transition hover:bg-(image:--accent-gradient-strong)"
                 >
                     Deposit
                 </button>
@@ -105,4 +109,8 @@ const isDepositOpen = ref(false);
     </div>
 </template>
 
-<style scoped></style>
+<style>
+body {
+    --border-hover: rgba(148, 163, 184, 1);
+}
+</style>

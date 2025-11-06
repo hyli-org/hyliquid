@@ -75,14 +75,14 @@ watch([isWithdrawOpen, isWithdrawOnEthOpen], ([withdrawOpen, withdrawOnEthOpen])
 
         <InstrumentsPanel />
 
-        <main class="flex min-w-0 grow flex-col bg-neutral-950">
+        <main class="flex min-w-0 grow flex-col">
             <TopBar v-if="instrumentsState.selected" />
 
             <div class="grid grow grid-cols-12 overflow-hidden">
-                <section class="col-span-8 border-r border-neutral-800">
+                <section class="col-span-8 border-r border-[var(--border-default)]">
                     <ChartPlaceholder />
 
-                    <div class="flex h-full min-h-80 flex-col p-3">
+                    <div class="flex h-full min-h-80 flex-col gap-4 rounded-xl py-3 px-5 shadow-sm">
                         <BottomTabs v-model="activityState.bottomTab" />
 
                         <PositionsTable

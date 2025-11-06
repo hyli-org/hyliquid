@@ -8,24 +8,31 @@ const selectedInstrument = computed(() => {
 </script>
 
 <template>
-    <div class="flex items-center justify-between border-b border-neutral-800 px-4 py-3">
+    <div class="flex items-center justify-between border-b border-[var(--border-strong)] px-5 py-3 shadow-sm">
         <div class="flex items-center gap-3">
-            <div class="text-lg font-semibold">{{ selectedInstrument.symbol }}</div>
-            <div class="text-sm text-neutral-400">Perpetual</div>
-            <div class="ml-4 text-sm">
-                <span class="text-neutral-400">Mark</span>
-                <span class="ml-2 tabular-nums">{{
+            <div class="text-lg font-semibold text-[var(--text-accent)]">{{ selectedInstrument.symbol }}</div>
+            <div class="text-sm uppercase tracking-wide text-[var(--text-muted)]">Perpetual</div>
+            <div class="ml-4 text-sm text-[var(--text-secondary)]">
+                <span class="text-[var(--text-muted)]">Mark</span>
+                <span class="ml-2 tabular-nums text-[var(--text-accent)]">{{
                     instrumentsState.toRealPrice(selectedInstrument.symbol, selectedInstrument.price)
                 }}</span>
             </div>
-            <div class="text-sm" :class="selectedInstrument.change >= 0 ? 'text-emerald-400' : 'text-rose-400'">
+            <div
+                class="text-sm"
+                :class="selectedInstrument.change >= 0 ? 'text-[var(--buy-color)]' : 'text-[var(--sell-color)]'"
+            >
                 {{ selectedInstrument.change >= 0 ? "+" : ""
                 }}{{ instrumentsState.toRealPrice(selectedInstrument.symbol, selectedInstrument.change) }}%
             </div>
         </div>
-        <div class="flex items-center gap-4">
-            <div class="flex items-center gap-2 text-sm">
-                <span class="text-neutral-400">Lev x40</span>
+        <div class="flex items-center gap-4 text-sm text-[var(--text-secondary)]">
+            <div class="flex items-center gap-2">
+                <span
+                    class="rounded-full border border-[var(--border-default)] px-3 py-1 text-xs uppercase tracking-wide text-[var(--text-muted)]"
+                >
+                    Lev x40
+                </span>
             </div>
         </div>
     </div>

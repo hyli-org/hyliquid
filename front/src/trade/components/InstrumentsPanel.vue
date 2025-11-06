@@ -21,18 +21,20 @@ const selectInstrument = (instrument: any) => {
 </script>
 
 <template>
-    <aside class="w-64 shrink-0 border-r border-neutral-800 bg-neutral-950">
-        <div class="p-3 border-b border-neutral-800">
+    <aside class="w-64 shrink-0 border-r border-[var(--border-default)]">
+        <div class="p-3">
             <input
                 :value="instrumentsState.search"
                 @input="(e: any) => (instrumentsState.search = e.target.value)"
-                class="w-full rounded-md bg-neutral-900 px-3 py-2 text-sm placeholder-neutral-500 outline-none focus:ring-1 focus:ring-neutral-700"
+                class="w-full rounded-md border border-[var(--border-default)] bg-[var(--surface-input)] px-3 py-2 text-sm text-[var(--text-secondary)] placeholder-[var(--text-muted)] outline-none transition focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent-soft)]"
                 placeholder="Search instruments"
             />
         </div>
         <div class="overflow-auto h-full">
-            <div v-if="instrumentsState.fetching" class="px-3 py-2 text-xs text-neutral-400">Loading instruments…</div>
-            <div v-else-if="instrumentsState.error" class="px-3 py-2 text-xs text-rose-400">
+            <div v-if="instrumentsState.fetching" class="px-3 py-2 text-xs text-[var(--text-muted)]">
+                Loading instruments…
+            </div>
+            <div v-else-if="instrumentsState.error" class="px-3 py-2 text-xs text-[var(--sell-color)]">
                 {{ instrumentsState.error }}
             </div>
             <ul>
@@ -41,17 +43,35 @@ const selectInstrument = (instrument: any) => {
                     :key="m.symbol"
                     @click="() => selectInstrument(m)"
                     :class="[
-                        'cursor-pointer px-3 py-2 flex items-center justify-between hover:bg-neutral-900',
-                        instrumentsState.selected?.symbol === m.symbol ? 'bg-neutral-900' : '',
+                        'group relative flex cursor-pointer items-center justify-between px-4 py-3 transition',
+                        instrumentsState.selected?.symbol === m.symbol
+                            ? 'border-l-2 border-[var(--accent)] bg-[var(--accent-soft)] shadow-inner'
+                            : 'hover:bg-[var(--surface-header)]',
                     ]"
                 >
                     <div>
-                        <div class="text-sm font-medium">{{ m.symbol }}</div>
-                        <div class="text-xs text-neutral-500">Vol ${{ (m.vol / 1_000_000).toFixed(1) }}M</div>
+                        <div
+                            :class="[
+                                'text-sm font-semibold transition',
+                                instrumentsState.selected?.symbol === m.symbol
+                                    ? 'text-[var(--text-accent)]'
+                                    : 'text-[var(--text-primary)]',
+                            ]"
+                        >
+                            {{ m.symbol }}
+                        </div>
+                        <div class="text-xs text-[var(--text-muted)]">Vol ${{ (m.vol / 1_000_000).toFixed(1) }}M</div>
                     </div>
                     <div class="text-right">
-                        <div class="text-sm tabular-nums">{{ instrumentsState.toRealPrice(m.symbol, m.price) }}</div>
-                        <div :class="['text-xs', m.change >= 0 ? 'text-emerald-400' : 'text-rose-400']">
+                        <div class="tabular-nums text-sm text-[var(--text-secondary)]">
+                            {{ instrumentsState.toRealPrice(m.symbol, m.price) }}
+                        </div>
+                        <div
+                            :class="[
+                                'text-xs font-medium',
+                                m.change >= 0 ? 'text-[var(--buy-color)]' : 'text-[var(--sell-color)]',
+                            ]"
+                        >
                             {{ m.change >= 0 ? "+" : "" }}{{ instrumentsState.toRealPrice(m.symbol, m.change) }}%
                         </div>
                     </div>

@@ -101,14 +101,14 @@ const getQuantityPercentage = (quantity: number) => {
 </script>
 
 <template>
-    <section class="col-span-2 border-r border-neutral-800 p-3 flex flex-col">
+    <section class="col-span-2 flex flex-col border-r border-[var(--border-default)] p-3">
         <div class="flex justify-between items-center mb-2">
-            <div class="text-xs text-neutral-400">Orderbook</div>
+            <div class="text-xs font-semibold uppercase tracking-wide text-[var(--text-accent)]">Orderbook</div>
             <div class="flex items-center gap-2">
-                <label class="text-xs text-neutral-400"></label>
+                <label class="text-xs text-[var(--text-muted)]"></label>
                 <select
                     v-model="activityState.orderbookTicks"
-                    class="text-xs bg-neutral-800 border border-neutral-700 rounded px-2 py-1 text-neutral-300 focus:outline-none focus:border-neutral-500"
+                    class="rounded border border-[var(--border-default)] bg-[var(--surface-input)] px-2 py-1 text-xs text-[var(--text-secondary)] focus:border-[var(--accent)] focus:outline-none"
                 >
                     <option v-for="option in groupTickOptions" :key="option.value" :value="option.value">
                         {{ option.label }}
@@ -116,11 +116,13 @@ const getQuantityPercentage = (quantity: number) => {
                 </select>
             </div>
         </div>
-        <div v-if="orderbookState.fetching" class="text-xs text-neutral-400">Loading…</div>
-        <div v-else-if="orderbookState.error" class="text-xs text-rose-400">{{ orderbookState.error }}</div>
+        <div v-if="orderbookState.fetching" class="text-xs text-[var(--text-muted)]">Loading…</div>
+        <div v-else-if="orderbookState.error" class="text-xs text-[var(--sell-color)]">{{ orderbookState.error }}</div>
         <template v-else>
             <!-- Headers -->
-            <div class="grid grid-cols-3 text-xs text-neutral-400 mb-2 border-b border-neutral-800 pb-1">
+            <div
+                class="mb-2 grid grid-cols-3 border-b border-[var(--border-default)] pb-1 text-xs text-[var(--text-muted)]"
+            >
                 <span class="text-left">Price</span>
                 <span class="text-center">Size ({{ instrumentsState.selected?.base_asset }})</span>
                 <span class="text-right">Total</span>
@@ -131,12 +133,15 @@ const getQuantityPercentage = (quantity: number) => {
                     <div
                         v-for="(a, index) in displayAsks"
                         :key="'a' + index + '-' + a.price"
-                        :class="['relative grid grid-cols-3 text-sm text-rose-300', a.price === 0 ? 'opacity-30' : '']"
+                        :class="[
+                            'relative grid grid-cols-3 text-sm text-[var(--sell-color)]',
+                            a.price === 0 ? 'opacity-30' : 'drop-shadow-sm',
+                        ]"
                     >
                         <!-- Background bar for ask -->
                         <div
                             v-if="a.quantity > 0"
-                            class="absolute inset-0 bg-rose-500/10"
+                            class="absolute inset-0 bg-[var(--sell-soft)]"
                             :style="{ width: getQuantityPercentage(a.quantity) + '%' }"
                         ></div>
                         <span class="relative z-10 tabular-nums text-left">{{
@@ -156,8 +161,10 @@ const getQuantityPercentage = (quantity: number) => {
                 </div>
 
                 <!-- Mid price - center -->
-                <div class="border-t border-b border-neutral-800 py-1 text-center text-neutral-300 flex-shrink-0">
-                    <span class="tabular-nums">{{
+                <div
+                    class="flex-shrink-0 border-y border-[var(--border-default)] py-1 my-3 text-center text-[var(--text-accent)]"
+                >
+                    <span class="tabular-nums font-semibold">{{
                         instrumentsState.toRealPrice(instrumentsState.selected?.symbol, midPrice)
                     }}</span>
                 </div>
@@ -168,14 +175,14 @@ const getQuantityPercentage = (quantity: number) => {
                         v-for="(b, index) in displayBids"
                         :key="'b' + index + '-' + b.price"
                         :class="[
-                            'relative grid grid-cols-3 text-sm text-emerald-300',
+                            'relative grid grid-cols-3 text-sm text-[var(--buy-color)]',
                             b.price === 0 ? 'opacity-30' : '',
                         ]"
                     >
                         <!-- Background bar for bid -->
                         <div
                             v-if="b.quantity > 0"
-                            class="absolute inset-0 bg-emerald-500/10"
+                            class="absolute inset-0 bg-[var(--buy-soft)]"
                             :style="{ width: getQuantityPercentage(b.quantity) + '%' }"
                         ></div>
                         <span class="relative z-10 tabular-nums text-left">{{

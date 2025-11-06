@@ -1,1 +1,38 @@
 @import "tailwindcss";
+
+:root {
+    --gradient-start: #010512;
+    --gradient-mid: #0a101f;
+    --gradient-end: #020617;
+
+    --surface-header: rgba(15, 23, 42, 1);
+    --surface-input: rgba(15, 23, 42, 1);
+    --surface-overlay: rgba(2, 6, 23, 1);
+
+    --border-default: rgba(71, 85, 105, 0.5);
+    --border-strong: rgba(100, 116, 139, 0.6);
+    --border-accent: rgba(251, 146, 60, 1);
+    --table-row-border: rgba(30, 41, 59, 1);
+
+    --text-primary: #f1f5f9;
+    --text-secondary: #e2e8f0;
+    --text-muted: #94a3b8;
+    --text-accent: #ff9660;
+    --text-on-accent: #f1f5f9;
+
+    --accent-gradient: linear-gradient(90deg, #ff594b 0%, #ff9660 100%);
+    --accent-gradient-strong: linear-gradient(0deg, #ff594b 0%, #ff9660 100%);
+    --accent: #ff9660;
+    --accent-strong: #ff594b;
+    --accent-soft: rgba(251, 146, 60, 0.18);
+
+    --buy-color: #34d399;
+    --buy-strong: #22c55e;
+    --buy-border: rgba(52, 211, 153, 0.45);
+    --buy-soft: rgba(52, 211, 153, 0.25);
+
+    --sell-color: #f87171;
+    --sell-strong: #f43f5e;
+    --sell-border: rgba(248, 113, 113, 0.45);
+    --sell-soft: rgba(248, 113, 113, 0.25);
+}

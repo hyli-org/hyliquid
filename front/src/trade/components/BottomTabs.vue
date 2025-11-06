@@ -63,29 +63,45 @@ onUnmounted(() => {
 <template>
     <div class="mb-2 flex gap-2">
         <button
-            class="rounded-md px-3 py-1.5 text-sm"
-            :class="props.modelValue === 'Positions' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
+            class="rounded-md px-3 py-1.5 text-sm transition"
+            :class="
+                props.modelValue === 'Positions'
+                    ? 'border border-[var(--border-accent)] bg-[var(--accent-soft)] text-[var(--text-accent)] shadow-sm'
+                    : 'border border-[var(--border-default)] bg-[var(--surface-input)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            "
             @click="handleTabClick('Positions')"
         >
             Positions
         </button>
         <button
-            class="rounded-md px-3 py-1.5 text-sm"
-            :class="props.modelValue === 'Orders' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
+            class="rounded-md px-3 py-1.5 text-sm transition"
+            :class="
+                props.modelValue === 'Orders'
+                    ? 'border border-[var(--border-accent)] bg-[var(--accent-soft)] text-[var(--text-accent)] shadow-sm'
+                    : 'border border-[var(--border-default)] bg-[var(--surface-input)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            "
             @click="handleTabClick('Orders')"
         >
             Orders
         </button>
         <button
-            class="rounded-md px-3 py-1.5 text-sm"
-            :class="props.modelValue === 'Fills' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
+            class="rounded-md px-3 py-1.5 text-sm transition"
+            :class="
+                props.modelValue === 'Fills'
+                    ? 'border border-[var(--border-accent)] bg-[var(--accent-soft)] text-[var(--text-accent)] shadow-sm'
+                    : 'border border-[var(--border-default)] bg-[var(--surface-input)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            "
             @click="handleTabClick('Fills')"
         >
             Fills
         </button>
         <button
-            class="rounded-md px-3 py-1.5 text-sm"
-            :class="props.modelValue === 'Balances' ? 'bg-neutral-800 text-white' : 'bg-neutral-900 text-neutral-300'"
+            class="rounded-md px-3 py-1.5 text-sm transition"
+            :class="
+                props.modelValue === 'Balances'
+                    ? 'border border-[var(--border-accent)] bg-[var(--accent-soft)] text-[var(--text-accent)] shadow-sm'
+                    : 'border border-[var(--border-default)] bg-[var(--surface-input)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+            "
             @click="handleTabClick('Balances')"
         >
             Balances
