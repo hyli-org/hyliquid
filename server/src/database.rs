@@ -150,15 +150,6 @@ impl DatabaseModule {
         println!("Commit id: {}", commit_id);
         debug!("Created commit with id {}", commit_id);
 
-        let events_user_id = self
-            .ctx
-            .user_service
-            .read()
-            .await
-            .get_user_id(user, &mut tx)
-            .await
-            .map_err(|e| anyhow::anyhow!("{}", e.1))?;
-
         for event in prover_request.events.clone() {
             println!("Processing event: {:?}", event);
             match event {
@@ -259,6 +250,15 @@ impl DatabaseModule {
                         user, instrument, order
                     );
 
+                    let events_user_id = self
+                        .ctx
+                        .user_service
+                        .read()
+                        .await
+                        .get_user_id(user, &mut tx)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
+
                     symbol_book_updated.insert(symbol);
 
                     log_error!(
@@ -347,6 +347,15 @@ impl DatabaseModule {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
 
+                    let events_user_id = self
+                        .ctx
+                        .user_service
+                        .read()
+                        .await
+                        .get_user_id(user, &mut tx)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
+
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
                     log_error!(
@@ -418,6 +427,15 @@ impl DatabaseModule {
                         .ok_or_else(|| {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
+
+                    let events_user_id = self
+                        .ctx
+                        .user_service
+                        .read()
+                        .await
+                        .get_user_id(user, &mut tx)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
