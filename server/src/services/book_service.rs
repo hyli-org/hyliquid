@@ -75,31 +75,35 @@ impl BookService {
     ) -> Result<OrderManager, AppError> {
         let rows = sqlx::query(
             "
+        WITH last_commit AS (
+        SELECT order_id, MAX(commit_id) AS commit_id
+        FROM order_events
+        WHERE commit_id <= $1
+        GROUP BY order_id
+        )
         SELECT 
-            o.order_id, 
-            o.type, 
-            o.side, 
-            o.price, 
-            o.qty - o.qty_filled as qty_remaining, 
+            o.order_id,
+            o.type,
+            o.side,
+            o.price,
+            o.qty - o.qty_filled AS qty_remaining,
             u.identity,
-            base_asset.symbol as base_asset_symbol,
-            quote_asset.symbol as quote_asset_symbol
-        FROM order_events o
-        JOIN instruments i ON o.instrument_id = i.instrument_id
-        JOIN assets base_asset ON i.base_asset_id = base_asset.asset_id
-        JOIN assets quote_asset ON i.quote_asset_id = quote_asset.asset_id
-        JOIN users u ON o.user_id = u.user_id
-        where
-            o.commit_id = (select MAX(commit_id) from order_events where order_id = o.order_id and commit_id <= $1)
-            and o.status in ('open', 'partially_filled')
-        ORDER BY o.event_time asc;
+            base_asset.symbol AS base_asset_symbol,
+            quote_asset.symbol AS quote_asset_symbol
+        FROM last_commit lc
+        JOIN order_events o
+        ON o.order_id = lc.order_id AND o.commit_id = lc.commit_id
+        JOIN instruments i       ON o.instrument_id = i.instrument_id
+        JOIN assets base_asset   ON i.base_asset_id = base_asset.asset_id
+        JOIN assets quote_asset  ON i.quote_asset_id = quote_asset.asset_id
+        JOIN users u             ON o.user_id = u.user_id
+        WHERE o.status IN ('open','partially_filled')
+        ORDER BY o.event_time asc
         ",
         )
         .bind(commit_id)
         .fetch_all(&self.pool)
         .await?;
-
-        tracing::info!("Orders: {:?}", rows);
 
         let orders: HashMap<String, (Order, String)> = rows
             .iter()

@@ -8,6 +8,7 @@ use orderbook::{
     model::{
         AssetInfo, Balance as OrderbookBalance, ExecuteState, Pair, PairInfo, Symbol, UserInfo,
     },
+    order_manager::diff_maps,
     zk::{smt::GetKey, FullState, OrderManagerRoots, H256},
 };
 use reqwest::StatusCode;
@@ -237,8 +238,6 @@ pub async fn init_orderbook_from_database(
             .sum::<usize>(),
     );
 
-    info!("Users info: {:?}", users_info);
-
     // TODO: load properly the value
     let last_block_height = sdk::BlockHeight(0);
 
@@ -371,9 +370,11 @@ impl DebugStateCommitment {
         }
 
         if self.balances_roots != other.balances_roots {
-            diff.insert(
-                "balances_merkle_roots".to_string(),
-                format!("{:?} != {:?}", self.balances_roots, other.balances_roots),
+            diff_maps(
+                &mut diff,
+                "balances_roots",
+                &self.balances_roots,
+                &other.balances_roots,
             );
         }
 
@@ -389,13 +390,37 @@ impl DebugStateCommitment {
         }
 
         if self.order_manager_roots != other.order_manager_roots {
-            diff.insert(
-                "order_manager_roots".to_string(),
-                format!(
-                    "{:?} != {:?}",
-                    self.order_manager_roots, other.order_manager_roots
-                ),
-            );
+            if self.order_manager_roots.orders_root != other.order_manager_roots.orders_root {
+                diff.insert(
+                    "order_manager_roots.orders_root".to_string(),
+                    format!(
+                        "{:?} != {:?}",
+                        self.order_manager_roots.orders_root, other.order_manager_roots.orders_root
+                    ),
+                );
+            }
+            if self.order_manager_roots.bid_orders_root != other.order_manager_roots.bid_orders_root
+            {
+                diff.insert(
+                    "order_manager_roots.bid_orders_root".to_string(),
+                    format!(
+                        "{:?} != {:?}",
+                        self.order_manager_roots.bid_orders_root,
+                        other.order_manager_roots.bid_orders_root
+                    ),
+                );
+            }
+            if self.order_manager_roots.ask_orders_root != other.order_manager_roots.ask_orders_root
+            {
+                diff.insert(
+                    "order_manager_roots.ask_orders_root".to_string(),
+                    format!(
+                        "{:?} != {:?}",
+                        self.order_manager_roots.ask_orders_root,
+                        other.order_manager_roots.ask_orders_root
+                    ),
+                );
+            }
         }
 
         diff

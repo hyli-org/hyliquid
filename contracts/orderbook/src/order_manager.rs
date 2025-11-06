@@ -404,51 +404,12 @@ impl OrderManager {
             let other_orders_map = other_orders.iter().collect();
             let self_orders_map = self_orders.iter().collect();
 
-            let mismatching_orders = diff_maps(&other_orders_map, &self_orders_map);
-            mismatching_orders.added.iter().for_each(|id| {
-                diff.insert(
-                    format!("order_manager.{field_name}"),
-                    format!(
-                        "{}/{} {:?} != None",
-                        id.0,
-                        id.1,
-                        self_orders
-                            .get(id)
-                            .map_or("None".to_string(), |o| format!("{o:?}"))
-                    ),
-                );
-            });
-            mismatching_orders.removed.iter().for_each(|id| {
-                diff.insert(
-                    format!("order_manager.{field_name}"),
-                    format!(
-                        "None != {}/{} {:?}",
-                        id.0,
-                        id.1,
-                        other_orders
-                            .get(id)
-                            .map_or("None".to_string(), |o| format!("{o:?}"))
-                    ),
-                );
-            });
-            mismatching_orders.changed.iter().for_each(|(id, _)| {
-                diff.insert(
-                    format!("order_manager.{field_name}"),
-                    format!(
-                        "{}/{} {:?} != {}/{} {:?}",
-                        id.0,
-                        id.1,
-                        self_orders
-                            .get(id)
-                            .map_or("None".to_string(), |o| format!("{o:?}")),
-                        id.0,
-                        id.1,
-                        other_orders
-                            .get(id)
-                            .map_or("None".to_string(), |o| format!("{o:?}"))
-                    ),
-                );
-            });
+            diff_maps(
+                &mut diff,
+                &format!("order_manager.{field_name}"),
+                &other_orders_map,
+                &self_orders_map,
+            );
         }
 
         diff
@@ -465,43 +426,12 @@ impl OrderManager {
             let other_orders = other.orders.iter().collect();
             let self_orders = self.orders.iter().collect();
 
-            let mismatching_orders = diff_maps(&other_orders, &self_orders);
-            mismatching_orders.added.iter().for_each(|id| {
-                diff.insert(
-                    "order_manager.orders".to_string(),
-                    format!(
-                        "{id:?}: {:?} != None",
-                        self_orders
-                            .get(*id)
-                            .map_or("None".to_string(), |o| format!("{o:?}"))
-                    ),
-                );
-            });
-            mismatching_orders.removed.iter().for_each(|id| {
-                diff.insert(
-                    "order_manager.orders".to_string(),
-                    format!(
-                        "None != {id:?}: {:?}",
-                        other_orders
-                            .get(*id)
-                            .map_or("None".to_string(), |o| format!("{o:?}"))
-                    ),
-                );
-            });
-            mismatching_orders.changed.iter().for_each(|(id, _)| {
-                diff.insert(
-                    "order_manager.orders".to_string(),
-                    format!(
-                        "{id:?}: {:?} != {id:?}: {:?}",
-                        self_orders
-                            .get(*id)
-                            .map_or("None".to_string(), |o| format!("{o:?}")),
-                        other_orders
-                            .get(*id)
-                            .map_or("None".to_string(), |o| format!("{o:?}"))
-                    ),
-                );
-            });
+            diff_maps(
+                &mut diff,
+                &format!("order_manager.orders"),
+                &other_orders,
+                &self_orders,
+            );
         }
 
         diff.extend(self.diff_order_maps(&self.bid_orders, &other.bid_orders, "bid_orders"));
@@ -592,16 +522,20 @@ impl OrderManager {
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Default)]
-struct MapDiff<'a, K, V> {
-    added: HashSet<&'a K>,
-    removed: HashSet<&'a K>,
-    changed: HashMap<&'a K, (&'a V, &'a V)>, // (old, new)
+pub struct MapDiff<'a, K, V> {
+    pub added: HashSet<&'a K>,
+    pub removed: HashSet<&'a K>,
+    pub changed: HashMap<&'a K, (&'a V, &'a V)>, // (old, new)
 }
 
-fn diff_maps<'a, K, V>(old: &'a HashMap<K, V>, new: &'a HashMap<K, V>) -> MapDiff<'a, K, V>
-where
-    K: std::hash::Hash + Eq,
-    V: PartialEq,
+pub fn diff_maps<'a, K, V>(
+    diff: &mut BTreeMap<String, String>,
+    key: &str,
+    old: &'a HashMap<K, V>,
+    new: &'a HashMap<K, V>,
+) where
+    K: std::hash::Hash + Eq + std::fmt::Debug,
+    V: PartialEq + std::fmt::Debug,
 {
     let mut d = MapDiff {
         added: HashSet::new(),
@@ -629,5 +563,44 @@ where
         }
     }
 
-    d
+    d.update_diff(key, diff, old, new);
+}
+
+impl<'a, K, V> MapDiff<'a, K, V>
+where
+    K: std::hash::Hash + Eq + std::fmt::Debug,
+    V: PartialEq + std::fmt::Debug,
+{
+    pub fn update_diff(
+        &self,
+        key: &str,
+        diff: &mut BTreeMap<String, String>,
+        old: &HashMap<K, V>,
+        new: &HashMap<K, V>,
+    ) {
+        self.added.iter().for_each(|k| {
+            diff.insert(
+                format!("{key}.{:?} added", k),
+                format!(
+                    "{:?}",
+                    old.get(k).map_or("None".to_string(), |o| format!("{o:?}"))
+                ),
+            );
+        });
+        self.removed.iter().for_each(|k| {
+            diff.insert(
+                format!("{key}.{:?} removed", k),
+                format!(
+                    "{:?}",
+                    new.get(k).map_or("None".to_string(), |o| format!("{o:?}"))
+                ),
+            );
+        });
+        self.changed.iter().for_each(|(k, (old, new))| {
+            diff.insert(
+                format!("{key}.{:?} changed", k),
+                format!("{:?} -> {:?}", old, new),
+            );
+        });
+    }
 }
