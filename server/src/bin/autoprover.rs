@@ -44,8 +44,19 @@ fn main() -> Result<()> {
         init_tracing();
     } else {
         // setup_tracing(&config.log_format, "hyliquid".to_string())?;
+        let filter = tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+            .from_env()?;
 
-        tracing_subscriber::fmt::init();
+        tracing_subscriber::util::SubscriberInitExt::init(
+            tracing_subscriber::layer::SubscriberExt::with(
+                tracing_subscriber::registry(),
+                tracing_subscriber::Layer::with_filter(tracing_subscriber::fmt::layer(), filter),
+            ),
+        );
+
+        // This simply works:
+        // tracing_subscriber::fmt::init();
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
