@@ -35,15 +35,27 @@ pub struct Args {
     pub orderbook_cn: String,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    server::init::install_rustls_crypto_provider();
     let args = Args::parse();
-    let config = Conf::new(args.config_file).context("reading config file")?;
+    let config = Conf::new(args.config_file.clone()).context("reading config file")?;
+
     if args.tracing {
         init_tracing();
     } else {
         setup_tracing(&config.log_format, "hyliquid".to_string())?;
     }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        // Results in poor threading performance otherwise.
+        .disable_lifo_slot()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(actual_main(args, config))
+}
+
+async fn actual_main(args: Args, config: Conf) -> Result<()> {
     let config = Arc::new(config);
     info!("Starting autoprover with config: {:?}", &config);
 
