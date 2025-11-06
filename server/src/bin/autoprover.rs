@@ -43,7 +43,9 @@ fn main() -> Result<()> {
     if args.tracing {
         init_tracing();
     } else {
-        setup_tracing(&config.log_format, "hyliquid".to_string())?;
+        // setup_tracing(&config.log_format, "hyliquid".to_string())?;
+
+        tracing_subscriber::fmt::init();
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

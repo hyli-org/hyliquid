@@ -127,6 +127,9 @@ pub async fn init_orderbook_from_database(
     let user_service = user_service.read().await;
     let book_service = book_service.read().await;
 
+    println!("🔍 Initializing orderbook from database");
+    info!("🔍 Initializing orderbook from database");
+
     let last_settled_tx = indexer
         .get_last_settled_txid_by_contract(contract_name, Some(vec![TransactionStatusDb::Success]))
         .await?;
@@ -139,6 +142,7 @@ pub async fn init_orderbook_from_database(
     let last_settled_tx = last_settled_tx.unwrap();
 
     info!("🔍 Last settled tx found: {}", last_settled_tx);
+    println!("🔍 Last settled tx found: {}", last_settled_tx);
 
     let commit_id = asset_service
         .get_commit_id_from_tx_hash(&last_settled_tx.1)
