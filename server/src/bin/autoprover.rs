@@ -54,7 +54,7 @@ fn main() -> Result<()> {
             // .with(tracing_subscriber::fmt::layer().with_filter(filter))
             .init();
         // This simply works:
-        tracing_subscriber::fmt::init();
+        // tracing_subscriber::fmt::init();
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
