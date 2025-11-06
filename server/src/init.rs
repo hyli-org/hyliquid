@@ -203,6 +203,7 @@ pub async fn init_orderbook_from_database(
     let mut balances: HashMap<Symbol, HashMap<orderbook::zk::H256, OrderbookBalance>> =
         HashMap::new();
 
+    info!("🔍 Loading balances");
     for user in users_info.values() {
         let user_balances = user_service
             .get_balances_from_commit_id(&user.user, commit_id)
@@ -215,6 +216,7 @@ pub async fn init_orderbook_from_database(
         }
     }
 
+    info!("🔍 Loading order manager");
     let order_manager = book_service
         .get_order_manager(&users_info, commit_id)
         .await?;
