@@ -154,6 +154,7 @@ pub async fn init_orderbook_from_database(
     let commit_id = commit_id.unwrap();
 
     info!("🔍 Commit id: {}", commit_id);
+    println!("🔍 Commit id: {}", commit_id);
 
     let instruments = asset_service.get_all_instruments(commit_id).await?;
     let assets = asset_service.get_all_assets().await;
