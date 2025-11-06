@@ -127,7 +127,6 @@ pub async fn init_orderbook_from_database(
     let user_service = user_service.read().await;
     let book_service = book_service.read().await;
 
-    println!("🔍 Initializing orderbook from database");
     info!("🔍 Initializing orderbook from database");
 
     let last_settled_tx = indexer
@@ -142,7 +141,6 @@ pub async fn init_orderbook_from_database(
     let last_settled_tx = last_settled_tx.unwrap();
 
     info!("🔍 Last settled tx found: {}", last_settled_tx);
-    println!("🔍 Last settled tx found: {}", last_settled_tx);
 
     let commit_id = asset_service
         .get_commit_id_from_tx_hash(&last_settled_tx.1)
@@ -158,7 +156,6 @@ pub async fn init_orderbook_from_database(
     let commit_id = commit_id.unwrap();
 
     info!("🔍 Commit id: {}", commit_id);
-    println!("🔍 Commit id: {}", commit_id);
 
     let instruments = asset_service.get_all_instruments(commit_id).await?;
     let assets = asset_service.get_all_assets().await;

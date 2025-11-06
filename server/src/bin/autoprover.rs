@@ -18,7 +18,14 @@ use server::{
 };
 use sp1_sdk::{Prover, ProverClient};
 use std::sync::Arc;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
+use tracing::Subscriber;
+use tracing_subscriber::{
+    fmt::{format, FormatEvent, FormatFields},
+    layer::SubscriberExt,
+    registry::LookupSpan,
+    util::SubscriberInitExt,
+    Layer,
+};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -44,17 +51,18 @@ fn main() -> Result<()> {
     if args.tracing {
         init_tracing();
     } else {
-        // setup_tracing(&config.log_format, "hyliquid".to_string())?;
+        let filter = tracing_subscriber::EnvFilter::builder()
+            .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+            .from_env()?;
 
-        // let filter = tracing_subscriber::EnvFilter::builder()
-        //     .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-        //     .from_env()?;
-
-        tracing_subscriber::registry()
-            // .with(tracing_subscriber::fmt::layer().with_filter(filter))
-            .init();
-        // This simply works:
-        // tracing_subscriber::fmt::init();
+        if config.log_format == "json" {
+            tracing_subscriber::fmt()
+                .with_env_filter(filter)
+                .json()
+                .init();
+        } else {
+            tracing_subscriber::fmt().with_env_filter(filter).init();
+        }
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
