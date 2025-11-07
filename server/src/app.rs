@@ -271,7 +271,7 @@ impl OrderbookModule {
 
         let mut bus = self.bus.clone();
         bus.send(DatabaseRequest::WriteEvents {
-            user: ORDERBOOK_ACCOUNT_IDENTITY.to_string(),
+            user: UserInfo::new(ORDERBOOK_ACCOUNT_IDENTITY.to_string(), Vec::new()),
             tx_hash: tx_hash.clone(),
             blob_tx,
             prover_request: OrderbookProverRequest {
@@ -908,7 +908,7 @@ async fn process_orderbook_action<T: BorshSerialize>(
     debug!("Sending write events request to database module for tx {tx_hash:#}");
     let mut bus = ctx.bus.clone();
     bus.send(DatabaseRequest::WriteEvents {
-        user: user_info.user,
+        user: user_info,
         tx_hash: tx_hash.clone(),
         blob_tx,
         prover_request,

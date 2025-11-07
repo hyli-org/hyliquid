@@ -8,12 +8,12 @@ use hyli_modules::{
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
-use orderbook::model::OrderbookEvent;
+use orderbook::model::{OrderbookEvent, UserInfo};
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::services::user_service::UserService;
 use crate::{prover::OrderbookProverRequest, services::asset_service::AssetService};
@@ -21,7 +21,7 @@ use crate::{prover::OrderbookProverRequest, services::asset_service::AssetServic
 #[derive(Debug, Clone)]
 pub enum DatabaseRequest {
     WriteEvents {
-        user: String,
+        user: UserInfo,
         tx_hash: TxHash,
         blob_tx: BlobTransaction,
         prover_request: OrderbookProverRequest,
@@ -85,29 +85,16 @@ impl DatabaseModule {
                 blob_tx,
                 prover_request,
             } => {
-                match self
-                    .write_events(&user, tx_hash.clone(), prover_request)
-                    .await
-                {
-                    Ok(()) => {
-                        println!(
-                            "Events written successfully for user {user} with tx hash {tx_hash:#}"
-                        );
-                    }
-                    Err(e) => {
-                        println!(
-                            "Error writing events for user {user} with tx hash {tx_hash:#}: {}",
-                            e
-                        );
-                        error!(
-                            "Error writing events for user {user} with tx hash {tx_hash:#}: {}",
-                            e
-                        );
-                        return Err(anyhow::anyhow!("Failed to write events: {}", e));
-                    }
-                }
+                log_error!(
+                    self.write_events(&user, tx_hash.clone(), prover_request)
+                        .await,
+                    "Failed to write events"
+                )?;
                 if !self.ctx.no_blobs {
-                    self.ctx.client.send_tx_blob(blob_tx).await?;
+                    log_error!(
+                        self.ctx.client.send_tx_blob(blob_tx).await,
+                        "Failed to send blob tx"
+                    )?;
                 }
             }
         }
@@ -117,10 +104,11 @@ impl DatabaseModule {
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn write_events(
         &self,
-        user: &str,
+        user_info: &UserInfo,
         tx_hash: TxHash,
         prover_request: OrderbookProverRequest,
     ) -> Result<()> {
+        let user = &user_info.user;
         debug!("Writing events for user {user} with tx hash {tx_hash:#}");
         use crate::services::asset_service::MarketStatus;
 
@@ -131,27 +119,18 @@ impl DatabaseModule {
 
         let mut tx = log_error!(self.ctx.pool.begin().await, "Failed to begin transaction")?;
 
-        debug!("Transaction started");
-        println!("Transaction started");
+        let row = log_error!(
+            sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
+                .bind(tx_hash.0.clone())
+                .fetch_one(&mut *tx)
+                .await,
+            "Failed to create commit"
+        )?;
 
-        let row = sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
-            .bind(tx_hash.0.clone())
-            .fetch_one(&mut *tx)
-            .await;
-        if let Err(e) = row {
-            println!("Error creating commit: {}", e);
-            return Err(anyhow::anyhow!("Failed to create commit: {}", e));
-        } else {
-            println!("Commit created");
-        }
-        let row = row.unwrap();
-        println!("Row unwrapped");
         let commit_id: i64 = row.get("commit_id");
-        println!("Commit id: {}", commit_id);
         debug!("Created commit with id {}", commit_id);
 
         for event in prover_request.events.clone() {
-            println!("Processing event: {:?}", event);
             match event {
                 OrderbookEvent::PairCreated { pair, info: _ } => {
                     let asset_service = self.ctx.asset_service.read().await;
@@ -505,7 +484,6 @@ impl DatabaseModule {
 
                     let user_id = if let Err(e) = fetched_user_id {
                         if e.0 == StatusCode::NOT_FOUND {
-                            println!("User not found. Creating user {}", user);
                             info!("Creating user {}", user);
                             let row = log_error!(
                                 sqlx::query(
@@ -521,16 +499,13 @@ impl DatabaseModule {
                             )?;
                             row.get::<i64, _>("user_id")
                         } else {
-                            println!("User not found. Error: {}", e.1);
                             return Err(anyhow::anyhow!("{}", e.1));
                         }
                     } else {
                         let user_id = fetched_user_id.map_err(|e| anyhow::anyhow!("{}", e.1))?;
-                        println!("User found. User id: {}", user_id);
                         user_id
                     };
 
-                    println!("Setting user session keys for user {}", user);
                     debug!("Setting user session keys for user {}", user);
 
                     log_error!(
@@ -544,7 +519,6 @@ impl DatabaseModule {
                     )?;
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
-                    println!("Incrementing nonce for user {}", user);
                     debug!("Incrementing nonce for user {}", user);
                     let row = log_error!(
                         sqlx::query(
@@ -587,6 +561,26 @@ impl DatabaseModule {
             "Failed to insert prover request"
         )?;
 
+        let events_data = log_error!(
+            borsh::to_vec(&prover_request.events),
+            "Failed to serialize events"
+        )?;
+
+        let user_info_data =
+            log_error!(borsh::to_vec(&user_info), "Failed to serialize user info")?;
+
+        log_error!(
+            sqlx::query(
+                "INSERT INTO contract_events (commit_id, user_info, events) VALUES ($1, $2, $3)"
+            )
+            .bind(commit_id)
+            .bind(user_info_data)
+            .bind(events_data)
+            .execute(&mut *tx)
+            .await,
+            "Failed to insert contract events"
+        )?;
+
         if trigger_notify_trades {
             debug!("Notifying trades");
             log_error!(
@@ -618,9 +612,7 @@ impl DatabaseModule {
             )?;
         }
 
-        println!("Committing transaction");
         log_error!(tx.commit().await, "Failed to commit transaction")?;
-        println!("Transaction committed");
         debug!("Committed transaction with commit id {}", commit_id);
 
         if reload_instrument_map {

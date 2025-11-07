@@ -7,10 +7,10 @@ da_read_from = "127.0.0.1:4141"
 rest_server_port = 9002
 rest_server_max_body_size = 10_485_760 # 10 MB
 node_url = "http://localhost:4321"
-indexer_url = "http://localhost:4322"
+indexer_url = "http://localhost:4321"
 
-database_url = "postgresql://postgres:postgres@localhost:32777"
-database_name = "hyliquid"
+database_url = "postgresql://postgres:postgres@localhost:5432"
+database_name = "orderbook"
 
 buffer_blocks = 0
 max_txs_per_proof = 30

@@ -76,18 +76,7 @@ fn main() -> Result<()> {
     if args.tracing {
         init_tracing();
     } else {
-        let filter = tracing_subscriber::EnvFilter::builder()
-            .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-            .from_env()?;
-
-        if config.log_format == "json" {
-            tracing_subscriber::fmt()
-                .with_env_filter(filter)
-                .json()
-                .init();
-        } else {
-            tracing_subscriber::fmt().with_env_filter(filter).init();
-        }
+        setup_tracing(&config.log_format, "hyliquid".to_string())?;
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

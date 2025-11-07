@@ -213,6 +213,12 @@ CREATE TABLE user_events_nonces (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE contract_events (
+  commit_id bigint NOT NULL REFERENCES commits (commit_id),
+  user_info bytea NOT NULL,
+  events bytea NOT NULL
+);
+
 --------------------
 -- Bridge module persistence
 --------------------

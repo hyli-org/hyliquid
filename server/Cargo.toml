@@ -10,6 +10,10 @@ path = "src/bin/tx_sender.rs"
 name = "autoprover"
 path = "src/bin/autoprover.rs"
 
+[[bin]]
+name = "build_from_events"
+path = "src/bin/build_from_events.rs"
+
 [dependencies]
 orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
