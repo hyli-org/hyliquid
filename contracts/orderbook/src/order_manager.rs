@@ -428,7 +428,7 @@ impl OrderManager {
 
             diff_maps(
                 &mut diff,
-                &format!("order_manager.orders"),
+                "order_manager.orders",
                 &other_orders,
                 &self_orders,
             );
