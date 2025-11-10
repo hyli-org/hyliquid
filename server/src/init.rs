@@ -262,7 +262,7 @@ pub async fn init_orderbook_from_database(
     check(node, light_orderbook, full_orderbook).await
 }
 
-async fn check(
+pub async fn check(
     node: &NodeApiHttpClient,
     light_orderbook: ExecuteState,
     full_orderbook: FullState,
