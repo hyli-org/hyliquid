@@ -195,6 +195,16 @@ impl Value for OrderPriceLevel {
 #[derive(Default, Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
 pub struct BorshableH256(pub H256);
 
+impl serde::Serialize for BorshableH256 {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let bytes: [u8; 32] = self.0.into();
+        serializer.serialize_bytes(&bytes)
+    }
+}
+
 impl Value for BorshableH256 {
     fn to_h256(&self) -> H256 {
         self.0

@@ -8,7 +8,6 @@ use orderbook::{
 };
 use sdk::{info, BlockHeight, LaneId};
 use sqlx::Row;
-use tracing::error;
 
 #[tokio::main]
 async fn main() {

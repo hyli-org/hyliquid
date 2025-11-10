@@ -13,7 +13,7 @@ use sdk::{BlockHeight, ContractName, StructuredBlob};
 
 use crate::zk::H256;
 
-#[derive(Debug, Default, Clone, BorshDeserialize, BorshSerialize)]
+#[derive(Debug, Default, Clone, Serialize, BorshDeserialize, BorshSerialize)]
 pub struct ExecuteState {
     pub assets_info: HashMap<Symbol, AssetInfo>, // symbol -> (decimals, precision)
     pub users_info: HashMap<String, UserInfo>,

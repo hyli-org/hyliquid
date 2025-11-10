@@ -3,9 +3,10 @@ use crate::model::{
 };
 use crate::zk::H256;
 use borsh::{BorshDeserialize, BorshSerialize};
+use serde::Serialize;
 use std::collections::{BTreeMap, VecDeque};
 
-#[derive(BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq, Eq)]
+#[derive(Serialize, BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct OrderManager {
     // All orders indexed by order_id
     pub orders: BTreeMap<OrderId, Order>,
