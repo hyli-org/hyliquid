@@ -129,6 +129,8 @@ impl Module for OrderbookModule {
             .route("/cancel_order", post(cancel_order))
             .route("/withdraw", post(withdraw))
             .route("/nonce", get(get_nonce))
+            // FIXME: to be removed. Only here for debugging purposes
+            .route("/state", get(get_state))
             .with_state(router_ctx.clone())
             .layer(cors);
 
@@ -373,6 +375,12 @@ pub struct WithdrawRequest {
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
+async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
+    let orderbook = ctx.orderbook.lock().await;
+
+    Ok(Json(orderbook.clone()))
+}
+
 async fn get_nonce(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
