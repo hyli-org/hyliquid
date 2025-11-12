@@ -685,6 +685,36 @@ fn market_bid_consumes_multiple_asks() {
 }
 
 #[test]
+fn bid_execute_then_create_if_price_defer() {
+    let mut manager = OrderManager::new();
+    let maker1 = test_user("maker1");
+    let maker2 = test_user("maker2");
+    let taker = test_user("taker");
+
+    manager
+        .insert_order(
+            &make_limit_order("bid-1", OrderSide::Bid, 100, 1),
+            &maker1.get_key(),
+        )
+        .unwrap();
+    manager
+        .insert_order(
+            &make_limit_order("bid-2", OrderSide::Bid, 200, 1),
+            &maker2.get_key(),
+        )
+        .unwrap();
+    let events = manager
+        .execute_order(
+            &taker.get_key(),
+            &make_limit_order("ask-1", OrderSide::Ask, 200, 2),
+        )
+        .unwrap();
+    assert!(matches!(events[0], OrderbookEvent::OrderExecuted { .. }));
+    assert!(matches!(events[1], OrderbookEvent::OrderCreated { .. }));
+    assert!(events.len() == 2);
+}
+
+#[test]
 fn market_ask_consumes_bids() {
     let mut manager = OrderManager::new();
     let maker1 = test_user("maker1");

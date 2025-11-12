@@ -149,7 +149,8 @@ impl OrderManager {
                         if !existing_order_ids.is_empty() {
                             counter_orders.push_front((existing_order_price, existing_order_ids));
                         }
-                        return Self::simulate_insert_order(&order_to_execute);
+                        events.extend(Self::simulate_insert_order(&order_to_execute)?);
+                        return Ok(events);
                     }
                 }
 
