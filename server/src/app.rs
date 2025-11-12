@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -16,6 +17,7 @@ use axum::{
 };
 use borsh::BorshSerialize;
 use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
+use hex;
 use hyli_modules::{
     bus::{BusClientSender, BusMessage, SharedMessageBus},
     log_error, log_warn, module_bus_client, module_handle_messages,
@@ -372,13 +374,105 @@ pub struct WithdrawRequest {
     pub destination: WithdrawDestination,
 }
 
+// API-friendly representation of OrderManager for JSON serialization
+#[derive(Debug, Clone, Serialize)]
+pub struct OrderManagerAPI {
+    pub orders: std::collections::BTreeMap<String, Order>,
+    pub bid_orders: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, std::collections::VecDeque<String>>,
+    >,
+    pub ask_orders: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, std::collections::VecDeque<String>>,
+    >,
+    pub orders_owner: std::collections::BTreeMap<String, String>,
+}
+
+impl From<&orderbook::order_manager::OrderManager> for OrderManagerAPI {
+    fn from(manager: &orderbook::order_manager::OrderManager) -> Self {
+        let orders_owner = manager
+            .orders_owner
+            .iter()
+            .map(|(order_id, owner_key)| (order_id.clone(), hex::encode(owner_key.0.as_slice())))
+            .collect();
+
+        // Convert u64 price keys to strings and pair tuples to strings for JSON serialization
+        let bid_orders = manager
+            .bid_orders
+            .iter()
+            .map(|(pair, price_map)| {
+                let api_price_map = price_map
+                    .iter()
+                    .map(|(price, orders)| (price.to_string(), orders.clone()))
+                    .collect();
+                let pair_string = format!("{}-{}", pair.0, pair.1);
+                (pair_string, api_price_map)
+            })
+            .collect();
+
+        let ask_orders = manager
+            .ask_orders
+            .iter()
+            .map(|(pair, price_map)| {
+                let api_price_map = price_map
+                    .iter()
+                    .map(|(price, orders)| (price.to_string(), orders.clone()))
+                    .collect();
+                let pair_string = format!("{}-{}", pair.0, pair.1);
+                (pair_string, api_price_map)
+            })
+            .collect();
+
+        OrderManagerAPI {
+            orders: manager.orders.clone(),
+            bid_orders,
+            ask_orders,
+            orders_owner,
+        }
+    }
+}
+
+// API-friendly representation of the state for JSON serialization
+#[derive(Debug, Clone, Serialize)]
+pub struct ExecuteStateAPI {
+    pub assets_info: BTreeMap<String, AssetInfo>,
+    pub users_info: BTreeMap<String, UserInfo>,
+    pub balances: BTreeMap<String, BTreeMap<String, orderbook::model::Balance>>,
+    pub order_manager: OrderManagerAPI,
+}
+
+impl From<&orderbook::model::ExecuteState> for ExecuteStateAPI {
+    fn from(state: &orderbook::model::ExecuteState) -> Self {
+        let balances = state
+            .balances
+            .iter()
+            .map(|(symbol, balance_map)| {
+                let api_balance_map = balance_map
+                    .iter()
+                    .map(|(key, balance)| (hex::encode(key.0.as_slice()), balance.clone()))
+                    .collect();
+                (symbol.clone(), api_balance_map)
+            })
+            .collect();
+
+        ExecuteStateAPI {
+            assets_info: state.assets_info.clone(),
+            users_info: state.users_info.clone(),
+            balances,
+            order_manager: OrderManagerAPI::from(&state.order_manager),
+        }
+    }
+}
+
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
 async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let orderbook = ctx.orderbook.lock().await;
+    let api_state = ExecuteStateAPI::from(&*orderbook);
 
-    Ok(Json(orderbook.clone()))
+    Ok(Json(api_state))
 }
 
 async fn get_nonce(

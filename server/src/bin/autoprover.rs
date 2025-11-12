@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use axum::Router;
 use clap::Parser;
 use client_sdk::helpers::sp1::SP1Prover;
 use contracts::ORDERBOOK_ELF;
@@ -6,11 +7,13 @@ use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
         da_listener::{DAListener, DAListenerConf},
-        ModulesHandler,
+        rest::{RestApi, RestApiRunContext},
+        BuildApiContextInner, ModulesHandler,
     },
     utils::logger::setup_tracing,
 };
-use sdk::info;
+use prometheus::Registry;
+use sdk::{api::NodeInfo, info};
 use server::{
     conf::Conf,
     prover::{OrderbookProverCtx, OrderbookProverModule},
@@ -96,7 +99,13 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
     std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
+    let api_ctx = Arc::new(BuildApiContextInner {
+        router: std::sync::Mutex::new(Some(Router::new())),
+        openapi: Default::default(),
+    });
+
     let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
+        api: api_ctx.clone(),
         node_client: node_client.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
@@ -106,10 +115,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     });
 
     let mut handler = ModulesHandler::new(&bus).await;
-    // let api_ctx = Arc::new(BuildApiContextInner {
-    //     router: Mutex::new(Some(Router::new())),
-    //     openapi: Default::default(),
-    // });
 
     // This module connects to the da_address and receives all the blocks
     handler
@@ -123,6 +128,36 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     handler
         .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
+        .await?;
+
+    // Should come last so the other modules have nested their own routes.
+    #[allow(clippy::expect_used, reason = "Fail on misconfiguration")]
+    let router = api_ctx
+        .router
+        .lock()
+        .expect("Context router should be available.")
+        .take()
+        .expect("Context router should be available.");
+    #[allow(clippy::expect_used, reason = "Fail on misconfiguration")]
+    let openapi = api_ctx
+        .openapi
+        .lock()
+        .expect("OpenAPI should be available")
+        .clone();
+
+    handler
+        .build_module::<RestApi>(RestApiRunContext {
+            port: config.rest_server_port + 1,
+            max_body_size: config.rest_server_max_body_size,
+            registry: Registry::new(),
+            router,
+            openapi,
+            info: NodeInfo {
+                id: config.id.clone(),
+                da_address: config.da_read_from.clone(),
+                pubkey: None,
+            },
+        })
         .await?;
 
     handler.start_modules().await?;
