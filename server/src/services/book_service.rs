@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 
 use client_sdk::contract_indexer::AppError;
 use orderbook::model::{Order, OrderSide, UserInfo};
@@ -70,7 +70,7 @@ impl BookService {
 
     pub async fn get_order_manager(
         &self,
-        users_info: &HashMap<String, UserInfo>,
+        users_info: &BTreeMap<String, UserInfo>,
         commit_id: i64,
     ) -> Result<OrderManager, AppError> {
         let rows = sqlx::query(
@@ -105,7 +105,7 @@ impl BookService {
         .fetch_all(&self.pool)
         .await?;
 
-        let orders: HashMap<String, (Order, String)> = rows
+        let orders: BTreeMap<String, (Order, String)> = rows
             .iter()
             .map(|row| {
                 (

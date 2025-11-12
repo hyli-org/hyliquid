@@ -520,28 +520,28 @@ impl OrderManager {
         }])
     }
 }
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 #[derive(Debug, Default)]
 pub struct MapDiff<'a, K, V> {
     pub added: HashSet<&'a K>,
     pub removed: HashSet<&'a K>,
-    pub changed: HashMap<&'a K, (&'a V, &'a V)>, // (old, new)
+    pub changed: BTreeMap<&'a K, (&'a V, &'a V)>, // (old, new)
 }
 
 pub fn diff_maps<'a, K, V>(
     diff: &mut BTreeMap<String, String>,
     key: &str,
-    old: &'a HashMap<K, V>,
-    new: &'a HashMap<K, V>,
+    old: &'a BTreeMap<K, V>,
+    new: &'a BTreeMap<K, V>,
 ) where
-    K: std::hash::Hash + Eq + std::fmt::Debug,
+    K: std::hash::Hash + Eq + std::fmt::Debug + Ord,
     V: PartialEq + std::fmt::Debug,
 {
     let mut d = MapDiff {
         added: HashSet::new(),
         removed: HashSet::new(),
-        changed: HashMap::new(),
+        changed: BTreeMap::new(),
     };
 
     // supprimées + modifiées
@@ -569,15 +569,15 @@ pub fn diff_maps<'a, K, V>(
 
 impl<'a, K, V> MapDiff<'a, K, V>
 where
-    K: std::hash::Hash + Eq + std::fmt::Debug,
+    K: std::hash::Hash + Eq + std::fmt::Debug + Ord,
     V: PartialEq + std::fmt::Debug,
 {
     pub fn update_diff(
         &self,
         key: &str,
         diff: &mut BTreeMap<String, String>,
-        old: &HashMap<K, V>,
-        new: &HashMap<K, V>,
+        old: &BTreeMap<K, V>,
+        new: &BTreeMap<K, V>,
     ) {
         self.added.iter().for_each(|k| {
             diff.insert(
