@@ -14,6 +14,14 @@ path = "src/bin/autoprover.rs"
 name = "build_from_events"
 path = "src/bin/build_from_events.rs"
 
+[[bin]]
+name = "parse_action"
+path = "src/bin/parse_action.rs"
+
+[[bin]]
+name = "fetch_ho"
+path = "src/bin/fetch_ho.rs"
+
 [dependencies]
 orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }

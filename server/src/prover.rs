@@ -81,7 +81,11 @@ impl OrderbookProverModule {
             on_self self,
 
             listen<NodeStateEvent> event => {
-                _ = log_error!(self.handle_node_state_event(event).await, "handle node state event")
+                if log_error!(self.handle_node_state_event(event).await, "handle node state event").is_err() {
+                    error!("Hard failure in handle_node_state_event");
+                    error!("Exiting prover module");
+                    return Err(anyhow!("Hard failure in handle_node_state_event"));
+                }
             }
         };
         Ok(())

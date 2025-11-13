@@ -119,6 +119,12 @@ pub struct Order {
     pub quantity: u64,
 }
 
+impl std::fmt::Display for Order {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Order {order_id} for {pair:?} with price {price:?} and quantity {quantity} and type {order_type:?} and side {order_side:?}", order_id = self.order_id, pair = self.pair, price = self.price, quantity = self.quantity, order_type = self.order_type, order_side = self.order_side)
+    }
+}
+
 /// Defines how the order manager should retain or clean zeroed orders and how events should be
 /// reflected in auxiliary structures (e.g. SMT updates).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -192,6 +198,21 @@ pub enum OrderbookEvent {
         user: String,
         nonce: u32,
     },
+}
+
+impl std::fmt::Display for OrderbookEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OrderbookEvent::BalanceUpdated { user, symbol, amount } => write!(f, "Balance updated for user {user} and symbol {symbol} to {amount}"),
+            OrderbookEvent::SessionKeyAdded { user, salt:  _, nonce, session_keys: _ } => write!(f, "Session key added for user {user} with nonce {nonce}"),
+            OrderbookEvent::NonceIncremented { user, nonce } => write!(f, "Nonce incremented for user {user} to {nonce}"),
+            OrderbookEvent::PairCreated { pair, info } => write!(f, "Pair created for {pair:?} with info {info:?}"),
+            OrderbookEvent::OrderCreated { order } => write!(f, "Order created for {order}"),
+            OrderbookEvent::OrderCancelled { order_id, pair } => write!(f, "Order cancelled for {order_id} and pair {pair:?}"),
+            OrderbookEvent::OrderExecuted { order_id, taker_order_id, pair } => write!(f, "Order executed for {order_id} and taker order {taker_order_id} and pair {pair:?}"),
+            OrderbookEvent::OrderUpdate { order_id, taker_order_id, executed_quantity, remaining_quantity, pair } => write!(f, "Order updated for {order_id} and taker order {taker_order_id} and executed quantity {executed_quantity} and remaining quantity {remaining_quantity} and pair {pair:?}"),
+        }
+    }
 }
 
 /// impl of functions for actions execution
