@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
@@ -105,7 +105,7 @@ impl<
 #[derive(Default, Debug)]
 pub struct FullState {
     pub users_info_mt: SMT<UserInfo>,
-    pub balances_mt: HashMap<String, SMT<UserBalance>>,
+    pub balances_mt: BTreeMap<String, SMT<UserBalance>>,
     pub order_manager_mt: OrderManagerMerkles,
     pub state: ExecuteState,
     pub hashed_secret: [u8; 32],
@@ -134,7 +134,7 @@ impl FullState {
             .update_all_from_ref(light.users_info.values())
             .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
 
-        let mut balances_mt = HashMap::new();
+        let mut balances_mt = BTreeMap::new();
         for (symbol, symbol_balances) in light.balances.iter() {
             let mut tree = SMT::zero();
             tree.update_all(
@@ -167,7 +167,7 @@ impl FullState {
         })
     }
 
-    pub fn balance_roots(&self) -> HashMap<Symbol, H256> {
+    pub fn balance_roots(&self) -> BTreeMap<Symbol, H256> {
         self.balances_mt
             .iter()
             .filter_map(|(symb, user_balances)| {
@@ -202,8 +202,8 @@ impl FullState {
 #[derive(Debug, BorshSerialize, Eq, PartialEq)]
 pub struct ParsedStateCommitment<'a> {
     pub users_info_root: H256,
-    pub balances_roots: HashMap<Symbol, H256>,
-    pub assets: &'a HashMap<Symbol, AssetInfo>,
+    pub balances_roots: BTreeMap<Symbol, H256>,
+    pub assets: &'a BTreeMap<Symbol, AssetInfo>,
     pub order_manager_roots: OrderManagerRoots,
     pub hashed_secret: [u8; 32],
     pub lane_id: &'a LaneId,
@@ -213,12 +213,12 @@ pub struct ParsedStateCommitment<'a> {
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmState {
     pub users_info: ZkWitnessSet<UserInfo>,
-    pub balances: HashMap<Symbol, ZkWitnessSet<UserBalance>>,
+    pub balances: BTreeMap<Symbol, ZkWitnessSet<UserBalance>>,
     pub lane_id: LaneId,
     pub hashed_secret: [u8; 32],
     pub last_block_number: BlockHeight,
     pub order_manager: OrderManagerWitnesses,
-    pub assets: HashMap<Symbol, AssetInfo>,
+    pub assets: BTreeMap<Symbol, AssetInfo>,
 }
 
 /// impl of functions for state management
@@ -245,7 +245,7 @@ impl Clone for FullState {
         let user_info_store = self.users_info_mt.store().clone();
         let users_info_mt = SMT::from_store(user_info_root.into(), user_info_store);
 
-        let mut balances_mt = HashMap::new();
+        let mut balances_mt = BTreeMap::new();
         for (symbol, tree) in &self.balances_mt {
             let root = *tree.root();
             let store = tree.store().clone();

@@ -16,11 +16,7 @@ use sdk::{
     api::{APIRegisterContract, TransactionStatusDb},
     info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
 };
-use std::{
-    collections::{BTreeMap, HashMap},
-    sync::Arc,
-    time::Duration,
-};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time::timeout};
 use tracing::{error, warn};
 
@@ -199,9 +195,9 @@ pub async fn init_orderbook_from_database(
         );
     }
 
-    let users_info: HashMap<String, UserInfo> = user_service.get_all_users(commit_id).await;
-    let mut balances: HashMap<Symbol, HashMap<orderbook::zk::H256, OrderbookBalance>> =
-        HashMap::new();
+    let users_info: BTreeMap<String, UserInfo> = user_service.get_all_users(commit_id).await;
+    let mut balances: BTreeMap<Symbol, BTreeMap<orderbook::zk::H256, OrderbookBalance>> =
+        BTreeMap::new();
 
     info!("🔍 Loading balances");
     for user in users_info.values() {
@@ -307,8 +303,8 @@ pub async fn check(
 #[derive(Debug, BorshDeserialize, Eq, PartialEq)]
 pub struct DebugStateCommitment {
     pub users_info_root: H256,
-    pub balances_roots: HashMap<Symbol, H256>,
-    pub assets: HashMap<Symbol, AssetInfo>,
+    pub balances_roots: BTreeMap<Symbol, H256>,
+    pub assets: BTreeMap<Symbol, AssetInfo>,
     pub order_manager_roots: OrderManagerRoots,
     pub hashed_secret: [u8; 32],
     pub lane_id: LaneId,

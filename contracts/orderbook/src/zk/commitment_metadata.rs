@@ -1,5 +1,5 @@
 use sdk::merkle_utils::BorshableMerkleProof;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     model::{
@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-type UsersAndBalancesNeeded = (HashSet<UserInfo>, HashMap<Symbol, Vec<UserBalance>>);
+type UsersAndBalancesNeeded = (HashSet<UserInfo>, BTreeMap<Symbol, Vec<UserBalance>>);
 type OrdersNeeded = (
     HashSet<Order>,
     HashSet<OrderPriceLevel>,
@@ -22,7 +22,7 @@ type OrdersNeeded = (
 
 type ZkvmComputedInputs = (
     ZkWitnessSet<UserInfo>,
-    HashMap<Symbol, ZkWitnessSet<UserBalance>>,
+    BTreeMap<Symbol, ZkWitnessSet<UserBalance>>,
     OrderManagerWitnesses,
 );
 
@@ -36,7 +36,7 @@ impl FullState {
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
         let base = self.resolve_user_from_state(base_user, &base_user.user)?;
         users_info_needed.insert(base);
-        let mut balances_needed: HashMap<Symbol, Vec<UserBalance>> = HashMap::new();
+        let mut balances_needed: BTreeMap<Symbol, Vec<UserBalance>> = BTreeMap::new();
 
         for event in events {
             match event {
@@ -325,16 +325,16 @@ impl FullState {
         &self,
         users_info: &[UserInfo],
         symbol: &Symbol,
-    ) -> Result<(HashMap<UserInfo, Balance>, Proof), String> {
+    ) -> Result<(BTreeMap<UserInfo, Balance>, Proof), String> {
         let zero_tree = SMT::<UserBalance>::zero();
         let tree = self.balances_mt.get(symbol).unwrap_or(&zero_tree);
 
         if users_info.is_empty() {
             let root = &tree.root();
-            return Ok((HashMap::new(), Proof::CurrentRootHash(*root)));
+            return Ok((BTreeMap::new(), Proof::CurrentRootHash(*root)));
         }
 
-        let mut balances_map = HashMap::new();
+        let mut balances_map = BTreeMap::new();
         for user_info in users_info {
             let balance = self.state.get_balance(user_info, symbol);
             balances_map.insert(user_info.clone(), balance);
@@ -396,7 +396,7 @@ impl FullState {
         let (users_info_needed, balances_needed) =
             self.collect_user_and_balance_updates(user_info, events)?;
 
-        let mut balances: HashMap<Symbol, ZkWitnessSet<UserBalance>> = HashMap::new();
+        let mut balances: BTreeMap<Symbol, ZkWitnessSet<UserBalance>> = BTreeMap::new();
         for (symbol, user_keys) in balances_needed.iter() {
             let users: Vec<UserInfo> = user_keys
                 .iter()
@@ -483,7 +483,7 @@ impl FullState {
             .map_err(|_| "Updating users info mt".to_string())?;
 
         // Update balances SMTs
-        for (symbol, user_keys) in balances_to_update.drain() {
+        for (symbol, user_keys) in std::mem::take(&mut balances_to_update) {
             self.balances_mt
                 .entry(symbol.clone())
                 .or_insert_with(SMT::zero)

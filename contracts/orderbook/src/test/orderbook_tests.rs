@@ -1,6 +1,6 @@
 #![cfg(test)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use borsh::BorshDeserialize;
 use k256::ecdsa::signature::DigestSigner;
@@ -70,8 +70,8 @@ fn get_ctx() -> (ContractName, Identity, TxContext, LaneId, Vec<u8>) {
 #[derive(BorshDeserialize)]
 struct OwnedCommitment {
     users_info_root: H256,
-    balances_roots: HashMap<String, H256>,
-    assets: HashMap<String, AssetInfo>,
+    balances_roots: BTreeMap<String, H256>,
+    assets: BTreeMap<String, AssetInfo>,
     order_commitment: OrderManagerRoots,
     hashed_secret: [u8; 32],
     lane_id: LaneId,
@@ -195,7 +195,7 @@ fn notional(amount: u64, price: u64) -> i128 {
     i128::from(amount) * i128::from(price)
 }
 fn apply_balance_deltas<'a>(
-    expected: &mut HashMap<&'a str, BalanceExpectation>,
+    expected: &mut BTreeMap<&'a str, BalanceExpectation>,
     deltas: &[BalanceDelta<'a>],
 ) {
     for delta in deltas {
@@ -210,7 +210,7 @@ fn assert_stage<'a>(
     stage: &str,
     light: &ExecuteState,
     full: &FullState,
-    expected: &HashMap<&'a str, BalanceExpectation>,
+    expected: &BTreeMap<&'a str, BalanceExpectation>,
     users: &[&'a str],
     base_symbol: &str,
     quote_symbol: &str,
@@ -969,7 +969,7 @@ fn execute_market_order<'a>(
     full: &mut FullState,
     users: &[&'a str],
     signers: &'a [TestSigner],
-    expected: &mut HashMap<&'a str, BalanceExpectation>,
+    expected: &mut BTreeMap<&'a str, BalanceExpectation>,
     base_symbol: &str,
     quote_symbol: &str,
     deltas: &[BalanceDelta<'a>],
@@ -1285,7 +1285,7 @@ fn test_complex_multi_user_orderbook() {
         .map(|idx| TestSigner::new((idx + 1) as u8))
         .collect();
 
-    let mut expected_balances: HashMap<&str, BalanceExpectation> = users
+    let mut expected_balances: BTreeMap<&str, BalanceExpectation> = users
         .iter()
         .map(|&user| (user, BalanceExpectation::default()))
         .collect();
