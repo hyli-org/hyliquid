@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
@@ -167,7 +167,7 @@ impl FullState {
         })
     }
 
-    pub fn balance_roots(&self) -> HashMap<Symbol, H256> {
+    pub fn balance_roots(&self) -> BTreeMap<Symbol, H256> {
         self.balances_mt
             .iter()
             .filter_map(|(symb, user_balances)| {
@@ -202,8 +202,8 @@ impl FullState {
 #[derive(Debug, BorshSerialize, Eq, PartialEq)]
 pub struct ParsedStateCommitment<'a> {
     pub users_info_root: H256,
-    pub balances_roots: HashMap<Symbol, H256>,
-    pub assets: &'a HashMap<Symbol, AssetInfo>,
+    pub balances_roots: BTreeMap<Symbol, H256>,
+    pub assets: &'a BTreeMap<Symbol, AssetInfo>,
     pub order_manager_roots: OrderManagerRoots,
     pub hashed_secret: [u8; 32],
     pub lane_id: &'a LaneId,
@@ -218,7 +218,7 @@ pub struct ZkVmState {
     pub hashed_secret: [u8; 32],
     pub last_block_number: BlockHeight,
     pub order_manager: OrderManagerWitnesses,
-    pub assets: HashMap<Symbol, AssetInfo>,
+    pub assets: BTreeMap<Symbol, AssetInfo>,
 }
 
 /// impl of functions for state management

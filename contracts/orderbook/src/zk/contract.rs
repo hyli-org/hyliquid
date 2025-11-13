@@ -275,7 +275,7 @@ mod tests {
     use borsh::{BorshDeserialize, BorshSerialize};
     use sdk::merkle_utils::BorshableMerkleProof;
     use sdk::{BlockHeight, ContractName, LaneId, ZkContract};
-    use std::collections::{HashMap, HashSet};
+    use std::collections::{BTreeMap, HashMap, HashSet};
     use std::mem::discriminant;
 
     use sparse_merkle_tree::traits::Value;
@@ -365,7 +365,7 @@ mod tests {
             },
         );
 
-        let mut assets = HashMap::new();
+        let mut assets = BTreeMap::new();
         assets.insert(
             "ETH".to_string(),
             AssetInfo::new(18, ContractName("eth".to_string())),
@@ -611,7 +611,7 @@ mod tests {
         let hashed_secret = [7u8; 32];
         let order_manager = OrderManager::default();
         let zk_order_manager = order_manager_witness_from_manager(&order_manager);
-        let assets: HashMap<String, AssetInfo> = HashMap::new();
+        let assets: BTreeMap<String, AssetInfo> = BTreeMap::new();
 
         let zk_state = ZkVmState {
             users_info: users_witness.clone(),
@@ -625,7 +625,7 @@ mod tests {
 
         let commit = zk_state.commit();
 
-        let mut expected_balances = HashMap::new();
+        let mut expected_balances = BTreeMap::new();
         expected_balances.insert("NONZERO".to_string(), non_zero_root);
 
         let expected_orders_commitment = OrderManagerMerkles::from_order_manager(&order_manager)
@@ -686,7 +686,7 @@ mod tests {
         let hashed_secret = [11u8; 32];
         let order_manager = OrderManager::default();
         let zk_order_manager = order_manager_witness_from_manager(&order_manager);
-        let assets: HashMap<String, AssetInfo> = HashMap::new();
+        let assets: BTreeMap<String, AssetInfo> = BTreeMap::new();
 
         let zk_state = ZkVmState {
             users_info: users_witness.clone(),
@@ -707,7 +707,7 @@ mod tests {
         let expected_commitment = StateCommitment(
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: users_witness.compute_root().expect("users root"),
-                balances_roots: HashMap::from([("TOKEN".to_string(), balance_root)]),
+                balances_roots: BTreeMap::from([("TOKEN".to_string(), balance_root)]),
                 assets: &assets,
                 order_manager_roots: expected_orders_commitment,
                 hashed_secret,

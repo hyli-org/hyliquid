@@ -458,7 +458,7 @@ impl FullState {
             lane_id: self.lane_id.clone(),
             hashed_secret: self.hashed_secret,
             last_block_number: self.last_block_number,
-            assets: self.state.assets_info.clone(),
+            assets: self.state.assets_info.clone().into_iter().collect(),
         };
 
         borsh::to_vec(&zkvm_state)

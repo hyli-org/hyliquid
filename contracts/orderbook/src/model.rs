@@ -15,7 +15,7 @@ use crate::zk::H256;
 
 #[derive(Debug, Default, Clone, Serialize, BorshDeserialize, BorshSerialize)]
 pub struct ExecuteState {
-    pub assets_info: HashMap<Symbol, AssetInfo>, // symbol -> (decimals, precision)
+    pub assets_info: BTreeMap<Symbol, AssetInfo>, // symbol -> (decimals, precision)
     pub users_info: HashMap<String, UserInfo>,
     pub balances: HashMap<Symbol, HashMap<H256, Balance>>,
     pub order_manager: OrderManager,
@@ -408,7 +408,7 @@ impl ExecuteState {
         balances: HashMap<Symbol, HashMap<H256, Balance>>,
     ) -> Result<Self, String> {
         let mut orderbook = ExecuteState {
-            assets_info: HashMap::new(),
+            assets_info: BTreeMap::new(),
             users_info,
             balances,
             order_manager,
