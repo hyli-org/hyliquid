@@ -1,9 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use client_sdk::{helpers::ClientSdkProver, rest_client::NodeApiClient};
+use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
+use client_sdk::{
+    contract_indexer::AppError, helpers::ClientSdkProver, rest_client::NodeApiClient,
+};
 use hyli_modules::{
-    bus::SharedMessageBus, log_error, module_bus_client, module_handle_messages, modules::Module,
+    bus::SharedMessageBus,
+    log_error, module_bus_client, module_handle_messages,
+    modules::{BuildApiContextInner, Module},
 };
 use orderbook::{
     model::{OrderbookEvent, UserInfo},
@@ -11,10 +16,15 @@ use orderbook::{
     zk::FullState,
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
+use reqwest::Method;
 use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
+use tokio::sync::Mutex;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, error, info};
+
+use crate::app::ExecuteStateAPI;
 
 #[derive(Debug, Clone)]
 pub struct PendingTx {
@@ -40,8 +50,8 @@ module_bus_client! {
 }
 
 pub struct OrderbookProverCtx {
-    // TODO: Persist data
-    // pub data_directory: PathBuf,
+    // TO BE REMOVED
+    pub api: Arc<BuildApiContextInner>,
     pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
@@ -50,10 +60,15 @@ pub struct OrderbookProverCtx {
     pub pool: PgPool,
 }
 
+#[derive(Clone)]
+pub struct Ctx {
+    pub orderbook: Arc<Mutex<FullState>>,
+}
+
 pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
-    orderbook: FullState,
+    orderbook: Arc<Mutex<FullState>>,
 }
 
 impl Module for OrderbookProverModule {
@@ -61,7 +76,29 @@ impl Module for OrderbookProverModule {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = OrderbookProverBusClient::new_from_bus(bus.new_handle()).await;
-        let orderbook = ctx.initial_orderbook.clone();
+        let orderbook = Arc::new(Mutex::new(ctx.initial_orderbook.clone()));
+
+        let router_ctx = Ctx {
+            orderbook: orderbook.clone(),
+        };
+
+        let cors = CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(vec![Method::GET, Method::POST])
+            .allow_headers(Any);
+
+        // FIXME: to be removed. Only here  for debugging purposes
+        let api = Router::new()
+            .route("/prover/state", get(get_state))
+            .with_state(router_ctx.clone())
+            .layer(cors);
+
+        if let Ok(mut guard) = ctx.api.router.lock() {
+            if let Some(router) = guard.take() {
+                guard.replace(router.merge(api));
+            }
+        }
+
         Ok(OrderbookProverModule {
             ctx,
             bus,
@@ -108,8 +145,9 @@ impl OrderbookProverModule {
         // We generate the commitment metadata from the zkvm state
         // We then execute the action with the complete orderbook to compare the events and update the state
 
-        let commitment_metadata = self
-            .orderbook
+        let mut orderbook = self.orderbook.lock().await;
+
+        let commitment_metadata = orderbook
             .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &orderbook_action)
             .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
 
@@ -119,7 +157,7 @@ impl OrderbookProverModule {
             "Transaction processed for proving"
         );
 
-        self.orderbook
+        orderbook
             .apply_events_and_update_roots(&user_info, events)
             .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
 
@@ -287,4 +325,14 @@ impl OrderbookProverModule {
             }
         }
     }
+}
+
+// --------------------------------------------------------
+//     Routes
+// --------------------------------------------------------
+async fn get_state(State(ctx): State<Ctx>) -> Result<impl IntoResponse, AppError> {
+    let orderbook_full_state = ctx.orderbook.lock().await;
+
+    let api_state = ExecuteStateAPI::from(&orderbook_full_state.state);
+    Ok(Json(api_state))
 }

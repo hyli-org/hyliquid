@@ -196,6 +196,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         let prover = SP1Prover::new(pk).await;
 
         let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
+            api: api_ctx.clone(),
             node_client: node_client.clone(),
             orderbook_cn: args.orderbook_cn.clone().into(),
             prover: Arc::new(prover),
