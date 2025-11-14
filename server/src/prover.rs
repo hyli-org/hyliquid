@@ -17,7 +17,10 @@ use orderbook::{
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::Method;
-use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
+use sdk::{
+    BlobIndex, BlockHeight, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction,
+    TxHash,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use tokio::sync::Mutex;
@@ -69,6 +72,7 @@ pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
     orderbook: Arc<Mutex<FullState>>,
+    settled_block_height: Option<BlockHeight>,
 }
 
 impl Module for OrderbookProverModule {
@@ -99,10 +103,20 @@ impl Module for OrderbookProverModule {
             }
         }
 
+        let settled_block_height = ctx
+            .node_client
+            .get_settled_height(ctx.orderbook_cn.clone())
+            .await
+            .ok();
+        if let Some(settled_block_height) = settled_block_height {
+            info!("🔍 Settled block height: {}", settled_block_height);
+        }
+
         Ok(OrderbookProverModule {
             ctx,
             bus,
             orderbook,
+            settled_block_height,
         })
     }
 
@@ -119,8 +133,8 @@ impl OrderbookProverModule {
 
             listen<NodeStateEvent> event => {
                 if log_error!(self.handle_node_state_event(event).await, "handle node state event").is_err() {
-                    error!("Hard failure in handle_node_state_event");
-                    error!("Exiting prover module");
+                    error!("❌ Hard failure in handle_node_state_event");
+                    error!("❌ Exiting prover module");
                     return Err(anyhow!("Hard failure in handle_node_state_event"));
                 }
             }
@@ -149,7 +163,7 @@ impl OrderbookProverModule {
 
         let commitment_metadata = orderbook
             .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &orderbook_action)
-            .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
+            .map_err(|e| anyhow!("Could not derive zkvm state for tx {tx_hash:#}: {e}"))?;
 
         debug!(
             tx_hash = %tx_hash,
@@ -195,6 +209,17 @@ impl OrderbookProverModule {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         match event {
             NodeStateEvent::NewBlock(block) => {
+                if let Some(settled_block_height) = self.settled_block_height {
+                    if block.signed_block.height().0 < settled_block_height.0 {
+                        if block.signed_block.height().0 % 1000 == 0 {
+                            info!(
+                                "⏭️ Skipping block {} because it is before the settled block height",
+                                block.signed_block.height()
+                            );
+                        }
+                        return Ok(());
+                    }
+                }
                 if block.signed_block.height().0 % 1000 == 0 {
                     info!("Prover received block: {}", block.signed_block.height());
                 }
@@ -227,6 +252,20 @@ impl OrderbookProverModule {
                 // Extract all transactions that need to be proved and that have been sequenced
                 let mut txs_to_prove = Vec::new();
                 for tx_hash in tx_hashes {
+                    if let Some(settled_block_height) = self.settled_block_height {
+                        if block.signed_block.height().0 == settled_block_height.0 {
+                            let is_unsettled = self
+                                .ctx
+                                .node_client
+                                .get_unsettled_tx(tx_hash.clone())
+                                .await
+                                .is_ok();
+                            if !is_unsettled {
+                                info!("⏭️ Skipping tx {tx_hash:#} because it is settled");
+                                continue;
+                            }
+                        }
+                    }
                     // Query the database for the prover request
                     let row = sqlx::query("SELECT request FROM prover_requests WHERE tx_hash = $1")
                         .bind(tx_hash.0.clone())
