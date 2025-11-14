@@ -163,7 +163,7 @@ impl OrderbookProverModule {
 
         let commitment_metadata = orderbook
             .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &orderbook_action)
-            .map_err(|e| anyhow!("Could not derive zkvm state: {e}"))?;
+            .map_err(|e| anyhow!("Could not derive zkvm state for tx {tx_hash:#}: {e}"))?;
 
         debug!(
             tx_hash = %tx_hash,
@@ -252,6 +252,20 @@ impl OrderbookProverModule {
                 // Extract all transactions that need to be proved and that have been sequenced
                 let mut txs_to_prove = Vec::new();
                 for tx_hash in tx_hashes {
+                    if let Some(settled_block_height) = self.settled_block_height {
+                        if block.signed_block.height().0 == settled_block_height.0 {
+                            let is_unsettled = self
+                                .ctx
+                                .node_client
+                                .get_unsettled_tx(tx_hash.clone())
+                                .await
+                                .is_ok();
+                            if !is_unsettled {
+                                info!("⏭️ Skipping tx {tx_hash:#} because it is settled");
+                                continue;
+                            }
+                        }
+                    }
                     // Query the database for the prover request
                     let row = sqlx::query("SELECT request FROM prover_requests WHERE tx_hash = $1")
                         .bind(tx_hash.0.clone())
