@@ -17,7 +17,10 @@ use orderbook::{
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::Method;
-use sdk::{BlobIndex, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction, TxHash};
+use sdk::{
+    BlobIndex, BlockHeight, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction,
+    TxHash,
+};
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use tokio::sync::Mutex;
@@ -69,6 +72,7 @@ pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
     orderbook: Arc<Mutex<FullState>>,
+    settled_block_height: Option<BlockHeight>,
 }
 
 impl Module for OrderbookProverModule {
@@ -99,10 +103,20 @@ impl Module for OrderbookProverModule {
             }
         }
 
+        let contract_state = ctx
+            .node_client
+            .get_contract(ctx.orderbook_cn.clone())
+            .await?;
+        let settled_block_height = match contract_state.state_block_height.0 > 0 {
+            true => Some(contract_state.state_block_height),
+            false => None,
+        };
+
         Ok(OrderbookProverModule {
             ctx,
             bus,
             orderbook,
+            settled_block_height,
         })
     }
 
@@ -119,8 +133,8 @@ impl OrderbookProverModule {
 
             listen<NodeStateEvent> event => {
                 if log_error!(self.handle_node_state_event(event).await, "handle node state event").is_err() {
-                    error!("Hard failure in handle_node_state_event");
-                    error!("Exiting prover module");
+                    error!("❌ Hard failure in handle_node_state_event");
+                    error!("❌ Exiting prover module");
                     return Err(anyhow!("Hard failure in handle_node_state_event"));
                 }
             }
@@ -195,6 +209,17 @@ impl OrderbookProverModule {
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         match event {
             NodeStateEvent::NewBlock(block) => {
+                if let Some(settled_block_height) = self.settled_block_height {
+                    if block.signed_block.height().0 <= settled_block_height.0 {
+                        if block.signed_block.height().0 % 1000 == 0 {
+                            info!(
+                                "⏭️ Skipping block {} because it is before the settled block height",
+                                block.signed_block.height()
+                            );
+                        }
+                        return Ok(());
+                    }
+                }
                 if block.signed_block.height().0 % 1000 == 0 {
                     info!("Prover received block: {}", block.signed_block.height());
                 }
