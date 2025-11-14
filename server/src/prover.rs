@@ -103,14 +103,11 @@ impl Module for OrderbookProverModule {
             }
         }
 
-        let contract_state = ctx
+        let settled_block_height = ctx
             .node_client
-            .get_contract(ctx.orderbook_cn.clone())
-            .await?;
-        let settled_block_height = match contract_state.state_block_height.0 > 0 {
-            true => Some(contract_state.state_block_height),
-            false => None,
-        };
+            .get_settled_height(ctx.orderbook_cn.clone())
+            .await
+            .ok();
         if let Some(settled_block_height) = settled_block_height {
             info!("🔍 Settled block height: {}", settled_block_height);
         }
