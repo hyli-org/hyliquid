@@ -111,6 +111,9 @@ impl Module for OrderbookProverModule {
             true => Some(contract_state.state_block_height),
             false => None,
         };
+        if let Some(settled_block_height) = settled_block_height {
+            info!("🔍 Settled block height: {}", settled_block_height);
+        }
 
         Ok(OrderbookProverModule {
             ctx,
@@ -210,7 +213,7 @@ impl OrderbookProverModule {
         match event {
             NodeStateEvent::NewBlock(block) => {
                 if let Some(settled_block_height) = self.settled_block_height {
-                    if block.signed_block.height().0 <= settled_block_height.0 {
+                    if block.signed_block.height().0 < settled_block_height.0 {
                         if block.signed_block.height().0 % 1000 == 0 {
                             info!(
                                 "⏭️ Skipping block {} because it is before the settled block height",
