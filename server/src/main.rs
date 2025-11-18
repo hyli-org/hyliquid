@@ -21,6 +21,7 @@ use server::{
     conf::Conf,
     database::{DatabaseModule, DatabaseModuleCtx},
     prover::{OrderbookProverCtx, OrderbookProverModule},
+    reth_bridge::{RethBridgeModule, RethBridgeModuleCtx},
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
@@ -50,6 +51,9 @@ pub struct Args {
 
     #[arg(long, default_value = "false")]
     pub no_bridge: bool,
+
+    #[arg(long, default_value = "false")]
+    pub reth_bridge: bool,
 
     #[arg(long, default_value = "false")]
     pub no_blobs: bool,
@@ -219,6 +223,16 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         .await?;
 
     if !args.no_bridge {
+        if args.reth_bridge {
+            handler
+                .build_module::<RethBridgeModule>(Arc::new(RethBridgeModuleCtx {
+                    api: api_ctx.clone(),
+                    orderbook_cn: args.orderbook_cn.clone().into(),
+                    collateral_token_cn: args.collateral_token_cn.clone().into(),
+                    client: node_client.clone(),
+                }))
+                .await?;
+        } else {
         handler
             .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
                 api: api_ctx.clone(),
@@ -230,6 +244,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
                 orderbook_cn: args.orderbook_cn.clone().into(),
             }))
             .await?;
+        }
     }
 
     // Should come last so the other modules have nested their own routes.

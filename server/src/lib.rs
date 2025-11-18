@@ -1,6 +1,7 @@
 pub mod api;
 pub mod app;
 pub mod bridge;
+pub mod reth_bridge;
 pub mod conf;
 pub mod database;
 pub mod init;
