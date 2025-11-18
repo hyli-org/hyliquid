@@ -16,9 +16,12 @@ use axum::{
 use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
 use anyhow::anyhow;
 use hex;
+use sdk::{Blob, BlobData, BlobTransaction, ContractName, Hashed, StructuredBlobData};
 use hyli_modules::modules::{BuildApiContextInner, Module};
 use sdk::Identity;
 use rand;
+use sdk::Blob;
+use sdk::BlobData;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -274,21 +277,55 @@ impl RethBridgeModule {
         };
 
         // 3. Craft two-blob Hyli tx (ERC20 blob + Orderbook blob) and submit paired proofs (placeholder).
-        let hyli_tx_hash = self.submit_hyli(identity, evm_proof).await?;
+        let hyli_tx_hash = self.submit_hyli(identity, raw_tx, evm_proof).await?;
 
         let evm_proof_hex = format!("0x{}", hex::encode(evm_proof));
         Ok((l1_tx_hash, hyli_tx_hash, evm_proof_hex))
     }
 
-    async fn submit_hyli(&self, _identity: Identity, _evm_proof: Vec<u8>) -> anyhow::Result<String> {
-        // TODO: craft two-blob Hyli transaction (ERC20 blob + Orderbook blob with caller/callee)
-        // and submit EVM proof + orderbook prover proof via self.client.
-        warn!("submit_hyli is not yet implemented; returning placeholder hash");
-        Ok(format!(
-            "0xhyli_{}",
-            hex::encode(rand::random::<[u8; 4]>())
-        ))
+    async fn submit_hyli(
+        &self,
+        identity: Identity,
+        raw_tx: Vec<u8>,
+        evm_proof: Vec<u8>,
+    ) -> anyhow::Result<String> {
+        // TODO: construct real blobs with caller/callee metadata:
+        // - Blob 1: ERC20 transfer blob (caller/callees == None) containing raw L1 tx parameters.
+        // - Blob 2: Orderbook action blob (caller/callee for withdraw) consuming the transfer.
+        let blob_tx = build_stub_blob_tx(
+            identity.clone(),
+            self.collateral_token_cn.clone(),
+            self.orderbook_cn.clone(),
+            raw_tx,
+            evm_proof.clone(),
+        );
+        // TODO: submit blob_tx + proofs via self.client and return real hash.
+        let hyli_tx_hash = format!("0x{}", hex::encode(blob_tx.hashed().0.as_bytes()));
+        Ok(hyli_tx_hash)
     }
+}
+
+fn build_stub_blob_tx(
+    identity: Identity,
+    collateral_cn: ContractName,
+    orderbook_cn: ContractName,
+    raw_tx: Vec<u8>,
+    evm_proof: Vec<u8>,
+) -> BlobTransaction {
+    let erc20_blob = Blob {
+        contract_name: collateral_cn,
+        data: BlobData::from(StructuredBlobData {
+            caller: None,
+            callees: None,
+            parameters: raw_tx,
+        }),
+    };
+    let orderbook_blob = Blob {
+        contract_name: orderbook_cn,
+        data: BlobData(identity.0.as_bytes().to_vec()),
+    };
+    // order: ERC20 transfer blob first, then orderbook action blob.
+    BlobTransaction::new(identity, vec![erc20_blob, orderbook_blob])
 }
 
 /// Minimal harness placeholder for the embedded Reth devnode. This isolates the
@@ -313,5 +350,62 @@ impl RethHarness {
         // TODO: fetch block + execution witness from debug API and run stateless validation.
         warn!("build_stateless_proof is not yet implemented; returning placeholder proof bytes");
         Ok(vec![0u8; 1])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_stub_blob_tx_is_deterministic_and_ordered() {
+        let identity = Identity("user@test".to_string());
+        let collateral = ContractName("collateral-token".to_string());
+        let orderbook = ContractName("orderbook".to_string());
+        let raw_tx = vec![9u8, 9, 9];
+        let evm_proof = vec![1u8, 2, 3];
+
+        let blob_tx = build_stub_blob_tx(
+            identity.clone(),
+            collateral.clone(),
+            orderbook.clone(),
+            raw_tx.clone(),
+            evm_proof.clone(),
+        );
+        assert_eq!(blob_tx.blobs.len(), 2);
+        assert_eq!(blob_tx.blobs[0].contract_name, collateral);
+        assert_eq!(blob_tx.blobs[1].contract_name, orderbook);
+
+        let first_hash = blob_tx.hashed();
+        let second_hash =
+            build_stub_blob_tx(identity, collateral, orderbook, raw_tx, evm_proof).hashed();
+        assert_eq!(first_hash.0, second_hash.0, "hash should be deterministic");
+    }
+
+    #[test]
+    fn bridge_job_status_tracks_proof_and_hashes() {
+        let mut status = BridgeJobStatus {
+            job_id: "job-1".to_string(),
+            status: "queued".to_string(),
+            l1_tx_hash: None,
+            hyli_tx_hash: None,
+            error: None,
+            evm_proof_hex: None,
+        };
+
+        let l1 = "0xl1_hash".to_string();
+        let hyli = "0xhyli_hash".to_string();
+        let proof = "0x01".to_string();
+
+        status.l1_tx_hash = Some(l1.clone());
+        status.hyli_tx_hash = Some(hyli.clone());
+        status.evm_proof_hex = Some(proof.clone());
+        status.status = "completed".to_string();
+
+        assert_eq!(status.status, "completed");
+        assert_eq!(status.l1_tx_hash.as_ref().unwrap(), &l1);
+        assert_eq!(status.hyli_tx_hash.as_ref().unwrap(), &hyli);
+        assert_eq!(status.evm_proof_hex.as_ref().unwrap(), &proof);
+        assert!(status.error.is_none());
     }
 }

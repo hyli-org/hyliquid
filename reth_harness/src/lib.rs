@@ -4,6 +4,7 @@ use alloy_primitives::{B256, Bytes};
 use bincode;
 use eyre::{Result, WrapErr, eyre};
 use futures_util::StreamExt;
+use alloy_primitives::address;
 use reth_db::test_utils::create_test_rw_db_with_path;
 use reth_ethereum::{
     node::{
