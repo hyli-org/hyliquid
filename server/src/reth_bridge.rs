@@ -18,6 +18,7 @@ use anyhow::anyhow;
 use hex;
 use hyli_modules::modules::{BuildApiContextInner, Module};
 use sdk::Identity;
+use rand;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -31,6 +32,8 @@ use hyli_modules::{
 };
 
 use sdk::ContractName;
+use reth_harness::RethHarness;
+use tokio::sync::Mutex;
 
 use crate::app::OrderbookRequest;
 
@@ -50,7 +53,7 @@ pub struct RethBridgeModule {
     job_store: Arc<RwLock<HashMap<String, BridgeJobStatus>>>,
     job_tx: mpsc::UnboundedSender<BridgeJob>,
     job_rx: Option<mpsc::UnboundedReceiver<BridgeJob>>,
-    reth: Arc<RethHarness>,
+    reth: Arc<Mutex<RethHarness>>,
 }
 
 pub struct RethBridgeModuleCtx {
@@ -74,6 +77,7 @@ pub struct BridgeJobStatus {
     pub l1_tx_hash: Option<String>,
     pub hyli_tx_hash: Option<String>,
     pub error: Option<String>,
+    pub evm_proof_hex: Option<String>,
 }
 
 #[derive(Debug)]
@@ -133,7 +137,9 @@ impl Module for RethBridgeModule {
             job_store,
             job_tx,
             job_rx: Some(job_rx),
-            reth: Arc::new(RethHarness::new()),
+            reth: Arc::new(Mutex::new(
+                RethHarness::new().await.map_err(|err| anyhow!(err))?,
+            )),
         })
     }
 
@@ -178,6 +184,7 @@ async fn deposit(
         l1_tx_hash: None,
         hyli_tx_hash: None,
         error: None,
+        evm_proof_hex: None,
     };
 
     {
@@ -238,9 +245,10 @@ impl RethBridgeModule {
             let mut store = self.job_store.write().await;
             if let Some(status) = store.get_mut(&job.job_id) {
                 match result {
-                    Ok((l1_hash, hyli_hash)) => {
+                    Ok((l1_hash, hyli_hash, evm_proof_hex)) => {
                         status.l1_tx_hash = Some(l1_hash);
                         status.hyli_tx_hash = Some(hyli_hash);
+                        status.evm_proof_hex = Some(evm_proof_hex);
                         status.status = "completed".to_string();
                     }
                     Err(err) => {
@@ -258,24 +266,21 @@ impl RethBridgeModule {
         &self,
         identity: Identity,
         raw_tx: Vec<u8>,
-    ) -> anyhow::Result<(String, String)> {
+    ) -> anyhow::Result<(String, String, String)> {
         // 1. Submit raw_tx to embedded Reth (placeholder).
-        let l1_tx_hash = self
-            .reth
-            .submit_raw_tx(raw_tx.clone())
-            .await
-            .unwrap_or_else(|| format!("0xl1_{}", hex::encode(&raw_tx[..4.min(raw_tx.len())])));
-
-        // 2. Build stateless proof from Reth block witness (placeholder).
-        let _evm_proof = self.reth.build_stateless_proof().await?;
+        let (l1_tx_hash, evm_proof) = {
+            let mut reth = self.reth.lock().await;
+            reth.submit_raw_tx(raw_tx.clone()).await.map_err(|err| anyhow!(err))?
+        };
 
         // 3. Craft two-blob Hyli tx (ERC20 blob + Orderbook blob) and submit paired proofs (placeholder).
-        let hyli_tx_hash = self.submit_hyli(identity).await?;
+        let hyli_tx_hash = self.submit_hyli(identity, evm_proof).await?;
 
-        Ok((l1_tx_hash, hyli_tx_hash))
+        let evm_proof_hex = format!("0x{}", hex::encode(evm_proof));
+        Ok((l1_tx_hash, hyli_tx_hash, evm_proof_hex))
     }
 
-    async fn submit_hyli(&self, _identity: Identity) -> anyhow::Result<String> {
+    async fn submit_hyli(&self, _identity: Identity, _evm_proof: Vec<u8>) -> anyhow::Result<String> {
         // TODO: craft two-blob Hyli transaction (ERC20 blob + Orderbook blob with caller/callee)
         // and submit EVM proof + orderbook prover proof via self.client.
         warn!("submit_hyli is not yet implemented; returning placeholder hash");

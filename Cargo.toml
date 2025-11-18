@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["contracts", "contracts/orderbook", "server", "loadtest"]
+members = ["contracts", "contracts/orderbook", "server", "loadtest", "reth_harness"]
 
 [workspace.dependencies]
 sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "main" }
