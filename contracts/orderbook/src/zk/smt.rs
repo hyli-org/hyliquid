@@ -1,9 +1,12 @@
 use std::marker::PhantomData;
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::SHA256Hasher;
 use sha3::{Digest, Sha3_256};
-use sparse_merkle_tree::{default_store::DefaultStore, traits::Value, SparseMerkleTree, H256};
+use sparse_merkle_tree::{
+    default_store::DefaultStore,
+    traits::{Hasher, Value},
+    SparseMerkleTree, H256,
+};
 
 use crate::{
     model::{Balance, Order, OrderSide, OrderType, UserInfo},
@@ -303,7 +306,7 @@ impl From<BorshableH256> for H256 {
 
 #[derive(Debug, Default)]
 pub struct SMT<T: Value + Clone>(
-    SparseMerkleTree<SHA256Hasher, H256, DefaultStore<H256>>,
+    SparseMerkleTree<SHA3_256Hasher, H256, DefaultStore<H256>>,
     PhantomData<T>,
 );
 
@@ -361,5 +364,26 @@ where
     {
         self.0
             .merkle_proof(keys.map(|v| v.get_key().0).collect::<Vec<_>>())
+    }
+}
+
+// Custom SHA3_256Hasher implementation
+#[derive(Default, Debug)]
+pub struct SHA3_256Hasher(Sha3_256);
+
+impl Hasher for SHA3_256Hasher {
+    fn write_h256(&mut self, h: &H256) {
+        self.0.update(h.as_slice());
+    }
+
+    fn write_byte(&mut self, b: u8) {
+        self.0.update([b]);
+    }
+
+    fn finish(self) -> H256 {
+        let result = self.0.finalize();
+        let mut h = [0u8; 32];
+        h.copy_from_slice(&result);
+        H256::from(h)
     }
 }
