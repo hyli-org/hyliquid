@@ -90,6 +90,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     if args.tracing {
         init_tracing();
     }
+
     let config = Arc::new(config);
 
     if args.clean_data_directory && std::fs::exists(&config.data_directory).unwrap_or(false) {
@@ -98,6 +99,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     }
 
     info!("Starting orderbook with config: {:?}", &config);
+    info!("Args: {:?}", args);
 
     let pool = setup_database(&config, args.clean_db).await?;
     let ServiceContext {

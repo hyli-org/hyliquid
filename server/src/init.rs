@@ -147,7 +147,11 @@ pub async fn init_orderbook_from_database(
         warn!("🔍 No commit id found for tx hash: {}", last_settled_tx.1);
         warn!("🔍 Initializing orderbook with empty state");
         let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
-        return check(node, light_orderbook, full_orderbook).await;
+        if check_commitment {
+            return check(node, light_orderbook, full_orderbook).await;
+        } else {
+            return Ok((light_orderbook, full_orderbook));
+        }
     }
 
     let commit_id = commit_id.unwrap();
