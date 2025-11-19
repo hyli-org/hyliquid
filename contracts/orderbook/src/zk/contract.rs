@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
 
 use sdk::{ContractName, RunResult, StateCommitment};
-use sha2::Sha256;
-use sha3::Digest;
+use sha3::{Digest, Sha3_256};
 use sparse_merkle_tree::traits::Value;
 
 use crate::{
@@ -66,8 +65,9 @@ impl sdk::ZkContract for ZkVmState {
                         panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
                     });
 
-                let hashed_secret = Sha256::digest(&permissionned_private_input.secret);
-                if hashed_secret.as_slice() != self.hashed_secret.as_slice() {
+                let hashed_secret: [u8; 32] =
+                    Sha3_256::digest(&permissionned_private_input.secret).into();
+                if hashed_secret != self.hashed_secret {
                     panic!("Invalid secret in private input");
                 }
 
