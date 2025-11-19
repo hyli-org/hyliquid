@@ -1,0 +1,406 @@
+{
+    "title": "HTTP API Metrics - HyLiquid Orderbook",
+    "tags": ["http", "api", "orderbook"],
+    "timezone": "browser",
+    "editable": true,
+    "panels": [
+      {
+        "id": 1,
+        "title": "HTTP Request Rate by Endpoint",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum by(endpoint) (rate(http_request_count_total[15s]))",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "custom": {"lineWidth": 2, "fillOpacity": 10}
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "HTTP Request Duration (p95) by Endpoint",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by(endpoint, le) (rate(http_request_duration_seconds_bucket[15s])))",
+            "legendFormat": "{{endpoint}} (p95)"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": {"lineWidth": 2, "fillOpacity": 0}
+          }
+        }
+      },
+      {
+        "id": 3,
+        "title": "HTTP Request Duration (All Percentiles)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, sum(rate(http_request_duration_seconds_bucket[15s])) by (le))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket[15s])) by (le))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, sum(rate(http_request_duration_seconds_bucket[15s])) by (le))",
+            "legendFormat": "p99"
+          },
+          {
+            "expr": "histogram_quantile(0.999, sum(rate(http_request_duration_seconds_bucket[15s])) by (le))",
+            "legendFormat": "p999"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": {"lineWidth": 2, "fillOpacity": 5}
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "HTTP Error Rate by Endpoint",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum by(endpoint) (rate(http_request_count_total{status=~\"4..|5..\"}[15s]))",
+            "legendFormat": "{{endpoint}} (errors)"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "reqps",
+            "custom": {"lineWidth": 2, "fillOpacity": 10},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 1, "color": "yellow"},
+                {"value": 5, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "title": "HTTP Status Code Distribution",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by(status) (rate(http_request_count_total[15s]))",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 16},
+        "options": {
+          "legend": {"displayMode": "table", "placement": "right"}
+        }
+      },
+      {
+        "id": 6,
+        "title": "Request Count by Endpoint (Last 24h)",
+        "type": "bargauge",
+        "targets": [
+          {
+            "expr": "sum by(endpoint) (increase(http_request_count_total[24h]))",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 16},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 1000, "color": "yellow"},
+                {"value": 10000, "color": "red"}
+              ]
+            }
+          }
+        },
+        "options": {
+          "orientation": "horizontal",
+          "displayMode": "gradient"
+        }
+      },
+      {
+        "id": 7,
+        "title": "Orderbook Lock Duration",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(orderbook_lock_duration_seconds_bucket[15s]))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(orderbook_lock_duration_seconds_bucket[15s]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(orderbook_lock_duration_seconds_bucket[15s]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": {"lineWidth": 2, "fillOpacity": 10}
+          }
+        }
+      },
+      {
+        "id": 8,
+        "title": "Orderbook Operation Duration by Type (Overall)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by(operation, le) (rate(orderbook_operation_duration_seconds_bucket[15s])))",
+            "legendFormat": "{{operation}} (p95)"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": {"lineWidth": 2, "fillOpacity": 0}
+          }
+        }
+      },
+      {
+        "id": 15,
+        "title": "Orderbook Method Duration by Method (Business Logic)",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, sum by(method, le) (rate(orderbook_method_duration_seconds_bucket[15s])))",
+            "legendFormat": "{{method}} (p95)"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": {"lineWidth": 2, "fillOpacity": 0}
+          }
+        }
+      },
+      {
+        "id": 16,
+        "title": "Orderbook Method Call Rate",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum by(method) (rate(orderbook_method_duration_seconds_count[15s]))",
+            "legendFormat": "{{method}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "custom": {"lineWidth": 2, "fillOpacity": 10}
+          }
+        }
+      },
+      {
+        "id": 9,
+        "title": "Event Apply Duration",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(orderbook_event_apply_duration_seconds_bucket[15s]))",
+            "legendFormat": "p50"
+          },
+          {
+            "expr": "histogram_quantile(0.95, rate(orderbook_event_apply_duration_seconds_bucket[15s]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(orderbook_event_apply_duration_seconds_bucket[15s]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+        "description": "Duration of event application to orderbook state",
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "custom": {"lineWidth": 2, "fillOpacity": 10}
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Average Request Duration by Endpoint (Current)",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "sum by(endpoint) (rate(http_request_duration_seconds_sum[15s])) / sum by(endpoint) (rate(http_request_duration_seconds_count[15s]))",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 40},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 0.5, "color": "yellow"},
+                {"value": 1, "color": "red"}
+              ]
+            }
+          }
+        },
+        "options": {
+          "orientation": "auto",
+          "textMode": "value_and_name",
+          "colorMode": "background"
+        }
+      },
+      {
+        "id": 11,
+        "title": "Latency Heatmap",
+        "type": "heatmap",
+        "targets": [
+          {
+            "expr": "sum by(le) (rate(http_request_duration_seconds_bucket[15s]))",
+            "format": "heatmap",
+            "legendFormat": "{{le}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 48},
+        "options": {
+          "calculate": false,
+          "calculation": {},
+          "cellGap": 2,
+          "color": {
+            "exponent": 0.5,
+            "fill": "dark-orange",
+            "mode": "scheme",
+            "scale": "exponential",
+            "scheme": "Spectral"
+          }
+        }
+      },
+      {
+        "id": 12,
+        "title": "Request Success Rate by Endpoint",
+        "type": "timeseries",
+        "targets": [
+          {
+            "expr": "sum by(endpoint) (rate(http_request_count_total{status=~\"2..\"}[15s])) / sum by(endpoint) (rate(http_request_count_total[15s]))",
+            "legendFormat": "{{endpoint}}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 56},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percentunit",
+            "min": 0,
+            "max": 1,
+            "custom": {"lineWidth": 2, "fillOpacity": 10},
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "red"},
+                {"value": 0.95, "color": "yellow"},
+                {"value": 0.99, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 13,
+        "title": "Lock Contention Rate",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(orderbook_lock_duration_seconds_count[15s])",
+            "legendFormat": "Lock acquisitions/sec"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 12, "y": 56},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "ops",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 100, "color": "yellow"},
+                {"value": 500, "color": "red"}
+              ]
+            }
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "textMode": "value_and_name"
+        }
+      },
+      {
+        "id": 14,
+        "title": "Average Lock Wait Time",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "rate(orderbook_lock_duration_seconds_sum[15s]) / rate(orderbook_lock_duration_seconds_count[15s])",
+            "legendFormat": "Avg lock wait"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 18, "y": 56},
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 0.01, "color": "yellow"},
+                {"value": 0.1, "color": "red"}
+              ]
+            }
+          }
+        },
+        "options": {
+          "colorMode": "background",
+          "textMode": "value_and_name"
+        }
+      }
+    ],
+    "refresh": "10s",
+    "time": {"from": "now-1h", "to": "now"},
+    "templating": {
+      "list": [
+        {
+          "name": "endpoint",
+          "type": "query",
+          "query": "label_values(http_request_count_total, endpoint)",
+          "multi": true,
+          "includeAll": true
+        }
+      ]
+  }
+}
+

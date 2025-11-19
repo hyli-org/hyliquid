@@ -1,0 +1,185 @@
+{
+  "title": "Database Metrics - HyLiquid",
+  "tags": ["database", "performance"],
+  "timezone": "browser",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Write Events Duration",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(db_write_events_duration_seconds_sum[15s]) / rate(db_write_events_duration_seconds_count[15s])",
+          "legendFormat": "Average"
+        },
+        {
+          "expr": "histogram_quantile(0.95, rate(db_write_events_duration_seconds_bucket[15s]))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(db_write_events_duration_seconds_bucket[15s]))",
+          "legendFormat": "p99"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "title": "Write Events Rate",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(db_write_events_duration_seconds_count[15s])",
+          "legendFormat": "Requests/sec"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "lineWidth": 1, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "Event Processing Duration by Type",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(db_event_processing_duration_seconds_sum[15s]) / rate(db_event_processing_duration_seconds_count[15s])",
+          "legendFormat": "{{event_type}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never" }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Event Count by Type",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "sum by(event_type) (rate(db_event_processing_duration_seconds_count[15s]))",
+          "legendFormat": "{{event_type}}"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "lineWidth": 1, "fillOpacity": 0, "showPoints": "never" }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "title": "Transaction Operations",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(db_transaction_begin_duration_seconds_sum[15s]) / rate(db_transaction_begin_duration_seconds_count[15s])",
+          "legendFormat": "Begin"
+        },
+        {
+          "expr": "rate(db_transaction_commit_duration_seconds_sum[15s]) / rate(db_transaction_commit_duration_seconds_count[15s])",
+          "legendFormat": "Commit"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "title": "Order Operations Duration",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(db_order_create_duration_seconds_sum[15s]) / rate(db_order_create_duration_seconds_count[15s])",
+          "legendFormat": "Create"
+        },
+        {
+          "expr": "rate(db_order_execute_duration_seconds_sum[15s]) / rate(db_order_execute_duration_seconds_count[15s])",
+          "legendFormat": "Execute"
+        },
+        {
+          "expr": "rate(db_order_cancel_duration_seconds_sum[15s]) / rate(db_order_cancel_duration_seconds_count[15s])",
+          "legendFormat": "Cancel"
+        },
+        {
+          "expr": "rate(db_order_update_duration_seconds_sum[15s]) / rate(db_order_update_duration_seconds_count[15s])",
+          "legendFormat": "Update"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 0 }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "title": "PostgreSQL Notifications",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by(channel, le) (rate(db_notification_duration_seconds_bucket[15s])))",
+          "legendFormat": "{{channel}} (p95)"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 0 }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Database Insert Operations",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "rate(db_prover_request_insert_duration_seconds_sum[15s]) / rate(db_prover_request_insert_duration_seconds_count[15s])",
+          "legendFormat": "Prover Request"
+        },
+        {
+          "expr": "rate(db_contract_events_insert_duration_seconds_sum[15s]) / rate(db_contract_events_insert_duration_seconds_count[15s])",
+          "legendFormat": "Contract Events"
+        },
+        {
+          "expr": "rate(db_balance_update_duration_seconds_sum[15s]) / rate(db_balance_update_duration_seconds_count[15s])",
+          "legendFormat": "Balance Update"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 0 }
+        }
+      }
+    }
+  ],
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" }
+}

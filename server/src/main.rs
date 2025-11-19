@@ -178,6 +178,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         asset_service: asset_service.clone(),
         client: node_client.clone(),
         no_blobs: args.no_blobs,
+        metrics: server::database::DatabaseMetrics::new(),
     });
 
     let api_module_ctx = Arc::new(ApiModuleCtx {

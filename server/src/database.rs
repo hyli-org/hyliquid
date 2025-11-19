@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Instant;
 
 use anyhow::Result;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
@@ -7,6 +8,10 @@ use hyli_modules::{
     bus::{BusMessage, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
+};
+use opentelemetry::{
+    metrics::{Histogram, Meter},
+    KeyValue,
 };
 use orderbook::model::{OrderbookEvent, UserInfo};
 use reqwest::StatusCode;
@@ -17,6 +22,158 @@ use tracing::{debug, info};
 
 use crate::services::user_service::UserService;
 use crate::{prover::OrderbookProverRequest, services::asset_service::AssetService};
+
+/// Metrics for tracking database operation durations
+#[derive(Clone)]
+pub struct DatabaseMetrics {
+    /// Total duration of write_events function
+    pub write_events_duration: Histogram<f64>,
+    /// Duration of transaction begin
+    pub transaction_begin_duration: Histogram<f64>,
+    /// Duration of commit insert
+    pub commit_insert_duration: Histogram<f64>,
+    /// Duration of event processing by event type
+    pub event_processing_duration: Histogram<f64>,
+    /// Duration of balance update operations
+    pub balance_update_duration: Histogram<f64>,
+    /// Duration of order creation operations
+    pub order_create_duration: Histogram<f64>,
+    /// Duration of order cancel operations
+    pub order_cancel_duration: Histogram<f64>,
+    /// Duration of order execution operations
+    pub order_execute_duration: Histogram<f64>,
+    /// Duration of order update operations
+    pub order_update_duration: Histogram<f64>,
+    /// Duration of user operations
+    pub user_ops_duration: Histogram<f64>,
+    /// Duration of prover request insert
+    pub prover_request_insert_duration: Histogram<f64>,
+    /// Duration of contract events insert
+    pub contract_events_insert_duration: Histogram<f64>,
+    /// Duration of notifications
+    pub notification_duration: Histogram<f64>,
+    /// Duration of transaction commit
+    pub transaction_commit_duration: Histogram<f64>,
+}
+
+impl DatabaseMetrics {
+    /// Create a new DatabaseMetrics instance with the global meter provider
+    pub fn new() -> Self {
+        let meter = opentelemetry::global::meter("database");
+        Self::with_meter(meter)
+    }
+
+    /// Create a new DatabaseMetrics instance with a specific meter
+    pub fn with_meter(meter: Meter) -> Self {
+        // Custom buckets for millisecond-level latencies
+        // Covers: 10μs, 50μs, 100μs, 500μs, 1ms, 5ms, 10ms, 50ms, 100ms, 250ms, 500ms, 1000ms, 2500ms, 5000ms, 10000ms, 25000ms, 50000ms, 100000ms
+        let latency_buckets = vec![
+            0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+            5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 25000.0,
+            50000.0, 100000.0,
+        ];
+
+        Self {
+            write_events_duration: meter
+                .f64_histogram("db.write_events.duration")
+                .with_description("Total duration of write_events function in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            transaction_begin_duration: meter
+                .f64_histogram("db.transaction.begin.duration")
+                .with_description("Duration of transaction begin in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            commit_insert_duration: meter
+                .f64_histogram("db.commit.insert.duration")
+                .with_description("Duration of commit insert in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            event_processing_duration: meter
+                .f64_histogram("db.event.processing.duration")
+                .with_description("Duration of event processing by type in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            balance_update_duration: meter
+                .f64_histogram("db.balance.update.duration")
+                .with_description("Duration of balance update operations in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            order_create_duration: meter
+                .f64_histogram("db.order.create.duration")
+                .with_description("Duration of order creation operations in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            order_cancel_duration: meter
+                .f64_histogram("db.order.cancel.duration")
+                .with_description("Duration of order cancel operations in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            order_execute_duration: meter
+                .f64_histogram("db.order.execute.duration")
+                .with_description("Duration of order execution operations in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            order_update_duration: meter
+                .f64_histogram("db.order.update.duration")
+                .with_description("Duration of order update operations in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            user_ops_duration: meter
+                .f64_histogram("db.user.ops.duration")
+                .with_description("Duration of user operations in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            prover_request_insert_duration: meter
+                .f64_histogram("db.prover_request.insert.duration")
+                .with_description("Duration of prover request insert in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            contract_events_insert_duration: meter
+                .f64_histogram("db.contract_events.insert.duration")
+                .with_description("Duration of contract events insert in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            notification_duration: meter
+                .f64_histogram("db.notification.duration")
+                .with_description("Duration of PostgreSQL notifications in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            transaction_commit_duration: meter
+                .f64_histogram("db.transaction.commit.duration")
+                .with_description("Duration of transaction commit in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+        }
+    }
+
+    /// Record the duration of an operation
+    #[inline]
+    fn record(&self, histogram: &Histogram<f64>, start: Instant, labels: &[KeyValue]) {
+        let duration = start.elapsed().as_secs_f64();
+        histogram.record(duration, labels);
+    }
+}
+
+impl Default for DatabaseMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum DatabaseRequest {
@@ -43,6 +200,7 @@ pub struct DatabaseModuleCtx {
     pub asset_service: Arc<RwLock<AssetService>>,
     pub client: Arc<NodeApiHttpClient>,
     pub no_blobs: bool,
+    pub metrics: DatabaseMetrics,
 }
 
 pub struct DatabaseModule {
@@ -108,6 +266,7 @@ impl DatabaseModule {
         tx_hash: TxHash,
         prover_request: OrderbookProverRequest,
     ) -> Result<()> {
+        let write_events_start = Instant::now();
         let user = &user_info.user;
         debug!("Writing events for user {user} with tx hash {tx_hash:#}");
         use crate::services::asset_service::MarketStatus;
@@ -117,8 +276,15 @@ impl DatabaseModule {
         let mut trigger_notify_trades = false;
         let mut trigger_notify_orders = false;
 
+        let tx_begin_start = Instant::now();
         let mut tx = log_error!(self.ctx.pool.begin().await, "Failed to begin transaction")?;
+        self.ctx.metrics.record(
+            &self.ctx.metrics.transaction_begin_duration,
+            tx_begin_start,
+            &[],
+        );
 
+        let commit_insert_start = Instant::now();
         let row = log_error!(
             sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
                 .bind(tx_hash.0.clone())
@@ -126,11 +292,17 @@ impl DatabaseModule {
                 .await,
             "Failed to create commit"
         )?;
+        self.ctx.metrics.record(
+            &self.ctx.metrics.commit_insert_duration,
+            commit_insert_start,
+            &[],
+        );
 
         let commit_id: i64 = row.get("commit_id");
         debug!("Created commit with id {}", commit_id);
 
         for event in prover_request.events.clone() {
+            let event_start = Instant::now();
             match event {
                 OrderbookEvent::PairCreated { pair, info: _ } => {
                     let asset_service = self.ctx.asset_service.read().await;
@@ -160,6 +332,11 @@ impl DatabaseModule {
                         "Failed to create pair"
                     )?;
                     reload_instrument_map = true;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "pair_created")],
+                    );
                 }
                 OrderbookEvent::BalanceUpdated {
                     user,
@@ -169,6 +346,7 @@ impl DatabaseModule {
                     if user == "orderbook" {
                         continue;
                     }
+                    let balance_start = Instant::now();
                     let asset_service = self.ctx.asset_service.read().await;
                     let asset = asset_service
                         .get_asset(&symbol)
@@ -214,9 +392,20 @@ impl DatabaseModule {
                         .await,
                         "Failed to create balance event"
                     )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.balance_update_duration,
+                        balance_start,
+                        &[],
+                    );
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "balance_updated")],
+                    );
                 }
                 OrderbookEvent::OrderCreated { order } => {
                     trigger_notify_orders = true;
+                    let order_create_start = Instant::now();
 
                     let symbol = format!("{}/{}", order.pair.0, order.pair.1);
                     let asset_service = self.ctx.asset_service.read().await;
@@ -272,6 +461,16 @@ impl DatabaseModule {
                         .await,
                         "Failed to create order event"
                     )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.order_create_duration,
+                        order_create_start,
+                        &[],
+                    );
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "order_created")],
+                    );
                 }
                 OrderbookEvent::OrderCancelled { order_id, pair } => {
                     debug!(
@@ -279,6 +478,7 @@ impl DatabaseModule {
                         user, order_id, pair
                     );
                     trigger_notify_orders = true;
+                    let order_cancel_start = Instant::now();
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
@@ -306,6 +506,16 @@ impl DatabaseModule {
                         .await,
                         "Failed to create order event"
                     )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.order_cancel_duration,
+                        order_cancel_start,
+                        &[],
+                    );
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "order_cancelled")],
+                    );
                 }
                 OrderbookEvent::OrderExecuted {
                     order_id,
@@ -318,6 +528,7 @@ impl DatabaseModule {
                     );
                     trigger_notify_orders = true;
                     trigger_notify_trades = true;
+                    let order_execute_start = Instant::now();
 
                     let asset_service = self.ctx.asset_service.read().await;
                     let instrument = asset_service
@@ -385,6 +596,16 @@ impl DatabaseModule {
                         .await,
                         "Failed to insert trade event"
                     )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.order_execute_duration,
+                        order_execute_start,
+                        &[],
+                    );
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "order_executed")],
+                    );
                 }
                 OrderbookEvent::OrderUpdate {
                     order_id,
@@ -399,6 +620,7 @@ impl DatabaseModule {
                     );
                     trigger_notify_trades = true;
                     trigger_notify_orders = true;
+                    let order_update_start = Instant::now();
 
                     let asset_service = self.ctx.asset_service.read().await;
                     let instrument = asset_service
@@ -467,6 +689,16 @@ impl DatabaseModule {
                         .await,
                         "Failed to insert trade event"
                     )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.order_update_duration,
+                        order_update_start,
+                        &[],
+                    );
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "order_update")],
+                    );
                 }
                 OrderbookEvent::SessionKeyAdded {
                     user,
@@ -474,6 +706,7 @@ impl DatabaseModule {
                     nonce,
                     session_keys,
                 } => {
+                    let user_ops_start = Instant::now();
                     let fetched_user_id = self
                         .ctx
                         .user_service
@@ -517,9 +750,20 @@ impl DatabaseModule {
                         .await,
                         "Failed to create user session key"
                     )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.user_ops_duration,
+                        user_ops_start,
+                        &[KeyValue::new("operation", "session_key_added")],
+                    );
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "session_key_added")],
+                    );
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
                     debug!("Incrementing nonce for user {}", user);
+                    let user_ops_start = Instant::now();
                     let row = log_error!(
                         sqlx::query(
                             "UPDATE users SET nonce = $1 WHERE identity = $2 RETURNING user_id"
@@ -540,10 +784,21 @@ impl DatabaseModule {
                             .await,
                         "Failed to insert user event nonce"
                     )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.user_ops_duration,
+                        user_ops_start,
+                        &[KeyValue::new("operation", "nonce_incremented")],
+                    );
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.event_processing_duration,
+                        event_start,
+                        &[KeyValue::new("event_type", "nonce_incremented")],
+                    );
                 }
             }
         }
 
+        let prover_insert_start = Instant::now();
         let json_data = log_error!(
             serde_json::to_vec(&prover_request),
             "Failed to serialize prover request"
@@ -560,7 +815,13 @@ impl DatabaseModule {
             .await,
             "Failed to insert prover request"
         )?;
+        self.ctx.metrics.record(
+            &self.ctx.metrics.prover_request_insert_duration,
+            prover_insert_start,
+            &[],
+        );
 
+        let contract_events_start = Instant::now();
         let events_data = log_error!(
             borsh::to_vec(&prover_request.events),
             "Failed to serialize events"
@@ -580,29 +841,47 @@ impl DatabaseModule {
             .await,
             "Failed to insert contract events"
         )?;
+        self.ctx.metrics.record(
+            &self.ctx.metrics.contract_events_insert_duration,
+            contract_events_start,
+            &[],
+        );
 
         if trigger_notify_trades {
             debug!("Notifying trades");
+            let notify_start = Instant::now();
             log_error!(
                 sqlx::query("select pg_notify('trades', 'trades')")
                     .execute(&mut *tx)
                     .await,
                 "Failed to notify 'trades'"
             )?;
+            self.ctx.metrics.record(
+                &self.ctx.metrics.notification_duration,
+                notify_start,
+                &[KeyValue::new("channel", "trades")],
+            );
         }
 
         if trigger_notify_orders {
             debug!("Notifying orders");
+            let notify_start = Instant::now();
             log_error!(
                 sqlx::query("select pg_notify('orders', 'orders')")
                     .execute(&mut *tx)
                     .await,
                 "Failed to notify 'orders'"
             )?;
+            self.ctx.metrics.record(
+                &self.ctx.metrics.notification_duration,
+                notify_start,
+                &[KeyValue::new("channel", "orders")],
+            );
         }
 
         for symbol in symbol_book_updated {
             debug!("Notifying book for symbol {}", symbol);
+            let notify_start = Instant::now();
             log_error!(
                 sqlx::query("select pg_notify('book', $1)")
                     .bind(symbol)
@@ -610,24 +889,48 @@ impl DatabaseModule {
                     .await,
                 "Failed to notify 'book'"
             )?;
+            self.ctx.metrics.record(
+                &self.ctx.metrics.notification_duration,
+                notify_start,
+                &[KeyValue::new("channel", "book")],
+            );
         }
 
+        let commit_start = Instant::now();
         log_error!(tx.commit().await, "Failed to commit transaction")?;
+        self.ctx.metrics.record(
+            &self.ctx.metrics.transaction_commit_duration,
+            commit_start,
+            &[],
+        );
         debug!("Committed transaction with commit id {}", commit_id);
 
         if reload_instrument_map {
+            let notify_start = Instant::now();
             log_error!(
                 sqlx::query("select pg_notify('instruments', 'instruments')")
                     .execute(&self.ctx.pool)
                     .await,
                 "Failed to notify 'instruments'"
             )?;
+            self.ctx.metrics.record(
+                &self.ctx.metrics.notification_duration,
+                notify_start,
+                &[KeyValue::new("channel", "instruments")],
+            );
             let mut asset_service = self.ctx.asset_service.write().await;
             asset_service
                 .reload_instrument_map()
                 .await
                 .map_err(|e| anyhow::anyhow!("{}", e.1))?;
         }
+
+        // Record the total duration of write_events
+        self.ctx.metrics.record(
+            &self.ctx.metrics.write_events_duration,
+            write_events_start,
+            &[],
+        );
 
         Ok(())
     }

@@ -4,6 +4,7 @@ use orderbook::model::{Order, OrderSide, OrderType};
 use serde::{Deserialize, Serialize};
 use server::app::{CancelOrderRequest, CreatePairRequest, DepositRequest};
 use std::time::Duration;
+use tracing::warn;
 
 use crate::auth::UserAuth;
 use crate::config::Config;
@@ -145,9 +146,19 @@ impl OrderbookClient {
 
         let request = GooseRequest::builder().set_request_builder(builder).build();
 
-        let response = user.request(request).await?;
+        let goose_response = user.request(request).await?;
 
-        let orders = response.response?.json::<PaginatedUserOrders>().await?;
+        let response = goose_response.response?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            warn!("get_user_orders failed with status {status}: {error_text}");
+            return Err(Box::new(TransactionError::RequestFailed {
+                raw_request: goose_response.request,
+            }));
+        }
+
+        let orders = response.json::<PaginatedUserOrders>().await?;
 
         Ok(orders)
     }
@@ -167,9 +178,19 @@ impl OrderbookClient {
 
         let request = GooseRequest::builder().set_request_builder(builder).build();
 
-        let response = user.request(request).await?;
+        let goose_response = user.request(request).await?;
 
-        let trades = response.response?.json::<UserTrades>().await?;
+        let response = goose_response.response?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            warn!("get_user_trades failed with status {status}: {error_text}");
+            return Err(Box::new(TransactionError::RequestFailed {
+                raw_request: goose_response.request,
+            }));
+        }
+
+        let trades = response.json::<UserTrades>().await?;
 
         Ok(trades)
     }
@@ -210,11 +231,21 @@ impl OrderbookClient {
             .get_request_builder(&GooseMethod::Post, path)?
             .header("x-identity", &auth.identity)
             .header("x-public-key", &auth.public_key_hex)
+            .header("Content-Length", "0")
             .body("");
 
         let request = GooseRequest::builder().set_request_builder(builder).build();
 
-        let _response = user.request(request).await?;
+        let response = user.request(request).await?;
+
+        let raw_request = response.request;
+        let response = response.response?;
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            warn!("add_session_key failed with status {status}: {error_text}");
+            return Err(Box::new(TransactionError::RequestFailed { raw_request }));
+        }
 
         Ok(())
     }

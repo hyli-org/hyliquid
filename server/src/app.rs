@@ -4,6 +4,7 @@ use std::{
         atomic::{AtomicU32, Ordering},
         Arc,
     },
+    time::Instant,
     vec,
 };
 
@@ -24,6 +25,10 @@ use hyli_modules::{
     modules::{BuildApiContextInner, Module},
 };
 use hyli_smt_token::SmtTokenAction;
+use opentelemetry::{
+    metrics::{Counter, Histogram, Meter},
+    KeyValue,
+};
 use orderbook::{
     model::{AssetInfo, Order, OrderbookEvent, PairInfo, UserInfo, WithdrawDestination},
     transaction::{
@@ -45,6 +50,137 @@ use crate::{
     services::asset_service::AssetService,
 };
 use rand::RngCore;
+
+/// Metrics for tracking HTTP request performance
+#[derive(Clone)]
+pub struct AppMetrics {
+    /// Duration of HTTP requests by endpoint
+    pub http_request_duration: Histogram<f64>,
+    /// Count of HTTP requests by endpoint and status
+    pub http_request_count: Counter<u64>,
+    /// Duration of orderbook operations (overall including lock + method + apply)
+    pub orderbook_operation_duration: Histogram<f64>,
+    /// Duration of specific orderbook method calls (business logic only)
+    pub orderbook_method_duration: Histogram<f64>,
+    /// Count of orderbook lock acquisitions
+    pub orderbook_lock_duration: Histogram<f64>,
+    /// Event processing duration
+    pub event_apply_duration: Histogram<f64>,
+}
+
+impl AppMetrics {
+    pub fn new() -> Self {
+        let meter = opentelemetry::global::meter("app");
+        Self::with_meter(meter)
+    }
+
+    pub fn with_meter(meter: Meter) -> Self {
+        // Custom buckets for millisecond-level latencies
+        // Covers: 1ms, 2.5ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 25s, 50s, 100s, 250s, 500s, 1000s
+        let latency_buckets = vec![
+            0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0,
+            50.0, 100.0, 250.0, 500.0, 1000.0,
+        ];
+
+        // Tighter buckets for lock duration (expecting microsecond to low millisecond range)
+        // Covers: 10μs, 50μs, 100μs, 500μs, 1ms, 5ms, 10ms, 50ms, 100ms, 250ms, 500ms, 1000ms, 2500ms, 5000ms, 10000ms, 25000ms, 50000ms, 100000ms
+        let lock_buckets = vec![
+            0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+            5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 25000.0,
+            50000.0, 100000.0,
+        ];
+
+        Self {
+            http_request_duration: meter
+                .f64_histogram("http.request.duration")
+                .with_description("HTTP request duration in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            http_request_count: meter
+                .u64_counter("http.request.count")
+                .with_description("Total HTTP requests")
+                .build(),
+            orderbook_operation_duration: meter
+                .f64_histogram("orderbook.operation.duration")
+                .with_description("Orderbook operation duration in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            orderbook_method_duration: meter
+                .f64_histogram("orderbook.method.duration")
+                .with_description("Orderbook method call duration in seconds (business logic only)")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
+            orderbook_lock_duration: meter
+                .f64_histogram("orderbook.lock.duration")
+                .with_description("Duration of orderbook lock acquisition in seconds")
+                .with_unit("s")
+                .with_boundaries(lock_buckets)
+                .build(),
+            event_apply_duration: meter
+                .f64_histogram("orderbook.event.apply.duration")
+                .with_description("Duration of applying events to orderbook in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets)
+                .build(),
+        }
+    }
+
+    #[inline]
+    fn record_request(&self, start: Instant, endpoint: &str, status: u16) {
+        let duration = start.elapsed().as_secs_f64();
+        self.http_request_duration.record(
+            duration,
+            &[
+                KeyValue::new("endpoint", endpoint.to_string()),
+                KeyValue::new("status", status.to_string()),
+            ],
+        );
+        self.http_request_count.add(
+            1,
+            &[
+                KeyValue::new("endpoint", endpoint.to_string()),
+                KeyValue::new("status", status.to_string()),
+            ],
+        );
+    }
+
+    #[inline]
+    fn record_operation(&self, start: Instant, operation: &str) {
+        let duration = start.elapsed().as_secs_f64();
+        self.orderbook_operation_duration.record(
+            duration,
+            &[KeyValue::new("operation", operation.to_string())],
+        );
+    }
+
+    #[inline]
+    fn record_lock(&self, start: Instant) {
+        let duration = start.elapsed().as_secs_f64();
+        self.orderbook_lock_duration.record(duration, &[]);
+    }
+
+    #[inline]
+    fn record_event_apply(&self, start: Instant) {
+        let duration = start.elapsed().as_secs_f64();
+        self.event_apply_duration.record(duration, &[]);
+    }
+
+    #[inline]
+    fn record_method(&self, start: Instant, method: &str) {
+        let duration = start.elapsed().as_secs_f64();
+        self.orderbook_method_duration
+            .record(duration, &[KeyValue::new("method", method.to_string())]);
+    }
+}
+
+impl Default for AppMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 pub struct OrderbookModule {
     bus: OrderbookModuleBusClient,
@@ -116,6 +252,7 @@ impl Module for OrderbookModule {
             asset_service: ctx.asset_service.clone(),
             client: ctx.client.clone(),
             action_id_counter: Arc::new(AtomicU32::new(0)),
+            metrics: AppMetrics::new(),
         };
 
         let cors = CorsLayer::new()
@@ -302,6 +439,7 @@ struct RouterCtx {
     pub asset_service: Arc<RwLock<AssetService>>,
     pub client: Arc<NodeApiHttpClient>,
     pub action_id_counter: Arc<AtomicU32>,
+    pub metrics: AppMetrics,
 }
 
 // --------------------------------------------------------
@@ -469,28 +607,61 @@ impl From<&orderbook::model::ExecuteState> for ExecuteStateAPI {
 //     Routes
 // --------------------------------------------------------
 async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
-    let orderbook = ctx.orderbook.lock().await;
-    let api_state = ExecuteStateAPI::from(&*orderbook);
+    let request_start = Instant::now();
+    let endpoint = "get_state";
 
-    Ok(Json(api_state))
+    let result = async {
+        let lock_start = Instant::now();
+        let orderbook = ctx.orderbook.lock().await;
+        ctx.metrics.record_lock(lock_start);
+
+        let api_state = ExecuteStateAPI::from(&*orderbook);
+        Ok(Json(api_state))
+    }
+    .await;
+
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
+    };
+    ctx.metrics.record_request(request_start, endpoint, status);
+
+    result
 }
 
 async fn get_nonce(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    let auth = AuthHeaders::from_headers(&headers)?;
-    let user = auth.identity;
+    let request_start = Instant::now();
+    let endpoint = "get_nonce";
 
-    // TODO: do some checks on headers to verify identify the user
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
+        let user = auth.identity;
 
-    let orderbook = ctx.orderbook.lock().await;
-    let nonce = orderbook
-        .get_user_info(&user)
-        .map(|u| u.nonce)
-        .unwrap_or_default();
+        // TODO: do some checks on headers to verify identify the user
 
-    Ok(Json(nonce))
+        let lock_start = Instant::now();
+        let orderbook = ctx.orderbook.lock().await;
+        ctx.metrics.record_lock(lock_start);
+
+        let nonce = orderbook
+            .get_user_info(&user)
+            .map(|u| u.nonce)
+            .unwrap_or_default();
+
+        Ok(Json(nonce))
+    }
+    .await;
+
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
+    };
+    ctx.metrics.record_request(request_start, endpoint, status);
+
+    result
 }
 
 #[axum::debug_handler]
@@ -500,102 +671,122 @@ async fn create_pair(
     headers: HeaderMap,
     Json(request): Json<CreatePairRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let auth = AuthHeaders::from_headers(&headers)?;
+    let request_start = Instant::now();
+    let endpoint = "create_pair";
 
-    if request.base_contract == request.quote_contract {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            anyhow::anyhow!("Base and quote asset cannot be the same"),
-        ));
-    }
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
 
-    let user = auth.identity;
+        if request.base_contract == request.quote_contract {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Base and quote asset cannot be the same"),
+            ));
+        }
 
-    let CreatePairRequest {
-        base_contract,
-        quote_contract,
-    } = request;
+        let user = auth.identity;
 
-    let asset_service = ctx.asset_service.read().await;
+        let CreatePairRequest {
+            base_contract,
+            quote_contract,
+        } = request;
 
-    let base_asset = asset_service
-        .get_asset_from_contract_name(&base_contract)
+        let asset_service = ctx.asset_service.read().await;
+
+        let base_asset = asset_service
+            .get_asset_from_contract_name(&base_contract)
+            .await
+            .ok_or(AppError(
+                StatusCode::NOT_FOUND,
+                anyhow::anyhow!("Base asset not found: {base_contract}"),
+            ))?;
+        let quote_asset = asset_service
+            .get_asset_from_contract_name(&quote_contract)
+            .await
+            .ok_or(AppError(
+                StatusCode::NOT_FOUND,
+                anyhow::anyhow!("Quote asset not found: {quote_contract}"),
+            ))?;
+
+        if base_asset.scale >= 20 {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!(
+                    "Unsupported pair scale: base_scale >= 20: {}",
+                    base_asset.scale
+                ),
+            ));
+        }
+        if quote_asset.scale >= 20 {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!(
+                    "Unsupported pair scale: quote_scale >= 20: {}",
+                    quote_asset.scale
+                ),
+            ));
+        }
+
+        let base_info = AssetInfo::new(base_asset.scale as u64, base_contract.into());
+        let quote_info = AssetInfo::new(quote_asset.scale as u64, quote_contract.into());
+
+        let info = PairInfo {
+            base: base_info,
+            quote: quote_info,
+        };
+        let pair = (base_asset.symbol.clone(), quote_asset.symbol.clone());
+        drop(asset_service);
+
+        let operation_start = Instant::now();
+        let (user_info, events) = {
+            let lock_start = Instant::now();
+            let mut orderbook = ctx.orderbook.lock().await;
+            ctx.metrics.record_lock(lock_start);
+
+            // Get user_info if exists, otherwise create a new one with random salt
+            let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
+                let mut salt = [0u8; 32];
+                rand::rng().fill_bytes(&mut salt);
+                UserInfo::new(user.clone(), salt.to_vec())
+            });
+
+            let method_start = Instant::now();
+            let events = orderbook
+                .create_pair(&pair, &info)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_method(method_start, "create_pair");
+
+            let apply_start = Instant::now();
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_event_apply(apply_start);
+
+            (user_info, events)
+        };
+        ctx.metrics.record_operation(operation_start, "create_pair");
+
+        let action_private_input = Vec::<u8>::new();
+        let orderbook_action = PermissionnedOrderbookAction::CreatePair { pair, info };
+
+        process_orderbook_action(
+            user_info,
+            events,
+            orderbook_action,
+            &action_private_input,
+            &ctx,
+        )
         .await
-        .ok_or(AppError(
-            StatusCode::NOT_FOUND,
-            anyhow::anyhow!("Base asset not found: {base_contract}"),
-        ))?;
-    let quote_asset = asset_service
-        .get_asset_from_contract_name(&quote_contract)
-        .await
-        .ok_or(AppError(
-            StatusCode::NOT_FOUND,
-            anyhow::anyhow!("Quote asset not found: {quote_contract}"),
-        ))?;
-
-    if base_asset.scale >= 20 {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            anyhow::anyhow!(
-                "Unsupported pair scale: base_scale >= 20: {}",
-                base_asset.scale
-            ),
-        ));
     }
-    if quote_asset.scale >= 20 {
-        return Err(AppError(
-            StatusCode::BAD_REQUEST,
-            anyhow::anyhow!(
-                "Unsupported pair scale: quote_scale >= 20: {}",
-                quote_asset.scale
-            ),
-        ));
-    }
+    .await;
 
-    let base_info = AssetInfo::new(base_asset.scale as u64, base_contract.into());
-
-    let quote_info = AssetInfo::new(quote_asset.scale as u64, quote_contract.into());
-
-    let info = PairInfo {
-        base: base_info,
-        quote: quote_info,
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
     };
-    let pair = (base_asset.symbol.clone(), quote_asset.symbol.clone());
-    drop(asset_service);
+    ctx.metrics.record_request(request_start, endpoint, status);
 
-    let (user_info, events) = {
-        let mut orderbook = ctx.orderbook.lock().await;
-
-        // Get user_info if exists, otherwise create a new one with random salt
-        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
-            let mut salt = [0u8; 32];
-            rand::rng().fill_bytes(&mut salt);
-            UserInfo::new(user.clone(), salt.to_vec())
-        });
-
-        let events = orderbook
-            .create_pair(&pair, &info)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-        orderbook
-            .apply_events(&user_info, &events)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-
-        (user_info, events)
-    };
-
-    let action_private_input = Vec::<u8>::new();
-
-    let orderbook_action = PermissionnedOrderbookAction::CreatePair { pair, info };
-
-    process_orderbook_action(
-        user_info,
-        events,
-        orderbook_action,
-        &action_private_input,
-        &ctx,
-    )
-    .await
+    result
 }
 
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
@@ -603,69 +794,93 @@ async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, AppError> {
-    let auth = AuthHeaders::from_headers(&headers)?;
-    let user = auth.identity;
-    let public_key = auth.public_key.expect("Missing public key in headers");
+    let request_start = Instant::now();
+    let endpoint = "add_session_key";
 
-    debug!(
-        "Adding session key for user {user} with public key {}",
-        hex::encode(&public_key)
-    );
-
-    // FIXME: locking here makes locking another time in execute_orderbook_action ...
-    let (user_info, events) = {
-        let mut orderbook = ctx.orderbook.lock().await;
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
+        let user = auth.identity;
+        let public_key = auth.public_key.expect("Missing public key in headers");
 
         debug!(
-            "Getting user info for user {user}. Orderbook users info: {:?}",
-            orderbook.users_info
+            "Adding session key for user {user} with public key {}",
+            hex::encode(&public_key)
         );
 
-        // Get user_info if exists, otherwise create a new one with random salt
-        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
-            debug!("Creating new user info for user {user}");
-            let mut salt = [0u8; 32];
-            rand::rng().fill_bytes(&mut salt);
-            UserInfo::new(user.clone(), salt.to_vec())
-        });
-        debug!("User info: {:?}", user_info);
+        let operation_start = Instant::now();
+        // FIXME: locking here makes locking another time in execute_orderbook_action ...
+        let (user_info, events) = {
+            let lock_start = Instant::now();
+            let mut orderbook = ctx.orderbook.lock().await;
+            ctx.metrics.record_lock(lock_start);
 
-        let res = orderbook.add_session_key(user_info.clone(), &public_key);
-        let events = match res {
-            Ok(events) => events,
-            Err(e) => {
-                if e.contains("already exists") {
-                    debug!("Session key already exists for user {user}. {e}");
-                    return Err(AppError(StatusCode::NOT_MODIFIED, anyhow::anyhow!(e)));
-                } else {
-                    return Err(AppError(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        anyhow::anyhow!(e),
-                    ));
+            debug!(
+                "Getting user info for user {user}. Orderbook users info: {:?}",
+                orderbook.users_info
+            );
+
+            // Get user_info if exists, otherwise create a new one with random salt
+            let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
+                debug!("Creating new user info for user {user}");
+                let mut salt = [0u8; 32];
+                rand::rng().fill_bytes(&mut salt);
+                UserInfo::new(user.clone(), salt.to_vec())
+            });
+            debug!("User info: {:?}", user_info);
+
+            let method_start = Instant::now();
+            let res = orderbook.add_session_key(user_info.clone(), &public_key);
+            ctx.metrics.record_method(method_start, "add_session_key");
+            let events = match res {
+                Ok(events) => events,
+                Err(e) => {
+                    if e.contains("already exists") {
+                        debug!("Session key already exists for user {user}. {e}");
+                        return Err(AppError(StatusCode::NOT_MODIFIED, anyhow::anyhow!(e)));
+                    } else {
+                        return Err(AppError(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            anyhow::anyhow!(e),
+                        ));
+                    }
                 }
-            }
+            };
+
+            let apply_start = Instant::now();
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_event_apply(apply_start);
+
+            (user_info, events)
+        };
+        ctx.metrics
+            .record_operation(operation_start, "add_session_key");
+
+        let action_private_input = &AddSessionKeyPrivateInput {
+            new_public_key: public_key,
         };
 
-        orderbook
-            .apply_events(&user_info, &events)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-        (user_info, events)
+        let orderbook_action = PermissionnedOrderbookAction::AddSessionKey;
+
+        process_orderbook_action(
+            user_info,
+            events,
+            orderbook_action,
+            action_private_input,
+            &ctx,
+        )
+        .await
+    }
+    .await;
+
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
     };
+    ctx.metrics.record_request(request_start, endpoint, status);
 
-    let action_private_input = &AddSessionKeyPrivateInput {
-        new_public_key: public_key,
-    };
-
-    let orderbook_action = PermissionnedOrderbookAction::AddSessionKey;
-
-    process_orderbook_action(
-        user_info,
-        events,
-        orderbook_action,
-        action_private_input,
-        &ctx,
-    )
-    .await
+    result
 }
 
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
@@ -674,51 +889,73 @@ async fn deposit(
     headers: HeaderMap,
     Json(request): Json<DepositRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let auth = AuthHeaders::from_headers(&headers)?;
-    let user = auth.identity;
-    // TODO: Check that the user actually has sent the funds to the contract before proceeding to deposit
+    let request_start = Instant::now();
+    let endpoint = "deposit";
 
-    debug!(
-        "Depositing {} {} for user {user}",
-        request.amount, request.symbol
-    );
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
+        let user = auth.identity;
+        // TODO: Check that the user actually has sent the funds to the contract before proceeding to deposit
 
-    let (user_info, events) = {
-        let mut orderbook = ctx.orderbook.lock().await;
+        debug!(
+            "Depositing {} {} for user {user}",
+            request.amount, request.symbol
+        );
 
-        // Get user_info if exists, otherwise create a new one with random salt
-        let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
-            let mut salt = [0u8; 32];
-            rand::rng().fill_bytes(&mut salt);
-            UserInfo::new(user.clone(), salt.to_vec())
-        });
+        let operation_start = Instant::now();
+        let (user_info, events) = {
+            let lock_start = Instant::now();
+            let mut orderbook = ctx.orderbook.lock().await;
+            ctx.metrics.record_lock(lock_start);
 
-        let events = orderbook
-            .deposit(&request.symbol, request.amount, &user_info)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            // Get user_info if exists, otherwise create a new one with random salt
+            let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
+                let mut salt = [0u8; 32];
+                rand::rng().fill_bytes(&mut salt);
+                UserInfo::new(user.clone(), salt.to_vec())
+            });
 
-        orderbook
-            .apply_events(&user_info, &events)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            let method_start = Instant::now();
+            let events = orderbook
+                .deposit(&request.symbol, request.amount, &user_info)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_method(method_start, "deposit");
 
-        (user_info, events)
+            let apply_start = Instant::now();
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_event_apply(apply_start);
+
+            (user_info, events)
+        };
+        ctx.metrics.record_operation(operation_start, "deposit");
+
+        let action_private_input = Vec::<u8>::new();
+
+        let orderbook_action = PermissionnedOrderbookAction::Deposit {
+            symbol: request.symbol,
+            amount: request.amount,
+        };
+
+        process_orderbook_action(
+            user_info,
+            events,
+            orderbook_action,
+            &action_private_input,
+            &ctx,
+        )
+        .await
+    }
+    .await;
+
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
     };
+    ctx.metrics.record_request(request_start, endpoint, status);
 
-    let action_private_input = Vec::<u8>::new();
-
-    let orderbook_action = PermissionnedOrderbookAction::Deposit {
-        symbol: request.symbol,
-        amount: request.amount,
-    };
-
-    process_orderbook_action(
-        user_info,
-        events,
-        orderbook_action,
-        &action_private_input,
-        &ctx,
-    )
-    .await
+    result
 }
 
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
@@ -727,73 +964,96 @@ async fn create_order(
     headers: HeaderMap,
     Json(request): Json<Order>,
 ) -> Result<impl IntoResponse, AppError> {
-    let auth = AuthHeaders::from_headers(&headers)?;
-    let user = auth.identity;
-    let public_key = auth.public_key.expect("Missing public key in headers");
-    let signature = auth.signature.expect("Missing signature in headers");
+    let request_start = Instant::now();
+    let endpoint = "create_order";
 
-    debug!("Creating order for user {user}. Order: {:?}", request);
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
+        let user = auth.identity;
+        let public_key = auth.public_key.expect("Missing public key in headers");
+        let signature = auth.signature.expect("Missing signature in headers");
 
-    let (user_info, events) = {
-        let mut orderbook = ctx.orderbook.lock().await;
+        debug!("Creating order for user {user}. Order: {:?}", request);
 
-        let user_info = orderbook.get_user_info(&user).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Could not find user {user}: {e}"),
+        let operation_start = Instant::now();
+        let (user_info, events) = {
+            let lock_start = Instant::now();
+            let mut orderbook = ctx.orderbook.lock().await;
+            ctx.metrics.record_lock(lock_start);
+
+            let user_info = orderbook.get_user_info(&user).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not find user {user}: {e}"),
+                )
+            })?;
+
+            orderbook::utils::verify_user_signature_authorization(
+                &user_info,
+                &public_key,
+                &format!(
+                    "{}:{}:create_order:{}",
+                    user_info.user, user_info.nonce, request.order_id
+                ),
+                &signature,
             )
-        })?;
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+                )
+            })?;
 
-        orderbook::utils::verify_user_signature_authorization(
-            &user_info,
-            &public_key,
-            &format!(
-                "{}:{}:create_order:{}",
-                user_info.user, user_info.nonce, request.order_id
-            ),
-            &signature,
-        )
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+            let method_start = Instant::now();
+            let events = log_warn!(
+                orderbook
+                    .execute_order(&user_info, request.clone())
+                    .map_err(|e| anyhow::anyhow!(e)),
+                "Failed to execute order"
             )
-        })?;
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+            ctx.metrics.record_method(method_start, "execute_order");
 
-        let events = log_warn!(
-            orderbook
-                .execute_order(&user_info, request.clone())
-                .map_err(|e| anyhow::anyhow!(e)),
-            "Failed to execute order"
+            let apply_start = Instant::now();
+            log_error!(
+                orderbook
+                    .apply_events(&user_info, &events)
+                    .map_err(|e| anyhow::anyhow!(e)),
+                "Failed to apply events"
+            )
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            ctx.metrics.record_event_apply(apply_start);
+
+            (user_info, events)
+        };
+        ctx.metrics
+            .record_operation(operation_start, "create_order");
+
+        let action_private_input = &CreateOrderPrivateInput {
+            public_key,
+            signature,
+        };
+
+        let orderbook_action = PermissionnedOrderbookAction::CreateOrder(request);
+
+        process_orderbook_action(
+            user_info,
+            events,
+            orderbook_action,
+            action_private_input,
+            &ctx,
         )
-        .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+        .await
+    }
+    .await;
 
-        log_error!(
-            orderbook
-                .apply_events(&user_info, &events)
-                .map_err(|e| anyhow::anyhow!(e)),
-            "Failed to apply events"
-        )
-        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-
-        (user_info, events)
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
     };
+    ctx.metrics.record_request(request_start, endpoint, status);
 
-    let action_private_input = &CreateOrderPrivateInput {
-        public_key,
-        signature,
-    };
-
-    let orderbook_action = PermissionnedOrderbookAction::CreateOrder(request);
-
-    process_orderbook_action(
-        user_info,
-        events,
-        orderbook_action,
-        action_private_input,
-        &ctx,
-    )
-    .await
+    result
 }
 
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
@@ -802,83 +1062,106 @@ async fn cancel_order(
     headers: HeaderMap,
     Json(request): Json<CancelOrderRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let auth = AuthHeaders::from_headers(&headers)?;
-    let user = auth.identity;
-    let public_key = auth.public_key.expect("Missing public key in headers");
-    let signature = auth.signature.expect("Missing signature in headers");
+    let request_start = Instant::now();
+    let endpoint = "cancel_order";
 
-    debug!(
-        "Cancelling order for user {user}. Order ID: {}",
-        request.order_id
-    );
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
+        let user = auth.identity;
+        let public_key = auth.public_key.expect("Missing public key in headers");
+        let signature = auth.signature.expect("Missing signature in headers");
 
-    let (user_info, events) = {
-        let mut orderbook = ctx.orderbook.lock().await;
+        debug!(
+            "Cancelling order for user {user}. Order ID: {}",
+            request.order_id
+        );
 
-        let user_info = orderbook.get_user_info(&user).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Could not find user {user}: {e}"),
+        let operation_start = Instant::now();
+        let (user_info, events) = {
+            let lock_start = Instant::now();
+            let mut orderbook = ctx.orderbook.lock().await;
+            ctx.metrics.record_lock(lock_start);
+
+            let user_info = orderbook.get_user_info(&user).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not find user {user}: {e}"),
+                )
+            })?;
+
+            orderbook::utils::verify_user_signature_authorization(
+                &user_info,
+                &public_key,
+                &format!(
+                    "{}:{}:cancel:{}",
+                    user_info.user, user_info.nonce, request.order_id
+                ),
+                &signature,
             )
-        })?;
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+                )
+            })?;
 
-        orderbook::utils::verify_user_signature_authorization(
-            &user_info,
-            &public_key,
-            &format!(
-                "{}:{}:cancel:{}",
-                user_info.user, user_info.nonce, request.order_id
-            ),
-            &signature,
-        )
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-            )
-        })?;
+            let Some(order_owner) = orderbook.get_order_owner(&request.order_id) else {
+                return Err(AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Order not found: {}", request.order_id),
+                ));
+            };
+            if user_info.get_key() != *order_owner {
+                return Err(AppError(
+                    StatusCode::UNAUTHORIZED,
+                    anyhow::anyhow!("You are not the owner of this order"),
+                ));
+            }
 
-        let Some(order_owner) = orderbook.get_order_owner(&request.order_id) else {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Order not found: {}", request.order_id),
-            ));
+            let method_start = Instant::now();
+            let events = orderbook
+                .cancel_order(request.order_id.clone(), &user_info)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_method(method_start, "cancel_order");
+
+            let apply_start = Instant::now();
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_event_apply(apply_start);
+
+            (user_info, events)
         };
-        if user_info.get_key() != *order_owner {
-            return Err(AppError(
-                StatusCode::UNAUTHORIZED,
-                anyhow::anyhow!("You are not the owner of this order"),
-            ));
-        }
+        ctx.metrics
+            .record_operation(operation_start, "cancel_order");
 
-        let events = orderbook
-            .cancel_order(request.order_id.clone(), &user_info)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        let action_private_input = CancelOrderPrivateInput {
+            public_key,
+            signature,
+        };
 
-        orderbook
-            .apply_events(&user_info, &events)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        let orderbook_action = PermissionnedOrderbookAction::Cancel {
+            order_id: request.order_id.clone(),
+        };
 
-        (user_info, events)
+        process_orderbook_action(
+            user_info,
+            events,
+            orderbook_action,
+            &action_private_input,
+            &ctx,
+        )
+        .await
+    }
+    .await;
+
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
     };
+    ctx.metrics.record_request(request_start, endpoint, status);
 
-    let action_private_input = CancelOrderPrivateInput {
-        public_key,
-        signature,
-    };
-
-    let orderbook_action = PermissionnedOrderbookAction::Cancel {
-        order_id: request.order_id.clone(),
-    };
-
-    process_orderbook_action(
-        user_info,
-        events,
-        orderbook_action,
-        &action_private_input,
-        &ctx,
-    )
-    .await
+    result
 }
 
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
@@ -887,85 +1170,107 @@ async fn withdraw(
     headers: HeaderMap,
     Json(request): Json<WithdrawRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let auth = AuthHeaders::from_headers(&headers)?;
-    let user = auth.identity;
-    let public_key = auth.public_key.expect("Missing public key in headers");
-    let signature = auth.signature.expect("Missing signature in headers");
+    let request_start = Instant::now();
+    let endpoint = "withdraw";
 
-    debug!(
-        "Withdrawing {} {} for user {user}",
-        request.amount, request.symbol
-    );
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
+        let user = auth.identity;
+        let public_key = auth.public_key.expect("Missing public key in headers");
+        let signature = auth.signature.expect("Missing signature in headers");
 
-    let (user_info, events) = {
-        let mut orderbook = ctx.orderbook.lock().await;
+        debug!(
+            "Withdrawing {} {} for user {user}",
+            request.amount, request.symbol
+        );
 
-        let user_info = orderbook.get_user_info(&user).map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Could not find user {user}: {e}"),
-            )
-        })?;
+        let operation_start = Instant::now();
+        let (user_info, events) = {
+            let lock_start = Instant::now();
+            let mut orderbook = ctx.orderbook.lock().await;
+            ctx.metrics.record_lock(lock_start);
 
-        orderbook::utils::verify_user_signature_authorization(
-            &user_info,
-            &public_key,
-            &format!(
-                "{}:{}:withdraw:{}:{}",
-                user_info.user, user_info.nonce, request.symbol, request.amount
-            ),
-            &signature,
-        )
-        .map_err(|e| {
-            AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-            )
-        })?;
+            let user_info = orderbook.get_user_info(&user).map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Could not find user {user}: {e}"),
+                )
+            })?;
 
-        let balance = orderbook.get_balance(&user_info, &request.symbol);
-        if balance.0 < request.amount {
-            return Err(AppError(
-                StatusCode::BAD_REQUEST,
-                anyhow::anyhow!(
-                    "Not enough balance: withdrawing {} {} while having {}",
-                    request.amount,
-                    request.symbol,
-                    balance.0
+            orderbook::utils::verify_user_signature_authorization(
+                &user_info,
+                &public_key,
+                &format!(
+                    "{}:{}:withdraw:{}:{}",
+                    user_info.user, user_info.nonce, request.symbol, request.amount
                 ),
-            ));
+                &signature,
+            )
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+                )
+            })?;
+
+            let balance = orderbook.get_balance(&user_info, &request.symbol);
+            if balance.0 < request.amount {
+                return Err(AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!(
+                        "Not enough balance: withdrawing {} {} while having {}",
+                        request.amount,
+                        request.symbol,
+                        balance.0
+                    ),
+                ));
+            };
+
+            let method_start = Instant::now();
+            let events = orderbook
+                .withdraw(&request.symbol, &request.amount, &user_info)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_method(method_start, "withdraw");
+
+            let apply_start = Instant::now();
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            ctx.metrics.record_event_apply(apply_start);
+
+            (user_info, events)
+        };
+        ctx.metrics.record_operation(operation_start, "withdraw");
+
+        let action_private_input = WithdrawPrivateInput {
+            public_key,
+            signature,
         };
 
-        let events = orderbook
-            .withdraw(&request.symbol, &request.amount, &user_info)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        let orderbook_action = PermissionnedOrderbookAction::Withdraw {
+            symbol: request.symbol,
+            amount: request.amount,
+            destination: request.destination,
+        };
 
-        orderbook
-            .apply_events(&user_info, &events)
-            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+        process_orderbook_action(
+            user_info,
+            events,
+            orderbook_action,
+            &action_private_input,
+            &ctx,
+        )
+        .await
+    }
+    .await;
 
-        (user_info, events)
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
     };
+    ctx.metrics.record_request(request_start, endpoint, status);
 
-    let action_private_input = WithdrawPrivateInput {
-        public_key,
-        signature,
-    };
-
-    let orderbook_action = PermissionnedOrderbookAction::Withdraw {
-        symbol: request.symbol,
-        amount: request.amount,
-        destination: request.destination,
-    };
-
-    process_orderbook_action(
-        user_info,
-        events,
-        orderbook_action,
-        &action_private_input,
-        &ctx,
-    )
-    .await
+    result
 }
 
 #[cfg_attr(

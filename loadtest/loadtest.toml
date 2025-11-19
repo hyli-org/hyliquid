@@ -1,12 +1,13 @@
 # Configuration for Goose load testing
 
 [server]
+#base_url = "https://hyliquid.camelot.hyli.dev"
 base_url = "http://localhost:3000"
 
 [instrument]
 # Trading pair configuration
 base_asset = "ORANJ"
-quote_asset = "USDT"
+quote_asset = "HYLLAR"
 
 # Price and quantity scaling (integer-based to avoid floats)
 price_tick = 1000000 # Minimum price increment
@@ -27,7 +28,7 @@ users = 5000
 rps = 50
 
 # Test duration in seconds
-duration = 120
+duration = 300
 
 # Ramp-up configuration
 ramp_users_per_second = 10 # Add N users per second during ramp-up

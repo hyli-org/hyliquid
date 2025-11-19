@@ -221,7 +221,7 @@ async fn get_user_orders_transaction(user: &mut GooseUser) -> TransactionResult 
     let user_state = user.get_session_data_mut::<UserState>().unwrap();
     let user_auth = user_state.auth.clone();
 
-    client.get_user_orders(user, &user_auth).await.unwrap();
+    client.get_user_orders(user, &user_auth).await?;
 
     Ok(())
 }
@@ -237,7 +237,7 @@ async fn get_user_trades_transaction(user: &mut GooseUser) -> TransactionResult 
     let user_state = user.get_session_data_mut::<UserState>().unwrap();
     let user_auth = user_state.auth.clone();
 
-    client.get_user_trades(user, &user_auth).await.unwrap();
+    client.get_user_trades(user, &user_auth).await?;
 
     Ok(())
 }
@@ -256,6 +256,6 @@ pub fn maker_scenario() -> Scenario {
         .register_transaction(
             transaction!(place_ask_orders_transaction).set_name("place_ask_orders"),
         )
-        .register_transaction(transaction!(get_user_orders_transaction).set_name("get_user_orders"))
-        .register_transaction(transaction!(get_user_trades_transaction).set_name("get_user_trades"))
+    // .register_transaction(transaction!(get_user_orders_transaction).set_name("get_user_orders"))
+    // .register_transaction(transaction!(get_user_trades_transaction).set_name("get_user_trades"))
 }
