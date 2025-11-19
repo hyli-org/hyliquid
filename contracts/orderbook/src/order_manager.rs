@@ -87,6 +87,8 @@ impl OrderManager {
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn execute_order_dry_run(&self, order: &Order) -> Result<Vec<OrderbookEvent>, String> {
+        #[cfg(feature = "instrumentation")]
+        let span = sdk::tracing::span!(sdk::tracing::Level::INFO, "get_existing_order").entered();
         if let Some(existing_order) = self.orders.get(&order.order_id) {
             // When loaded in the SMT, an existing order with zero quantity means it is not part of the SMT
             if existing_order.quantity != 0 {
@@ -96,65 +98,99 @@ impl OrderManager {
                 ));
             }
         }
+        #[cfg(feature = "instrumentation")]
+        span.exit();
 
         let mut events = Vec::new();
         let mut order_to_execute = order.clone();
 
+        #[cfg(feature = "instrumentation")]
+        let span =
+            sdk::tracing::span!(sdk::tracing::Level::INFO, "get_counter_orders_map").entered();
         let counter_orders_map = match order.order_side {
             OrderSide::Bid => self.ask_orders.get(&order.pair),
             OrderSide::Ask => self.bid_orders.get(&order.pair),
         };
+        #[cfg(feature = "instrumentation")]
+        span.exit();
 
-        let mut counter_orders: VecDeque<(u64, VecDeque<OrderId>)> = match counter_orders_map {
-            Some(orders) => match order.order_side {
-                OrderSide::Bid => orders
-                    .iter()
-                    .map(|(price, ids)| (*price, ids.clone()))
-                    .collect(),
-                OrderSide::Ask => orders
-                    .iter()
-                    .rev()
-                    .map(|(price, ids)| (*price, ids.clone()))
-                    .collect(),
-            },
-            None => {
-                return if order.order_type == OrderType::Limit {
-                    Self::simulate_insert_order(order)
-                } else {
-                    Err(format!(
-                        "No matching {:?} orders for market order {}",
-                        order.order_side, order.order_id
-                    ))
-                };
-            }
-        };
+        #[cfg(feature = "instrumentation")]
+        let span = sdk::tracing::span!(sdk::tracing::Level::INFO, "get_counter_orders").entered();
+        let counter_orders: Box<dyn Iterator<Item = (&u64, &VecDeque<OrderId>)>> =
+            match counter_orders_map {
+                Some(orders) => match order.order_side {
+                    OrderSide::Bid => Box::new(orders.iter()),
+                    OrderSide::Ask => Box::new(orders.iter().rev()),
+                },
+                None => {
+                    return if order.order_type == OrderType::Limit {
+                        Self::simulate_insert_order(order)
+                    } else {
+                        Err(format!(
+                            "No matching {:?} orders for market order {}",
+                            order.order_side, order.order_id
+                        ))
+                    };
+                }
+            };
+        #[cfg(feature = "instrumentation")]
+        span.exit();
 
-        while let Some((existing_order_price, mut existing_order_ids)) = counter_orders.pop_front()
-        {
+        #[cfg(feature = "instrumentation")]
+        sdk::tracing::event!(sdk::tracing::Level::INFO, "Got counter orders");
+
+        for (existing_order_price, existing_order_ids) in counter_orders {
+            #[cfg(feature = "instrumentation")]
+            sdk::tracing::event!(
+                sdk::tracing::Level::INFO,
+                "Got existing order price {existing_order_price}"
+            );
             let mut break_outer = false;
 
-            while let Some(existing_order_id) = existing_order_ids.pop_front() {
+            for existing_order_id in existing_order_ids.iter() {
+                #[cfg(feature = "instrumentation")]
+                let span = sdk::tracing::span!(
+                    sdk::tracing::Level::INFO,
+                    "get_existing_order",
+                    existing_order_id = existing_order_id.to_string()
+                )
+                .entered();
                 let existing_order = self
                     .orders
-                    .get(&existing_order_id)
+                    .get(existing_order_id)
                     .ok_or(format!("Order {existing_order_id} not found"))?;
+                #[cfg(feature = "instrumentation")]
+                span.exit();
 
                 if let Some(price) = order_to_execute.price {
                     let price_should_defer = match order.order_side {
-                        OrderSide::Bid => existing_order_price > price,
-                        OrderSide::Ask => existing_order_price < price,
+                        OrderSide::Bid => *existing_order_price > price,
+                        OrderSide::Ask => *existing_order_price < price,
                     };
 
                     if price_should_defer {
-                        existing_order_ids.push_front(existing_order_id);
-                        if !existing_order_ids.is_empty() {
-                            counter_orders.push_front((existing_order_price, existing_order_ids));
-                        }
+                        #[cfg(feature = "instrumentation")]
+                        sdk::tracing::event!(
+                            sdk::tracing::Level::INFO,
+                            "Price should defer, pushing existing order id {existing_order_id} to front"
+                        );
+                        // existing_order_ids.push_front(existing_order_id);
+                        // if !existing_order_ids.is_empty() {
+                        //     // counter_orders.push_front((existing_order_price, existing_order_ids));
+                        // }
                         events.extend(Self::simulate_insert_order(&order_to_execute)?);
                         return Ok(events);
                     }
                 }
 
+                #[cfg(feature = "instrumentation")]
+                let span = sdk::tracing::span!(
+                    sdk::tracing::Level::INFO,
+                    "match_existing_order_quantity",
+                    existing_order_quantity = existing_order.quantity,
+                    order_to_execute_quantity = order_to_execute.quantity
+                )
+                .entered();
                 match existing_order.quantity.cmp(&order_to_execute.quantity) {
                     std::cmp::Ordering::Greater => {
                         let remaining_quantity =
@@ -192,11 +228,15 @@ impl OrderManager {
                         order_to_execute.quantity -= existing_order.quantity;
                     }
                 }
+                #[cfg(feature = "instrumentation")]
+                span.exit();
             }
 
             if break_outer {
+                #[cfg(feature = "instrumentation")]
+                sdk::tracing::event!(sdk::tracing::Level::INFO, "Break outer");
                 if !existing_order_ids.is_empty() {
-                    counter_orders.push_front((existing_order_price, existing_order_ids));
+                    // counter_orders.push_front((existing_order_price, existing_order_ids));
                 }
                 break;
             }
@@ -210,10 +250,15 @@ impl OrderManager {
             });
         }
 
+        #[cfg(feature = "instrumentation")]
+        let span =
+            sdk::tracing::span!(sdk::tracing::Level::INFO, "execute_order_dry_run_final").entered();
         if order_to_execute.quantity > 0 && order_to_execute.order_type == OrderType::Limit {
             let insert_events = Self::simulate_insert_order(&order_to_execute)?;
             events.extend(insert_events);
         }
+        #[cfg(feature = "instrumentation")]
+        span.exit();
 
         Ok(events)
     }
@@ -374,6 +419,7 @@ impl OrderManager {
         }
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(order)))]
     fn simulate_insert_order(order: &Order) -> Result<Vec<OrderbookEvent>, String> {
         let price = order
             .price
