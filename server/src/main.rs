@@ -73,9 +73,7 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file.clone()).context("reading config file")?;
 
-    if args.tracing {
-        init_tracing();
-    } else {
+    if !args.tracing {
         setup_tracing(&config.log_format, "hyliquid".to_string())?;
     }
 
@@ -89,6 +87,9 @@ fn main() -> Result<()> {
 }
 
 async fn actual_main(args: Args, config: Conf) -> Result<()> {
+    if args.tracing {
+        init_tracing();
+    }
     let config = Arc::new(config);
 
     if args.clean_data_directory && std::fs::exists(&config.data_directory).unwrap_or(false) {
