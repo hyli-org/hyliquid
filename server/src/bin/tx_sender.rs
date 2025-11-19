@@ -103,6 +103,8 @@ enum Commands {
         max_orders: u32,
         #[arg(long, default_value = "up")]
         trend: String,
+        #[arg(long, default_value = "false")]
+        fast: bool,
     },
 }
 
@@ -382,6 +384,7 @@ async fn main() -> Result<()> {
             quantity,
             max_orders,
             trend,
+            fast,
         } => {
             // Get assets info
             let response = client
@@ -667,7 +670,7 @@ async fn main() -> Result<()> {
                 order_count += 1;
 
                 // Wait for the specified interval before creating the next order
-                if order_count < max_orders {
+                if order_count < max_orders && !fast {
                     tokio::time::sleep(tokio::time::Duration::from_secs(interval_seconds)).await;
                 }
             }
