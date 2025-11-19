@@ -14,24 +14,29 @@ _**[Use Hyliquid now!](https://hyliquid.testnet.hyli.org/)**_
 [![Twitter][twitter-badge]][twitter-url]
 </div>
 
-Hyliquid is our end-to-end demonstration that Hyli’s purpose-built stack for zkVM workloads makes it straightforward to ship private, performant, non-custodial trading systems. The entire project—contracts, backend, prover, APIs, and frontend—is fully open source and runs on a RISC-V friendly toolchain (SP1). If you are familiar with Lighter’s architecture, Hyliquid follows the same high-level pattern but removes the black boxes: every component is auditable and reproducible.
+**Hyliquid** uses Hyli's purpose-built stack to ship a private, performant, non-custodial trading system.
+
+The project is fully open source and auditable for a perfect mix of privacy and compliance.
+
+Hyliquid follows the same high-level pattern as [Lighter](https://assets.lighter.xyz/whitepaper.pdf) but removes the black boxes: every component is auditable and reproducible.
+
+## Key features
+
+- 🕶️ Orders, balances, and fills stay offchain and private
+- ⚡ Sub-second UX: instant interactions while proofs run asynchronously
+- 🔐 Non-custodial by design
+- 🧱 All components are auditable, open-source, without black boxes
 
 ## Why Hyli?
+
+- Hyli natively verifies proofs, including the SP1 proofs used for Hyliquid.
+- The Hylix toolsuite and SDKs reduce boilerplate on the prover side.
+- 
 
 - **zkVM-native from day one** – Hyli bakes proof-friendly concepts (lanes, contract identities, blob transactions) directly into its node APIs. We never had to fight the runtime to integrate SP1 proofs.
 - **Purpose-built tooling** – The `hy` CLI, module system, and SDKs handle key management, block subscriptions, and proof submission out of the box, reducing boilerplate on the prover side.
 - **RISC-V everywhere** – Contracts compile to SP1’s RISC-V target, and the same artifacts are consumed by both the fast path and the prover. Developer environments stay portable.
 - **No trade-offs** – Hyliquid stays private (no private data published onchain), performant (fast-path execution in Rust), and non-custodial (proofs anchor state on-chain). We never had to pick only two of the three.
-
-## End-to-End Flow
-
-1. **User action** – A trader submits an authenticated request via the frontend. Headers include `x-identity`, `x-public-key`, and `x-signature`, which `AuthHeaders::from_headers` validates before processing.
-2. **Fast path execution** – The corresponding handler in `server/src/app.rs` locks the in-memory orderbook state, applies the action (deposit/order/cancel/withdraw), emits events, and updates the state snapshot.
-3. **Persistence + job enqueue** – The handler writes a `BlobTransaction` plus `OrderbookProverRequest` to Postgres. This captures the full replay context (events, nonce, user info, private input).
-4. **Block detection** – `OrderbookProverModule` listens to Hyli blocks, filters transactions that reference the orderbook’s lane, and batches the associated pending jobs.
-5. **Proof generation** – For each pending job, the prover rehydrates the full `FullState`, derives commitment metadata, and calls `ClientSdkProver::prove`, which executes the SP1 zkVM.
-6. **Submission + cleanup** – Once the proof returns, the module builds a `ProofTransaction` and sends it via `node_client.send_tx_proof`. Settled transactions are removed from the queue.
-7. **Read APIs + UI updates** – The frontend polls `server-api/` to show the latest depth chart, fills, and balances—the same data the prover replays—so UX stays in sync with provable state.
 
 ## Architecture at a Glance
 
@@ -101,6 +106,16 @@ Key ideas:
 
 This trifecta is typically a compromise on other stacks. Hyli’s architecture lets us keep all three without bolting on custom infra.
 
+## End-to-End Flow
+
+1. **User action** – A trader submits an authenticated request via the frontend. Headers include `x-identity`, `x-public-key`, and `x-signature`, which `AuthHeaders::from_headers` validates before processing.
+2. **Fast path execution** – The corresponding handler in `server/src/app.rs` locks the in-memory orderbook state, applies the action (deposit/order/cancel/withdraw), emits events, and updates the state snapshot.
+3. **Persistence + job enqueue** – The handler writes a `BlobTransaction` plus `OrderbookProverRequest` to Postgres. This captures the full replay context (events, nonce, user info, private input).
+4. **Block detection** – `OrderbookProverModule` listens to Hyli blocks, filters transactions that reference the orderbook’s lane, and batches the associated pending jobs.
+5. **Proof generation** – For each pending job, the prover rehydrates the full `FullState`, derives commitment metadata, and calls `ClientSdkProver::prove`, which executes the SP1 zkVM.
+6. **Submission + cleanup** – Once the proof returns, the module builds a `ProofTransaction` and sends it via `node_client.send_tx_proof`. Settled transactions are removed from the queue.
+7. **Read APIs + UI updates** – The frontend polls `server-api/` to show the latest depth chart, fills, and balances—the same data the prover replays—so UX stays in sync with provable state.
+
 ## Developer Experience
 
 - **Single source of truth** – The contract logic (`orderbook` crate) is imported directly by both the server and the prover, so there is zero mismatch between “simulated” and “proved” behavior.
@@ -109,7 +124,7 @@ This trifecta is typically a compromise on other stacks. Hyli’s architecture l
 - **Testing** – We can run unit tests inside `contracts/orderbook/test`, integration tests in `server`, and end-to-end Goose scenarios—all sharing the same fixtures.
 - **Tooling parity** – Everything builds with `cargo`, `bun` and leverage [hylix](https://crates.io/crates/hylix) `hy`, so contributors on Linux or macOS can bootstrap quickly without bespoke containers.
 
-## Fully Open and RISC-V First (vs. Lighter)
+## Fully Open and RISC-V First
 
 We openly credit Lighter for popularizing the split between fast execution and asynchronous proving. Hyliquid applies the same pattern but keeps the entire stack transparent:
 
@@ -127,7 +142,7 @@ If you wanted to experiment with Lighter-like ideas but were constrained by clos
 - **Bridging flows** – Tightening the integration between `server`’s bridge module and external networks for seamless deposits/withdrawals.
 - **Community contributions** – Issues are tagged for contracts, prover, front, and tooling. We welcome audits, UX polish, additional load tests, and alternative proving strategies (e.g., multi-proof batching).
 
-## 9. Getting Started
+## Getting Started
 
 ```bash
 # 1. Clone the repo and install rustup + bun
