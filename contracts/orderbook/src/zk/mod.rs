@@ -3,8 +3,7 @@ use std::collections::{BTreeMap, HashSet};
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
 use sdk::{BlockHeight, LaneId, StateCommitment};
-use sha2::Sha256;
-use sha3::Digest;
+use sha3::{Digest, Sha3_256};
 use sparse_merkle_tree::traits::Value;
 
 use crate::model::{AssetInfo, ExecuteState, Symbol, UserInfo};
@@ -148,10 +147,7 @@ impl FullState {
             .map_err(|e| format!("Failed to update balances on symbol {symbol}: {e}"))?;
             balances_mt.insert(symbol.clone(), tree);
         }
-
-        let hashed_secret = *Sha256::digest(secret)
-            .first_chunk::<32>()
-            .ok_or("hashing secret failed".to_string())?;
+        let hashed_secret: [u8; 32] = Sha3_256::digest(secret).into();
 
         let order_manager_mt = OrderManagerMerkles::from_order_manager(&light.order_manager)
             .map_err(|e| format!("Failed to build order manager SMTs from execute state: {e}"))?;
