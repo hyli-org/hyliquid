@@ -9,3 +9,14 @@ datasources:
     jsonData:
       httpMethod: GET
       timeInterval: 5s
+
+  - name: Tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    basicAuth: false
+    jsonData:
+      httpMethod: GET
+      streamingEnabled:
+        search: true
+        metrics: true
