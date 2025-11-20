@@ -211,6 +211,7 @@ async fn place_ask_orders_transaction(user: &mut GooseUser) -> TransactionResult
 }
 
 /// Transaction: get user orders
+#[allow(unused)]
 async fn get_user_orders_transaction(user: &mut GooseUser) -> TransactionResult {
     let config = {
         let global_config = GLOBAL_CONFIG.lock().unwrap();
@@ -227,6 +228,7 @@ async fn get_user_orders_transaction(user: &mut GooseUser) -> TransactionResult 
 }
 
 /// Transaction: get user trades
+#[allow(unused)]
 async fn get_user_trades_transaction(user: &mut GooseUser) -> TransactionResult {
     let config = {
         let global_config = GLOBAL_CONFIG.lock().unwrap();

@@ -665,7 +665,7 @@ async fn get_nonce(
 }
 
 #[axum::debug_handler]
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_pair(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -789,7 +789,7 @@ async fn create_pair(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -883,7 +883,7 @@ async fn add_session_key(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn deposit(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -958,7 +958,7 @@ async fn deposit(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
