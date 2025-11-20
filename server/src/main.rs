@@ -1,5 +1,10 @@
 use anyhow::{Context, Result};
-use axum::Router;
+use axum::{
+    http::{header, StatusCode},
+    response::{IntoResponse, Response},
+    routing::get,
+    Router,
+};
 use clap::Parser;
 use client_sdk::helpers::sp1::SP1Prover;
 use contracts::{ORDERBOOK_ELF, ORDERBOOK_VK};
@@ -12,7 +17,7 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
-use prometheus::Registry;
+use prometheus::{Encoder, Registry, TextEncoder};
 use sdk::{api::NodeInfo, info};
 use server::{
     api::{ApiModule, ApiModuleCtx},
@@ -166,6 +171,8 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         openapi: Default::default(),
     });
 
+    inject_metrics_route(&api_ctx, &registry);
+
     let orderbook_ctx = Arc::new(OrderbookModuleCtx {
         api: api_ctx.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
@@ -285,4 +292,44 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     handler.exit_process().await?;
 
     Ok(())
+}
+
+fn inject_metrics_route(api_ctx: &Arc<BuildApiContextInner>, registry: &Registry) {
+    let metrics_router = Router::new().route(
+        "/metrics",
+        get({
+            let registry = registry.clone();
+            move || metrics_handler(registry.clone())
+        }),
+    );
+
+    if let Ok(mut guard) = api_ctx.router.lock() {
+        match guard.take() {
+            Some(router) => {
+                guard.replace(router.merge(metrics_router));
+            }
+            None => {
+                guard.replace(metrics_router);
+            }
+        }
+    }
+}
+
+async fn metrics_handler(registry: Registry) -> Response {
+    let encoder = TextEncoder::new();
+    let metric_families = registry.gather();
+    let mut buffer = Vec::new();
+
+    match encoder.encode(&metric_families, &mut buffer) {
+        Ok(_) => (
+            [(header::CONTENT_TYPE, encoder.format_type().to_string())],
+            buffer,
+        )
+            .into_response(),
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to encode metrics: {err}"),
+        )
+            .into_response(),
+    }
 }

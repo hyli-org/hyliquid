@@ -162,6 +162,22 @@ hy run --no-bridge
 
 Clone it, run your own prover, and use Hyliquid as the blueprint for the next wave of zkVM-native applications on Hyli.
 
+## Monitoring Stack
+
+We ship a ready-to-use Grafana + Prometheus stack that scrapes the server’s `/metrics` endpoint (port `9002` by default) and auto-imports the dashboards located in `grafana/`.
+
+```bash
+cd monitoring
+docker compose up -d
+```
+
+- Prometheus is exposed on `http://localhost:9090`.
+- Grafana is exposed on `http://localhost:3001` (default credentials `admin`/`admin`).
+- Dashboards **HTTP API Metrics** and **Database Metrics** are provisioned automatically and use the bundled Prometheus data source.
+- By default Prometheus scrapes `host.docker.internal:9002`; update `monitoring/prometheus/prometheus.yml` if your server runs elsewhere or on a different port.
+
+Make sure the Hyliquid server is running and reachable from the containers (Linux users may keep the default `host-gateway` mapping, macOS/Windows already provide `host.docker.internal`).
+
 [twitter-badge]: https://img.shields.io/twitter/follow/hyli_org
 [twitter-url]: https://x.com/hyli_org
 [tg-badge]: https://img.shields.io/endpoint?url=https%3A%2F%2Ftg.sumanjay.workers.dev%2Fhyli_org%2F&logo=telegram&label=chat&color=neon
