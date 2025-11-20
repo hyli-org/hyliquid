@@ -1,4 +1,4 @@
-name: CI
+name: Tests
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  checks:
+  tests:
     runs-on: ubuntu-latest
 
     steps:
@@ -19,19 +19,12 @@ jobs:
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
 
       - name: Cache cargo build artifacts
         uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
 
-      - name: Run cargo fmt
-        run: cargo fmt --all -- --check
-
-      - name: Run cargo clippy
-        run: cargo clippy --all-targets --features nobuild -- -D warnings
-
       - name: Run cargo test
         run: cargo test --features nobuild
+
