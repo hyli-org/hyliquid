@@ -434,6 +434,7 @@ async fn main() -> Result<()> {
                 .post(format!("{}/add_session_key", args.server_url))
                 .header("x-identity", args.identity.clone())
                 .header("x-public-key", &public_key_hex)
+                .header("Content-Length", "0")
                 .send()
                 .await
                 .context("Failed to send request to server")?;

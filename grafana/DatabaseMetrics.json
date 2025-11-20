@@ -1,6 +1,7 @@
 {
   "title": "Database Metrics - HyLiquid",
-  "tags": ["database", "performance"],
+  "uid": "database-metrics-hylquid",
+  "tags": ["database", "orderbook"],
   "timezone": "browser",
   "panels": [
     {

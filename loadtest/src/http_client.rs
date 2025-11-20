@@ -1,3 +1,4 @@
+#![allow(unused)]
 use anyhow::{Context, Result};
 use goose::prelude::*;
 use orderbook::model::{Order, OrderSide, OrderType};
@@ -197,7 +198,7 @@ impl OrderbookClient {
 
     /// Get nonce for a user
     pub async fn get_nonce(&self, auth: &UserAuth) -> Result<u32> {
-        let url = format!("{}/api/user/nonce", self.base_url);
+        let url = format!("{}/nonce", self.base_url);
 
         let response = self
             .client
