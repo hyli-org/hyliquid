@@ -1,11 +1,14 @@
 use std::{
     collections::HashMap,
+    str::FromStr,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
 
+use alloy::primitives::{keccak256, Address, B256};
+use anyhow::anyhow;
 use axum::{
     extract::{Extension, Path},
     http::StatusCode,
@@ -13,19 +16,25 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
-use anyhow::anyhow;
+use client_sdk::{
+    contract_indexer::AppError,
+    rest_client::{NodeApiClient, NodeApiHttpClient},
+};
 use hex;
-use sdk::{Blob, BlobData, BlobTransaction, ContractName, Hashed, StructuredBlobData};
 use hyli_modules::modules::{BuildApiContextInner, Module};
-use sdk::Identity;
-use rand;
-use sdk::Blob;
-use sdk::BlobData;
+use k256::ecdsa::SigningKey;
+use orderbook::{
+    model::WithdrawDestination,
+    transaction::{OrderbookAction, PermissionnedOrderbookAction},
+};
+use reqwest::Client;
+use sdk::{
+    api::APIRegisterContract, Blob, BlobData, BlobTransaction, ContractName, Identity, ProgramId,
+    StateCommitment, StructuredBlobData, TxHash, Verifier,
+};
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
@@ -34,11 +43,10 @@ use hyli_modules::{
     module_bus_client,
 };
 
-use sdk::ContractName;
-use reth_harness::RethHarness;
-use tokio::sync::Mutex;
-
-use crate::app::OrderbookRequest;
+use crate::{
+    app::{OrderbookRequest, PendingDeposit, PendingWithdraw},
+    conf::BridgeConfig,
+};
 
 /// Alternate bridge module built around an embedded Reth flow.
 ///
@@ -46,17 +54,12 @@ use crate::app::OrderbookRequest;
 /// API surface plus in-memory job tracking for now. The Reth-driven execution
 /// and proof submission follow the plan in `README.bridge.md`.
 pub struct RethBridgeModule {
-    #[allow(dead_code)]
     bus: RethBridgeBusClient,
-    #[allow(dead_code)]
     orderbook_cn: ContractName,
-    #[allow(dead_code)]
     collateral_token_cn: ContractName,
     client: Arc<NodeApiHttpClient>,
     job_store: Arc<RwLock<HashMap<String, BridgeJobStatus>>>,
-    job_tx: mpsc::UnboundedSender<BridgeJob>,
     job_rx: Option<mpsc::UnboundedReceiver<BridgeJob>>,
-    reth: Arc<Mutex<RethHarness>>,
 }
 
 pub struct RethBridgeModuleCtx {
@@ -64,6 +67,7 @@ pub struct RethBridgeModuleCtx {
     pub orderbook_cn: ContractName,
     pub collateral_token_cn: ContractName,
     pub client: Arc<NodeApiHttpClient>,
+    pub bridge_config: BridgeConfig,
     // Placeholder for future embedded Reth config (datadir, chain id, mnemonic, etc.)
 }
 
@@ -71,11 +75,21 @@ pub struct RethBridgeModuleCtx {
 pub struct BridgeDepositRequest {
     pub identity: String,
     pub signed_tx_hex: String,
+    pub amount: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeWithdrawRequest {
+    pub identity: String,
+    pub signed_tx_hex: String,
+    pub destination: WithdrawDestination,
+    pub amount: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BridgeJobStatus {
     pub job_id: String,
+    pub operation: String,
     pub status: String,
     pub l1_tx_hash: Option<String>,
     pub hyli_tx_hash: Option<String>,
@@ -83,11 +97,23 @@ pub struct BridgeJobStatus {
     pub evm_proof_hex: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+enum BridgeJobKind {
+    Deposit {
+        amount: u128,
+    },
+    Withdraw {
+        destination: WithdrawDestination,
+        amount: u64,
+    },
+}
+
 #[derive(Debug)]
 struct BridgeJob {
     job_id: String,
     identity: Identity,
     raw_tx: Vec<u8>,
+    kind: BridgeJobKind,
 }
 
 module_bus_client! {
@@ -102,6 +128,11 @@ module_bus_client! {
 struct RouterCtx {
     job_store: Arc<RwLock<HashMap<String, BridgeJobStatus>>>,
     job_tx: mpsc::UnboundedSender<BridgeJob>,
+}
+
+fn next_job_id() -> String {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    format!("job-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
 }
 
 impl Module for RethBridgeModule {
@@ -122,6 +153,7 @@ impl Module for RethBridgeModule {
 
         let api = Router::new()
             .route("/reth_bridge/deposit", post(deposit))
+            .route("/reth_bridge/withdraw", post(withdraw))
             .route("/reth_bridge/status/:job_id", get(status))
             .layer(Extension(router_ctx))
             .layer(cors);
@@ -132,17 +164,21 @@ impl Module for RethBridgeModule {
             }
         }
 
+        ensure_collateral_registered(
+            ctx.client.as_ref(),
+            &ctx.collateral_token_cn,
+            &ctx.orderbook_cn,
+            &ctx.bridge_config,
+        )
+        .await?;
+
         Ok(Self {
             bus: RethBridgeBusClient::new_from_bus(bus.new_handle()).await,
             orderbook_cn: ctx.orderbook_cn.clone(),
             collateral_token_cn: ctx.collateral_token_cn.clone(),
             client: ctx.client.clone(),
             job_store,
-            job_tx,
             job_rx: Some(job_rx),
-            reth: Arc::new(Mutex::new(
-                RethHarness::new().await.map_err(|err| anyhow!(err))?,
-            )),
         })
     }
 
@@ -164,7 +200,6 @@ impl Module for RethBridgeModule {
     }
 }
 
-#[axum::debug_handler]
 async fn deposit(
     Extension(router_ctx): Extension<RouterCtx>,
     Json(request): Json<BridgeDepositRequest>,
@@ -175,14 +210,11 @@ async fn deposit(
         .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow::anyhow!(err)))?;
 
     // Create a simple in-memory job entry.
-    let job_id = {
-        // Use a short numeric id to avoid new dependencies.
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        format!("job-{}", COUNTER.fetch_add(1, Ordering::Relaxed))
-    };
+    let job_id = next_job_id();
 
     let status = BridgeJobStatus {
         job_id: job_id.clone(),
+        operation: "deposit".to_string(),
         status: "queued".to_string(),
         l1_tx_hash: None,
         hyli_tx_hash: None,
@@ -200,6 +232,9 @@ async fn deposit(
         job_id: job_id.clone(),
         identity,
         raw_tx,
+        kind: BridgeJobKind::Deposit {
+            amount: request.amount,
+        },
     }) {
         warn!(job_id = %job_id, error = %err, "failed to enqueue bridge job");
     }
@@ -207,7 +242,57 @@ async fn deposit(
     info!(
         job_id = %job_id,
         identity = %request.identity,
+        amount = request.amount,
         "accepted reth bridge deposit request"
+    );
+
+    Ok((StatusCode::ACCEPTED, Json(status)))
+}
+
+async fn withdraw(
+    Extension(router_ctx): Extension<RouterCtx>,
+    Json(request): Json<BridgeWithdrawRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let identity = Identity(request.identity.clone());
+    let raw_tx = hex::decode(request.signed_tx_hex.trim_start_matches("0x"))
+        .map_err(|err| AppError(StatusCode::BAD_REQUEST, anyhow::anyhow!(err)))?;
+
+    let job_id = next_job_id();
+
+    let status = BridgeJobStatus {
+        job_id: job_id.clone(),
+        operation: "withdraw".to_string(),
+        status: "queued".to_string(),
+        l1_tx_hash: None,
+        hyli_tx_hash: None,
+        error: None,
+        evm_proof_hex: None,
+    };
+
+    {
+        let mut store = router_ctx.job_store.write().await;
+        store.insert(job_id.clone(), status.clone());
+    }
+
+    if let Err(err) = router_ctx.job_tx.send(BridgeJob {
+        job_id: job_id.clone(),
+        identity,
+        raw_tx,
+        kind: BridgeJobKind::Withdraw {
+            destination: request.destination.clone(),
+            amount: request.amount,
+        },
+    }) {
+        warn!(job_id = %job_id, error = %err, "failed to enqueue bridge withdraw job");
+    }
+
+    info!(
+        job_id = %job_id,
+        identity = %request.identity,
+        network = %request.destination.network,
+        address = %request.destination.address,
+        amount = request.amount,
+        "accepted reth bridge withdraw request"
     );
 
     Ok((StatusCode::ACCEPTED, Json(status)))
@@ -220,17 +305,14 @@ async fn status(
 ) -> Result<impl IntoResponse, AppError> {
     let store = router_ctx.job_store.read().await;
     let Some(status) = store.get(&job_id) else {
-        return Ok((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error": "job not found"})),
-        ));
+        return Err(AppError(StatusCode::NOT_FOUND, anyhow!("job not found")));
     };
 
     Ok((StatusCode::OK, Json(status.clone())))
 }
 
 impl RethBridgeModule {
-    async fn process_job(&self, job: BridgeJob) {
+    async fn process_job(&mut self, job: BridgeJob) {
         // Placeholder processing: future work will submit to embedded Reth and Hyli.
         {
             let mut store = self.job_store.write().await;
@@ -240,19 +322,17 @@ impl RethBridgeModule {
         }
 
         // TODO: replace with embedded Reth submission + proof construction + Hyli blob/proof submission.
-        let result = self
-            .submit_and_prove(job.identity.clone(), job.raw_tx.clone())
-            .await;
+        let result = self.submit_hyli(&job).await;
 
+        let mut notify_orderbook = false;
         {
             let mut store = self.job_store.write().await;
             if let Some(status) = store.get_mut(&job.job_id) {
                 match result {
-                    Ok((l1_hash, hyli_hash, evm_proof_hex)) => {
-                        status.l1_tx_hash = Some(l1_hash);
+                    Ok(hyli_hash) => {
                         status.hyli_tx_hash = Some(hyli_hash);
-                        status.evm_proof_hex = Some(evm_proof_hex);
                         status.status = "completed".to_string();
+                        notify_orderbook = true;
                     }
                     Err(err) => {
                         status.status = "failed".to_string();
@@ -262,150 +342,196 @@ impl RethBridgeModule {
             }
         }
 
+        if notify_orderbook {
+            if let Err(err) = self.forward_orderbook_request(&job).await {
+                warn!(
+                    job_id = %job.job_id,
+                    error = %err,
+                    "failed to forward job to orderbook"
+                );
+            }
+        }
+
         info!(job_id = %job.job_id, "completed reth bridge job");
     }
 
-    async fn submit_and_prove(
-        &self,
-        identity: Identity,
-        raw_tx: Vec<u8>,
-    ) -> anyhow::Result<(String, String, String)> {
-        // 1. Submit raw_tx to embedded Reth (placeholder).
-        let (l1_tx_hash, evm_proof) = {
-            let mut reth = self.reth.lock().await;
-            reth.submit_raw_tx(raw_tx.clone()).await.map_err(|err| anyhow!(err))?
+    async fn submit_hyli(&self, job: &BridgeJob) -> anyhow::Result<String> {
+        let collateral_blob = Blob {
+            contract_name: self.collateral_token_cn.clone(),
+            data: BlobData::from(StructuredBlobData {
+                caller: None,
+                callees: None,
+                parameters: job.raw_tx.clone(),
+            }),
         };
 
-        // 3. Craft two-blob Hyli tx (ERC20 blob + Orderbook blob) and submit paired proofs (placeholder).
-        let hyli_tx_hash = self.submit_hyli(identity, raw_tx, evm_proof).await?;
-
-        let evm_proof_hex = format!("0x{}", hex::encode(evm_proof));
-        Ok((l1_tx_hash, hyli_tx_hash, evm_proof_hex))
-    }
-
-    async fn submit_hyli(
-        &self,
-        identity: Identity,
-        raw_tx: Vec<u8>,
-        evm_proof: Vec<u8>,
-    ) -> anyhow::Result<String> {
-        // TODO: construct real blobs with caller/callee metadata:
-        // - Blob 1: ERC20 transfer blob (caller/callees == None) containing raw L1 tx parameters.
-        // - Blob 2: Orderbook action blob (caller/callee for withdraw) consuming the transfer.
-        let blob_tx = build_stub_blob_tx(
-            identity.clone(),
-            self.collateral_token_cn.clone(),
-            self.orderbook_cn.clone(),
-            raw_tx,
-            evm_proof.clone(),
-        );
-        // TODO: submit blob_tx + proofs via self.client and return real hash.
-        let hyli_tx_hash = format!("0x{}", hex::encode(blob_tx.hashed().0.as_bytes()));
-        Ok(hyli_tx_hash)
-    }
-}
-
-fn build_stub_blob_tx(
-    identity: Identity,
-    collateral_cn: ContractName,
-    orderbook_cn: ContractName,
-    raw_tx: Vec<u8>,
-    evm_proof: Vec<u8>,
-) -> BlobTransaction {
-    let erc20_blob = Blob {
-        contract_name: collateral_cn,
-        data: BlobData::from(StructuredBlobData {
-            caller: None,
-            callees: None,
-            parameters: raw_tx,
-        }),
-    };
-    let orderbook_blob = Blob {
-        contract_name: orderbook_cn,
-        data: BlobData(identity.0.as_bytes().to_vec()),
-    };
-    // order: ERC20 transfer blob first, then orderbook action blob.
-    BlobTransaction::new(identity, vec![erc20_blob, orderbook_blob])
-}
-
-/// Minimal harness placeholder for the embedded Reth devnode. This isolates the
-/// eventual eth_api/debug_api plumbing used to submit transactions and produce
-/// stateless proofs (mirroring the deposit demo helpers).
-#[derive(Clone, Default)]
-struct RethHarness;
-
-impl RethHarness {
-    fn new() -> Self {
-        // TODO: initialize embedded Reth devnode and capture eth_api/debug_api handles.
-        Self
-    }
-
-    async fn submit_raw_tx(&self, raw_tx: Vec<u8>) -> Option<String> {
-        // TODO: wire to embedded Reth eth_api.send_raw_transaction and wait for inclusion.
-        warn!("submit_raw_tx is not yet implemented; using placeholder hash");
-        Some(format!("0xl1_{}", hex::encode(&raw_tx[..4.min(raw_tx.len())])))
-    }
-
-    async fn build_stateless_proof(&self) -> anyhow::Result<Vec<u8>> {
-        // TODO: fetch block + execution witness from debug API and run stateless validation.
-        warn!("build_stateless_proof is not yet implemented; returning placeholder proof bytes");
-        Ok(vec![0u8; 1])
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_stub_blob_tx_is_deterministic_and_ordered() {
-        let identity = Identity("user@test".to_string());
-        let collateral = ContractName("collateral-token".to_string());
-        let orderbook = ContractName("orderbook".to_string());
-        let raw_tx = vec![9u8, 9, 9];
-        let evm_proof = vec![1u8, 2, 3];
-
-        let blob_tx = build_stub_blob_tx(
-            identity.clone(),
-            collateral.clone(),
-            orderbook.clone(),
-            raw_tx.clone(),
-            evm_proof.clone(),
-        );
-        assert_eq!(blob_tx.blobs.len(), 2);
-        assert_eq!(blob_tx.blobs[0].contract_name, collateral);
-        assert_eq!(blob_tx.blobs[1].contract_name, orderbook);
-
-        let first_hash = blob_tx.hashed();
-        let second_hash =
-            build_stub_blob_tx(identity, collateral, orderbook, raw_tx, evm_proof).hashed();
-        assert_eq!(first_hash.0, second_hash.0, "hash should be deterministic");
-    }
-
-    #[test]
-    fn bridge_job_status_tracks_proof_and_hashes() {
-        let mut status = BridgeJobStatus {
-            job_id: "job-1".to_string(),
-            status: "queued".to_string(),
-            l1_tx_hash: None,
-            hyli_tx_hash: None,
-            error: None,
-            evm_proof_hex: None,
+        let symbol = self.collateral_token_cn.0.clone();
+        let orderbook_action = match &job.kind {
+            BridgeJobKind::Deposit { amount } => {
+                let deposit_amount = u64::try_from(*amount).map_err(|_| {
+                    anyhow!("deposit amount {} exceeds supported range (u64)", amount)
+                })?;
+                PermissionnedOrderbookAction::Deposit {
+                    symbol: symbol.clone(),
+                    amount: deposit_amount,
+                }
+            }
+            BridgeJobKind::Withdraw {
+                destination,
+                amount,
+            } => PermissionnedOrderbookAction::Withdraw {
+                symbol: symbol.clone(),
+                amount: *amount,
+                destination: destination.clone(),
+            },
         };
 
-        let l1 = "0xl1_hash".to_string();
-        let hyli = "0xhyli_hash".to_string();
-        let proof = "0x01".to_string();
+        let orderbook_blob = OrderbookAction::PermissionnedOrderbookAction(orderbook_action, 0)
+            .as_blob(self.orderbook_cn.clone());
 
-        status.l1_tx_hash = Some(l1.clone());
-        status.hyli_tx_hash = Some(hyli.clone());
-        status.evm_proof_hex = Some(proof.clone());
-        status.status = "completed".to_string();
-
-        assert_eq!(status.status, "completed");
-        assert_eq!(status.l1_tx_hash.as_ref().unwrap(), &l1);
-        assert_eq!(status.hyli_tx_hash.as_ref().unwrap(), &hyli);
-        assert_eq!(status.evm_proof_hex.as_ref().unwrap(), &proof);
-        assert!(status.error.is_none());
+        let blob_tx =
+            BlobTransaction::new(job.identity.clone(), vec![collateral_blob, orderbook_blob]);
+        let tx_hash: TxHash = self.client.send_tx_blob(blob_tx).await?;
+        Ok(format!("0x{}", hex::encode(tx_hash.0.as_bytes())))
     }
+
+    async fn forward_orderbook_request(&mut self, job: &BridgeJob) -> anyhow::Result<()> {
+        match &job.kind {
+            BridgeJobKind::Deposit { amount } => {
+                let deposit = PendingDeposit {
+                    sender: job.identity.clone(),
+                    contract_name: self.collateral_token_cn.clone(),
+                    amount: *amount,
+                };
+                self.bus
+                    .send(OrderbookRequest::PendingDeposit(deposit))
+                    .map_err(anyhow::Error::from)?;
+            }
+            BridgeJobKind::Withdraw {
+                destination,
+                amount,
+            } => {
+                let withdraw = PendingWithdraw {
+                    destination: destination.clone(),
+                    contract_name: self.collateral_token_cn.clone(),
+                    amount: *amount,
+                };
+                self.bus
+                    .send(OrderbookRequest::PendingWithdraw(withdraw))
+                    .map_err(anyhow::Error::from)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn encode_contract_name(contract_name: &ContractName) -> ContractName {
+    ContractName(contract_name.0.replace('/', "%2F"))
+}
+
+async fn ensure_collateral_registered(
+    client: &NodeApiHttpClient,
+    contract_name: &ContractName,
+    orderbook_cn: &ContractName,
+    bridge_config: &BridgeConfig,
+) -> anyhow::Result<()> {
+    let encoded_name = encode_contract_name(contract_name);
+    if let Ok(existing) = client.get_contract(encoded_name.clone()).await {
+        if existing.verifier.0 != "reth" {
+            anyhow::bail!(
+                "Hyli contract {} already registered with verifier {}",
+                contract_name.0,
+                existing.verifier.0
+            );
+        }
+        return Ok(());
+    }
+
+    let (state_root, block_hash) = fetch_block_metadata(
+        &bridge_config.eth_rpc_http_url,
+        bridge_config.eth_contract_deploy_block,
+    )
+    .await?;
+
+    let contract_address = Address::from_str(&bridge_config.eth_contract_address)
+        .map_err(|err| anyhow!("invalid collateral contract address: {err}"))?;
+    let program_id = derive_program_pubkey(orderbook_cn);
+    let mut constructor_metadata = Vec::new();
+    constructor_metadata.extend_from_slice(contract_address.as_slice());
+    constructor_metadata.extend_from_slice(block_hash.as_slice());
+    constructor_metadata.extend_from_slice(program_id.0.as_slice());
+    constructor_metadata.extend_from_slice(state_root.as_slice());
+
+    let payload = APIRegisterContract {
+        verifier: Verifier("reth".into()),
+        program_id,
+        state_commitment: StateCommitment(state_root.as_slice().to_vec()),
+        contract_name: encoded_name,
+        timeout_window: None,
+        constructor_metadata: Some(constructor_metadata),
+    };
+
+    client
+        .register_contract(payload)
+        .await
+        .map_err(|err| anyhow!("registering collateral contract on Hyli: {err}"))?;
+
+    Ok(())
+}
+
+async fn fetch_block_metadata(rpc_url: &str, block_number: u64) -> anyhow::Result<(B256, B256)> {
+    let payload = serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "eth_getBlockByNumber",
+        "params": [format!("0x{:x}", block_number), false],
+        "id": 1,
+    });
+
+    let resp = Client::new()
+        .post(rpc_url)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|err| anyhow!("fetching block {block_number} from {rpc_url}: {err}"))?;
+    let value: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|err| anyhow!("parsing block response: {err}"))?;
+    let block = value
+        .get("result")
+        .ok_or_else(|| anyhow!("missing result in block response"))?;
+    let hash_str = block
+        .get("hash")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing block hash"))?;
+    let state_root_str = block
+        .get("stateRoot")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| anyhow!("missing stateRoot"))?;
+
+    let block_hash =
+        B256::from_str(hash_str).map_err(|err| anyhow!("invalid block hash {hash_str}: {err}"))?;
+    let state_root = B256::from_str(state_root_str)
+        .map_err(|err| anyhow!("invalid state root {state_root_str}: {err}"))?;
+
+    Ok((state_root, block_hash))
+}
+
+fn derive_program_pubkey(contract_name: &ContractName) -> ProgramId {
+    let mut seed: [u8; 32] = keccak256(contract_name.0.as_bytes()).into();
+    let signing_key = loop {
+        match SigningKey::from_slice(&seed) {
+            Ok(key) => break key,
+            Err(_) => {
+                seed = keccak256(seed).into();
+            }
+        }
+    };
+    let encoded = signing_key
+        .verifying_key()
+        .to_encoded_point(false)
+        .as_bytes()
+        .to_vec();
+    ProgramId(encoded)
 }

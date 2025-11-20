@@ -67,5 +67,6 @@ pub fn custom_chain() -> Arc<ChainSpec> {
         serde_json::to_string(&custom_chain_config()).unwrap()
     );
     let genesis: Genesis = serde_json::from_str(&custom_genesis).unwrap();
-    Arc::new(genesis.into())
+    let chain_spec: ChainSpec = ChainSpec::from_genesis(genesis);
+    Arc::new(chain_spec)
 }

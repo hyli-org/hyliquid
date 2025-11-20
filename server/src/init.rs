@@ -14,7 +14,7 @@ use orderbook::{
 use reqwest::StatusCode;
 use sdk::{
     api::{APIRegisterContract, TransactionStatusDb},
-    info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
+    info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment, Verifier,
 };
 use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio::{sync::RwLock, time::timeout};
@@ -28,6 +28,7 @@ pub struct ContractInit {
     pub name: ContractName,
     pub program_id: ProgramId,
     pub initial_state: StateCommitment,
+    pub verifier: Verifier,
 }
 
 pub async fn init_node(
@@ -64,7 +65,7 @@ async fn init_contract(
         Err(_) => {
             info!("🚀 Registering {} contract", contract.name);
             node.register_contract(APIRegisterContract {
-                verifier: sdk::verifiers::SP1_4.into(),
+                verifier: contract.verifier.clone(),
                 program_id: contract.program_id,
                 state_commitment: contract.initial_state,
                 contract_name: contract.name.clone(),

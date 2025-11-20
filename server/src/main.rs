@@ -12,6 +12,7 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
+use hyli_smt_token::account::AccountSMT;
 use prometheus::Registry;
 use sdk::{api::NodeInfo, info};
 use server::{
@@ -130,11 +131,23 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;
 
-    let contracts = vec![server::init::ContractInit {
+    let orderbook_contract = server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
         program_id: ORDERBOOK_VK.into(),
         initial_state: full_state.commit(),
-    }];
+        verifier: sdk::verifiers::SP1_4.into(),
+    };
+    let collateral_root = *AccountSMT::default().0.root();
+    let collateral_state = sdk::StateCommitment(Into::<[u8; 32]>::into(collateral_root).to_vec());
+    let collateral_contract = server::init::ContractInit {
+        name: args.collateral_token_cn.clone().into(),
+        program_id: sdk::ProgramId(
+            hyli_smt_token::client::tx_executor_handler::metadata::PROGRAM_ID.to_vec(),
+        ),
+        initial_state: collateral_state,
+        verifier: sdk::verifiers::RISC0_3.into(),
+    };
+    let contracts = vec![orderbook_contract, collateral_contract];
 
     match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {
         Ok(_) => {}
@@ -230,20 +243,21 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
                     orderbook_cn: args.orderbook_cn.clone().into(),
                     collateral_token_cn: args.collateral_token_cn.clone().into(),
                     client: node_client.clone(),
+                    bridge_config: config.bridge.clone(),
                 }))
                 .await?;
         } else {
-        handler
-            .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
-                api: api_ctx.clone(),
-                collateral_token_cn: args.collateral_token_cn.clone().into(),
-                bridge_config: config.bridge.clone(),
-                pool: pool.clone(),
-                asset_service: asset_service.clone(),
-                bridge_service: bridge_service.clone(),
-                orderbook_cn: args.orderbook_cn.clone().into(),
-            }))
-            .await?;
+            handler
+                .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
+                    api: api_ctx.clone(),
+                    collateral_token_cn: args.collateral_token_cn.clone().into(),
+                    bridge_config: config.bridge.clone(),
+                    pool: pool.clone(),
+                    asset_service: asset_service.clone(),
+                    bridge_service: bridge_service.clone(),
+                    orderbook_cn: args.orderbook_cn.clone().into(),
+                }))
+                .await?;
         }
     }
 
