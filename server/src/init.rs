@@ -16,7 +16,11 @@ use sdk::{
     api::{APIRegisterContract, TransactionStatusDb},
     info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
 };
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::{sync::RwLock, time::timeout};
 use tracing::{error, warn};
 
@@ -161,7 +165,7 @@ pub async fn init_orderbook_from_database(
     let instruments = asset_service.get_all_instruments(commit_id).await?;
     let assets = asset_service.get_all_assets().await;
 
-    let mut pairs_info: BTreeMap<Pair, PairInfo> = BTreeMap::new();
+    let mut pairs_info: HashMap<Pair, PairInfo> = HashMap::new();
     for (_, instrument) in instruments.iter() {
         let base_asset_symbol = instrument.symbol.split('/').next().unwrap();
         let quote_asset_symbol = instrument.symbol.split('/').nth(1).unwrap();
@@ -199,9 +203,9 @@ pub async fn init_orderbook_from_database(
         );
     }
 
-    let users_info: BTreeMap<String, UserInfo> = user_service.get_all_users(commit_id).await;
-    let mut balances: BTreeMap<Symbol, BTreeMap<orderbook::zk::H256, OrderbookBalance>> =
-        BTreeMap::new();
+    let users_info: HashMap<String, UserInfo> = user_service.get_all_users(commit_id).await;
+    let mut balances: HashMap<Symbol, HashMap<orderbook::zk::H256, OrderbookBalance>> =
+        HashMap::new();
 
     info!("🔍 Loading balances");
     for user in users_info.values() {

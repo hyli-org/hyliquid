@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::BorshableMerkleProof;
@@ -51,6 +51,7 @@ impl<
             + Ord
             + Eq
             + std::hash::Hash
+            + std::fmt::Debug
             + Clone,
     > ZkWitnessSet<T>
 {
@@ -60,8 +61,7 @@ impl<
             Proof::Some(proof) => {
                 let leaves: Vec<(_, _)> = self
                     .values
-                    .clone()
-                    .into_iter()
+                    .iter()
                     .map(|v| (v.get_key().into(), v.to_h256()))
                     .collect();
 
@@ -104,7 +104,7 @@ impl<
 #[derive(Default, Debug)]
 pub struct FullState {
     pub users_info_mt: SMT<UserInfo>,
-    pub balances_mt: BTreeMap<String, SMT<UserBalance>>,
+    pub balances_mt: HashMap<String, SMT<UserBalance>>,
     pub order_manager_mt: OrderManagerMerkles,
     pub state: ExecuteState,
     pub hashed_secret: [u8; 32],
@@ -133,7 +133,7 @@ impl FullState {
             .update_all_from_ref(light.users_info.values())
             .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
 
-        let mut balances_mt = BTreeMap::new();
+        let mut balances_mt = HashMap::new();
         for (symbol, symbol_balances) in light.balances.iter() {
             let mut tree = SMT::zero();
             tree.update_all(
@@ -183,7 +183,7 @@ impl FullState {
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: self.users_info_mt.root(),
                 balances_roots: self.balance_roots(),
-                assets: &self.state.assets_info,
+                assets: self.state.assets_info.iter().collect::<BTreeMap<_, _>>(),
                 order_manager_roots,
                 hashed_secret: self.hashed_secret,
                 lane_id: &self.lane_id,
@@ -199,7 +199,7 @@ impl FullState {
 pub struct ParsedStateCommitment<'a> {
     pub users_info_root: H256,
     pub balances_roots: BTreeMap<Symbol, H256>,
-    pub assets: &'a BTreeMap<Symbol, AssetInfo>,
+    pub assets: BTreeMap<&'a Symbol, &'a AssetInfo>,
     pub order_manager_roots: OrderManagerRoots,
     pub hashed_secret: [u8; 32],
     pub lane_id: &'a LaneId,
@@ -209,12 +209,12 @@ pub struct ParsedStateCommitment<'a> {
 #[derive(Debug, Clone, BorshDeserialize, BorshSerialize)]
 pub struct ZkVmState {
     pub users_info: ZkWitnessSet<UserInfo>,
-    pub balances: BTreeMap<Symbol, ZkWitnessSet<UserBalance>>,
+    pub balances: HashMap<Symbol, ZkWitnessSet<UserBalance>>,
     pub lane_id: LaneId,
     pub hashed_secret: [u8; 32],
     pub last_block_number: BlockHeight,
     pub order_manager: OrderManagerWitnesses,
-    pub assets: BTreeMap<Symbol, AssetInfo>,
+    pub assets: HashMap<Symbol, AssetInfo>,
 }
 
 /// impl of functions for state management
@@ -241,7 +241,7 @@ impl Clone for FullState {
         let user_info_store = self.users_info_mt.store().clone();
         let users_info_mt = SMT::from_store(user_info_root.into(), user_info_store);
 
-        let mut balances_mt = BTreeMap::new();
+        let mut balances_mt = HashMap::new();
         for (symbol, tree) in &self.balances_mt {
             let root = *tree.root();
             let store = tree.store().clone();

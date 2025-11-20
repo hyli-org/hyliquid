@@ -4,19 +4,19 @@ use crate::model::{
 use crate::zk::H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::Serialize;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 #[derive(Serialize, BorshSerialize, BorshDeserialize, Default, Debug, Clone, PartialEq, Eq)]
 pub struct OrderManager {
     // All orders indexed by order_id
-    pub orders: BTreeMap<OrderId, Order>,
+    pub orders: HashMap<OrderId, Order>,
     // Buy orders sorted by price for each token pair
-    pub bid_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+    pub bid_orders: HashMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
     // Ask orders sorted by price for each token pair
-    pub ask_orders: BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+    pub ask_orders: HashMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
 
     // Mapping of order IDs to their owners
-    pub orders_owner: BTreeMap<OrderId, H256>,
+    pub orders_owner: HashMap<OrderId, H256>,
 }
 
 #[cfg(test)]
@@ -41,7 +41,7 @@ impl OrderManager {
             .unwrap_or(0)
     }
 
-    pub fn side_map(&self, side: &OrderSide) -> &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
+    pub fn side_map(&self, side: &OrderSide) -> &HashMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
         match side {
             OrderSide::Bid => &self.bid_orders,
             OrderSide::Ask => &self.ask_orders,
@@ -51,7 +51,7 @@ impl OrderManager {
     pub fn side_map_mut(
         &mut self,
         side: &OrderSide,
-    ) -> &mut BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
+    ) -> &mut HashMap<Pair, BTreeMap<u64, VecDeque<OrderId>>> {
         match side {
             OrderSide::Bid => &mut self.bid_orders,
             OrderSide::Ask => &mut self.ask_orders,
@@ -437,8 +437,8 @@ impl OrderManager {
     /// Helper function to compare order maps and generate diff entries
     fn diff_order_maps(
         &self,
-        self_orders: &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
-        other_orders: &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+        self_orders: &HashMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+        other_orders: &HashMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
         field_name: &str,
     ) -> BTreeMap<String, String> {
         let mut diff = BTreeMap::new();

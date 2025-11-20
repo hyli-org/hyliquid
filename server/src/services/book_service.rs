@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use client_sdk::contract_indexer::AppError;
 use orderbook::model::{Order, OrderSide, UserInfo};
@@ -70,7 +70,7 @@ impl BookService {
 
     pub async fn get_order_manager(
         &self,
-        users_info: &BTreeMap<String, UserInfo>,
+        users_info: &HashMap<String, UserInfo>,
         commit_id: i64,
     ) -> Result<OrderManager, AppError> {
         let rows = sqlx::query(
@@ -105,7 +105,7 @@ impl BookService {
         .fetch_all(&self.pool)
         .await?;
 
-        let orders: BTreeMap<String, (Order, String)> = rows
+        let orders: HashMap<String, (Order, String)> = rows
             .iter()
             .map(|row| {
                 (
@@ -125,11 +125,11 @@ impl BookService {
             })
             .collect();
 
-        let buy_orders: BTreeMap<(String, String), BTreeMap<u64, VecDeque<String>>> = rows
+        let buy_orders: HashMap<(String, String), BTreeMap<u64, VecDeque<String>>> = rows
             .iter()
             .rev()
             .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Bid)
-            .fold(BTreeMap::new(), |mut acc, row| {
+            .fold(HashMap::new(), |mut acc, row| {
                 acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
                     .and_modify(|v| {
                         v.entry(row.get::<i64, _>("price") as u64)
@@ -145,10 +145,10 @@ impl BookService {
                 acc
             });
 
-        let sell_orders: BTreeMap<(String, String), BTreeMap<u64, VecDeque<String>>> = rows
+        let sell_orders: HashMap<(String, String), BTreeMap<u64, VecDeque<String>>> = rows
             .iter()
             .filter(|row| row.get::<OrderSide, _>("side") == OrderSide::Ask)
-            .fold(BTreeMap::new(), |mut acc, row| {
+            .fold(HashMap::new(), |mut acc, row| {
                 acc.entry((row.get("base_asset_symbol"), row.get("quote_asset_symbol")))
                     .and_modify(|v| {
                         v.entry(row.get::<i64, _>("price") as u64)
