@@ -1,14 +1,14 @@
 use std::collections::{BTreeMap, HashSet};
 
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::{BorshableMerkleProof, SHA256Hasher};
+use sdk::merkle_utils::BorshableMerkleProof;
 use sdk::{BlockHeight, LaneId, StateCommitment};
 use sha3::{Digest, Sha3_256};
 use sparse_merkle_tree::traits::Value;
 
 use crate::model::{AssetInfo, ExecuteState, Symbol, UserInfo};
 use crate::zk::order_merkle::OrderManagerWitnesses;
-use crate::zk::smt::{GetKey, UserBalance};
+use crate::zk::smt::{GetKey, SHA3_256Hasher, UserBalance};
 
 pub use smt::BorshableH256 as H256;
 pub use smt::SMT;
@@ -72,7 +72,7 @@ impl<
                 let derived_root = proof
                     .0
                     .clone()
-                    .compute_root::<SHA256Hasher>(leaves)
+                    .compute_root::<SHA3_256Hasher>(leaves)
                     .map_err(|e| format!("Failed to compute users_info proof root: {e}"))?;
 
                 Ok(derived_root.into())
