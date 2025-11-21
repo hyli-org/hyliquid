@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use borsh::{BorshDeserialize, BorshSerialize};
 use sdk::merkle_utils::BorshableMerkleProof;
@@ -46,7 +46,7 @@ pub struct OrderManagerWitnesses {
     pub orders: ZkWitnessSet<Order>,
     pub bid_orders: ZkWitnessSet<OrderPriceLevel>,
     pub ask_orders: ZkWitnessSet<OrderPriceLevel>,
-    pub orders_owner: BTreeMap<OrderId, H256>,
+    pub orders_owner: HashMap<OrderId, H256>,
 }
 
 #[derive(Debug)]
@@ -107,7 +107,7 @@ impl OrderManagerMerkles {
         orders: HashSet<Order>,
         bid_levels: HashSet<OrderPriceLevel>,
         ask_levels: HashSet<OrderPriceLevel>,
-        orders_owner: BTreeMap<OrderId, H256>,
+        orders_owner: HashMap<OrderId, H256>,
     ) -> Result<OrderManagerWitnesses, String> {
         let orders_witness =
             build_witness(&self.orders, orders, "orders merkle proof reconstruction")?;
@@ -176,7 +176,7 @@ impl OrderManagerWitnesses {
 }
 
 pub fn collect_price_levels(
-    side_map: &BTreeMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
+    side_map: &HashMap<Pair, BTreeMap<u64, VecDeque<OrderId>>>,
 ) -> HashSet<OrderPriceLevel> {
     let mut levels = HashSet::new();
     for (pair, price_map) in side_map {

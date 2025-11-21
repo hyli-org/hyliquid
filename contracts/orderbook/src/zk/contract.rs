@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use sdk::{ContractName, RunResult, StateCommitment};
 use sha3::{Digest, Sha3_256};
@@ -162,7 +162,7 @@ impl sdk::ZkContract for ZkVmState {
                         }
                     })
                     .collect(),
-                assets: &self.assets,
+                assets: self.assets.iter().collect(),
                 order_manager_roots,
                 hashed_secret: self.hashed_secret,
                 lane_id: &self.lane_id,
@@ -200,10 +200,10 @@ impl ZkVmState {
                             .values
                             .drain()
                             .map(|ub| (ub.user_key, ub.balance))
-                            .collect::<BTreeMap<H256, Balance>>(),
+                            .collect::<HashMap<H256, Balance>>(),
                     )
                 })
-                .collect(),
+                .collect::<HashMap<String, HashMap<H256, Balance>>>(),
             order_manager,
         }
     }
@@ -274,7 +274,7 @@ mod tests {
     use borsh::{BorshDeserialize, BorshSerialize};
     use sdk::merkle_utils::BorshableMerkleProof;
     use sdk::{BlockHeight, ContractName, LaneId, ZkContract};
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
     use std::mem::discriminant;
 
     use sparse_merkle_tree::traits::Value;
@@ -348,7 +348,7 @@ mod tests {
             balance: Balance(5_000),
         });
 
-        let mut balances: BTreeMap<String, ZkWitnessSet<UserBalance>> = BTreeMap::new();
+        let mut balances: HashMap<String, ZkWitnessSet<UserBalance>> = HashMap::new();
         balances.insert(
             "ETH".to_string(),
             ZkWitnessSet {
@@ -364,7 +364,7 @@ mod tests {
             },
         );
 
-        let mut assets = BTreeMap::new();
+        let mut assets = HashMap::new();
         assets.insert(
             "ETH".to_string(),
             AssetInfo::new(18, ContractName("eth".to_string())),
@@ -413,7 +413,7 @@ mod tests {
     }
 
     fn assert_users_match(
-        execution_users: &BTreeMap<String, UserInfo>,
+        execution_users: &HashMap<String, UserInfo>,
         expected_users: &ZkWitnessSet<UserInfo>,
     ) {
         assert_eq!(
@@ -434,8 +434,8 @@ mod tests {
     }
 
     fn assert_balances_match(
-        execution_balances: &BTreeMap<String, BTreeMap<H256, Balance>>,
-        expected_balances: &BTreeMap<String, ZkWitnessSet<UserBalance>>,
+        execution_balances: &HashMap<String, HashMap<H256, Balance>>,
+        expected_balances: &HashMap<String, ZkWitnessSet<UserBalance>>,
     ) {
         assert_eq!(
             execution_balances.len(),
@@ -601,7 +601,7 @@ mod tests {
             proof: Proof::CurrentRootHash(non_zero_root),
         };
 
-        let mut balances = BTreeMap::new();
+        let mut balances = HashMap::new();
         balances.insert("ZERO".to_string(), zero_balance_witness);
         balances.insert("NONZERO".to_string(), non_zero_witness);
 
@@ -610,7 +610,7 @@ mod tests {
         let hashed_secret = [7u8; 32];
         let order_manager = OrderManager::default();
         let zk_order_manager = order_manager_witness_from_manager(&order_manager);
-        let assets: BTreeMap<String, AssetInfo> = BTreeMap::new();
+        let assets: HashMap<String, AssetInfo> = HashMap::new();
 
         let zk_state = ZkVmState {
             users_info: users_witness.clone(),
@@ -635,7 +635,7 @@ mod tests {
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: users_witness.clone().compute_root().expect("users root"),
                 balances_roots: expected_balances,
-                assets: &assets,
+                assets: assets.iter().collect::<BTreeMap<_, _>>(),
                 order_manager_roots: expected_orders_commitment,
                 hashed_secret,
                 lane_id: &lane_id,
@@ -677,7 +677,7 @@ mod tests {
             proof: Proof::CurrentRootHash(H256::default()),
         };
 
-        let mut balances = BTreeMap::new();
+        let mut balances = HashMap::new();
         balances.insert("TOKEN".to_string(), balance_witness.clone());
 
         let lane_id = LaneId::default();
@@ -685,7 +685,7 @@ mod tests {
         let hashed_secret = [11u8; 32];
         let order_manager = OrderManager::default();
         let zk_order_manager = order_manager_witness_from_manager(&order_manager);
-        let assets: BTreeMap<String, AssetInfo> = BTreeMap::new();
+        let assets: HashMap<String, AssetInfo> = HashMap::new();
 
         let zk_state = ZkVmState {
             users_info: users_witness.clone(),
@@ -707,7 +707,7 @@ mod tests {
             borsh::to_vec(&ParsedStateCommitment {
                 users_info_root: users_witness.compute_root().expect("users root"),
                 balances_roots: BTreeMap::from([("TOKEN".to_string(), balance_root)]),
-                assets: &assets,
+                assets: assets.iter().collect::<BTreeMap<_, _>>(),
                 order_manager_roots: expected_orders_commitment,
                 hashed_secret,
                 lane_id: &lane_id,

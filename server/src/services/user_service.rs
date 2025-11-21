@@ -1,9 +1,10 @@
+use std::collections::HashMap;
+
 use client_sdk::contract_indexer::AppError;
 use orderbook::model::UserInfo;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, PgPool, Row};
-use std::collections::BTreeMap;
 use tracing::debug;
 
 pub struct UserService {
@@ -45,6 +46,42 @@ impl UserService {
         let user_id = row.get::<i64, _>("user_id");
 
         Ok(user_id)
+    }
+
+    pub async fn get_user_info(&self, user: &str) -> Result<UserInfo, AppError> {
+        let row = sqlx::query(
+            "
+            SELECT 
+                u.identity, 
+                u.salt, 
+                u.nonce, 
+                (SELECT session_keys 
+                 FROM user_session_keys 
+                 WHERE user_id = u.user_id 
+                 ORDER BY commit_id DESC 
+                 LIMIT 1) as session_keys
+            FROM users u
+            WHERE u.identity = $1
+            ",
+        )
+        .bind(user)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_e| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                anyhow::anyhow!("User not found: {user}"),
+            )
+        })?;
+
+        Ok(UserInfo {
+            user: row.get("identity"),
+            salt: row.get("salt"),
+            nonce: row.get::<i64, _>("nonce") as u32,
+            session_keys: row
+                .get::<Option<Vec<Vec<u8>>>, _>("session_keys")
+                .unwrap_or_default(),
+        })
     }
 
     pub async fn get_balances(&self, user: &str) -> Result<UserBalances, AppError> {
@@ -143,7 +180,7 @@ impl UserService {
     }
 
     /// Get all users from the database for a given commit_id
-    pub async fn get_all_users(&self, commit_id: i64) -> BTreeMap<String, UserInfo> {
+    pub async fn get_all_users(&self, commit_id: i64) -> HashMap<String, UserInfo> {
         // Fetch all users from the database and store them in the user_id_map
         debug!("Fetching all users from the database");
         // TODO this query might need to be optimized

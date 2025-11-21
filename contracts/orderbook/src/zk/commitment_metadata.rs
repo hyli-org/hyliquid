@@ -1,5 +1,5 @@
 use sdk::merkle_utils::BorshableMerkleProof;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::{
     model::{
@@ -13,7 +13,7 @@ use crate::{
     },
 };
 
-type UsersAndBalancesNeeded = (HashSet<UserInfo>, BTreeMap<Symbol, Vec<UserBalance>>);
+type UsersAndBalancesNeeded = (HashSet<UserInfo>, HashMap<Symbol, Vec<UserBalance>>);
 type OrdersNeeded = (
     HashSet<Order>,
     HashSet<OrderPriceLevel>,
@@ -22,7 +22,7 @@ type OrdersNeeded = (
 
 type ZkvmComputedInputs = (
     ZkWitnessSet<UserInfo>,
-    BTreeMap<Symbol, ZkWitnessSet<UserBalance>>,
+    HashMap<Symbol, ZkWitnessSet<UserBalance>>,
     OrderManagerWitnesses,
 );
 
@@ -36,7 +36,7 @@ impl FullState {
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
         let base = self.resolve_user_from_state(base_user, &base_user.user)?;
         users_info_needed.insert(base);
-        let mut balances_needed: BTreeMap<Symbol, Vec<UserBalance>> = BTreeMap::new();
+        let mut balances_needed: HashMap<Symbol, Vec<UserBalance>> = HashMap::new();
 
         for event in events {
             match event {
@@ -361,7 +361,7 @@ impl FullState {
         action: &PermissionnedOrderbookAction,
     ) -> Result<ZkvmComputedInputs, String> {
         // We populate orders owners based on events with only needed values
-        let mut orders_owner = BTreeMap::new();
+        let mut orders_owner = HashMap::new();
 
         // Track all users, their balances per symbol, and order-user mapping for executed/updated orders
         for event in events {
@@ -396,7 +396,7 @@ impl FullState {
         let (users_info_needed, balances_needed) =
             self.collect_user_and_balance_updates(user_info, events)?;
 
-        let mut balances: BTreeMap<Symbol, ZkWitnessSet<UserBalance>> = BTreeMap::new();
+        let mut balances: HashMap<Symbol, ZkWitnessSet<UserBalance>> = HashMap::new();
         for (symbol, user_keys) in balances_needed.iter() {
             let users: Vec<UserInfo> = user_keys
                 .iter()

@@ -1,7 +1,7 @@
 use borsh::{BorshDeserialize, BorshSerialize};
 use hyli_smt_token::SmtTokenAction;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     order_manager::OrderManager,
@@ -15,9 +15,9 @@ use crate::zk::H256;
 
 #[derive(Debug, Default, Clone, Serialize, BorshDeserialize, BorshSerialize)]
 pub struct ExecuteState {
-    pub assets_info: BTreeMap<Symbol, AssetInfo>, // symbol -> (decimals, precision)
-    pub users_info: BTreeMap<String, UserInfo>,
-    pub balances: BTreeMap<Symbol, BTreeMap<H256, Balance>>,
+    pub assets_info: HashMap<Symbol, AssetInfo>, // symbol -> (decimals, precision)
+    pub users_info: HashMap<String, UserInfo>,
+    pub balances: HashMap<Symbol, HashMap<H256, Balance>>,
     pub order_manager: OrderManager,
 }
 
@@ -402,13 +402,13 @@ impl ExecuteState {
     }
 
     pub fn from_data(
-        pairs_info: BTreeMap<Pair, PairInfo>,
+        pairs_info: HashMap<Pair, PairInfo>,
         order_manager: OrderManager,
-        users_info: BTreeMap<String, UserInfo>,
-        balances: BTreeMap<Symbol, BTreeMap<H256, Balance>>,
+        users_info: HashMap<String, UserInfo>,
+        balances: HashMap<Symbol, HashMap<H256, Balance>>,
     ) -> Result<Self, String> {
         let mut orderbook = ExecuteState {
-            assets_info: BTreeMap::new(),
+            assets_info: HashMap::new(),
             users_info,
             balances,
             order_manager,
@@ -422,7 +422,7 @@ impl ExecuteState {
         Ok(orderbook)
     }
 
-    pub fn get_balances(&self) -> BTreeMap<Symbol, BTreeMap<H256, Balance>> {
+    pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
         self.balances.clone()
     }
 
@@ -433,7 +433,7 @@ impl ExecuteState {
             .unwrap_or_default()
     }
 
-    pub fn get_orders(&self) -> BTreeMap<String, Order> {
+    pub fn get_orders(&self) -> HashMap<String, Order> {
         self.order_manager.orders.clone()
     }
 
@@ -645,13 +645,13 @@ impl ExecuteState {
         events.extend(order_events);
 
         // Balance change aggregation system based on events
-        let mut balance_changes: BTreeMap<Symbol, BTreeMap<H256, Balance>> = self.get_balances();
-        let mut touched_accounts: BTreeMap<Symbol, HashSet<H256>> = BTreeMap::new();
+        let mut balance_changes: HashMap<Symbol, HashMap<H256, Balance>> = self.get_balances();
+        let mut touched_accounts: HashMap<Symbol, HashSet<H256>> = HashMap::new();
 
         // Helper function to record balance changes
         fn record_balance_change(
-            balance_changes: &mut BTreeMap<Symbol, BTreeMap<H256, Balance>>,
-            touched_accounts: &mut BTreeMap<Symbol, HashSet<H256>>,
+            balance_changes: &mut HashMap<Symbol, HashMap<H256, Balance>>,
+            touched_accounts: &mut HashMap<Symbol, HashSet<H256>>,
             user_info_key: &H256,
             symbol: &Symbol,
             amount: i128,
@@ -681,8 +681,8 @@ impl ExecuteState {
 
         // Helper function to record transfers between users
         fn record_transfer(
-            balance_changes: &mut BTreeMap<Symbol, BTreeMap<H256, Balance>>,
-            touched_accounts: &mut BTreeMap<Symbol, HashSet<H256>>,
+            balance_changes: &mut HashMap<Symbol, HashMap<H256, Balance>>,
+            touched_accounts: &mut HashMap<Symbol, HashSet<H256>>,
             from: &H256,
             to: &H256,
             symbol: &Symbol,
@@ -891,8 +891,8 @@ impl ExecuteState {
         Ok(events)
     }
 
-    pub fn get_user_balances(&self, user_key: &H256) -> BTreeMap<Symbol, Balance> {
-        let mut user_balances = BTreeMap::new();
+    pub fn get_user_balances(&self, user_key: &H256) -> HashMap<Symbol, Balance> {
+        let mut user_balances = HashMap::new();
         for (symbol, balances) in self.get_balances() {
             if let Some(balance) = balances.get(user_key) {
                 user_balances.insert(symbol, balance.clone());
