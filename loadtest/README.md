@@ -15,7 +15,7 @@ A comprehensive load testing tool for the Hyliquid orderbook system, built with 
 
 ## Architecture
 
-```
+```bash
 loadtest/
 ├── src/
 │   ├── main.rs              # Entry point and Goose orchestration
@@ -277,7 +277,7 @@ All configuration can be overridden via environment variables:
 
 ### CLI Flags
 
-```
+```bash
 OPTIONS:
     --config <PATH>          Path to configuration file [default: loadtest.toml]
     --base-url <URL>         Server base URL
@@ -304,9 +304,11 @@ The load testing tool reuses the **exact authentication logic** from the `tx_sen
 1. Each virtual user has a unique identity: `loadtest_user_{index}`
 2. A keypair is derived deterministically from the identity using SHA3-256
 3. For signed operations (create_order, cancel_order, withdraw), the signature format is:
-   ```
+
+   ```bash
    {identity}:{nonce}:{action}:{params}
    ```
+
 4. The signature is created using ECDSA on the SHA3-256 hash of this data
 5. Headers sent with each request:
    - `x-identity`: User identity string
@@ -348,7 +350,8 @@ The load testing tool reuses the **exact authentication logic** from the `tx_sen
 
 - Fetches orderbook (`GET /api/book/{base}/{quote}`)
 - Randomly buys or sells
-- Crosses the spread by `cross_ticks` to guarantee execution
+- Crosses the spread by `cross_ticks` to guarantee execution when liquidity exists
+- Falls back to self-crossed bid/ask (using shared mid price) when the book is empty to force activity
 - Waits `interval_ms` before next order
 
 #### Cancellation
@@ -402,7 +405,7 @@ timestamp,endpoint,status_code,latency_ms
 
 At the end of the test, a human-readable summary is printed:
 
-```
+```bash
 ================================================================================
 📊 LOAD TEST SUMMARY
 ================================================================================
@@ -516,9 +519,9 @@ min_fills = 100  # Expect at least 100 executions
 
 ### No Executions
 
-- **Maker and taker not enabled**: Ensure both `maker.enabled` and `taker.enabled` are `true`
+- **Maker/taker not enabled**: Ensure `maker.enabled` or `taker.enabled` are set to `true`
 - **Taker interval too high**: Reduce `taker.interval_ms`
-- **Orderbook empty**: Check that maker is placing orders successfully
+- **Orderbook empty**: The taker now self-crosses when nothing is available, but enabling maker improves realism
 
 ### Nonce Errors
 
@@ -556,7 +559,7 @@ Adjust the relative frequency of each scenario:
 weight = 70  # 70% of operations are maker
 
 [taker]
-weight = 20  # 20% are taker
+weight = 30  # 30% are taker
 
 [cancellation]
 weight = 10  # 10% are cancellations
