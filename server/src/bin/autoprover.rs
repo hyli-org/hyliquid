@@ -43,11 +43,12 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file.clone()).context("reading config file")?;
 
-    if args.tracing {
-        init_tracing();
+    let _tracing_provider = if args.tracing {
+        Some(init_tracing())
     } else {
         setup_tracing(&config.log_format, "hyliquid".to_string())?;
-    }
+        None
+    };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

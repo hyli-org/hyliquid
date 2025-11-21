@@ -22,6 +22,10 @@ path = "src/bin/parse_action.rs"
 name = "fetch_ho"
 path = "src/bin/fetch_ho.rs"
 
+[[bin]]
+name = "execute_order_example"
+path = "src/bin/execute_order_example.rs"
+
 [dependencies]
 orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }

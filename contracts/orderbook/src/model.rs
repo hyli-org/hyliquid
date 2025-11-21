@@ -438,6 +438,7 @@ impl ExecuteState {
     }
 
     /// Applies events and removes zeroed orders from the manager, keeping only the live view.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn apply_events(
         &mut self,
         user_info: &UserInfo,
@@ -456,6 +457,7 @@ impl ExecuteState {
         self.apply_events_with_mode(user_info, events, OrderRetentionMode::RetainForProof)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn apply_events_with_mode(
         &mut self,
         user_info: &UserInfo,

@@ -58,6 +58,7 @@ impl OrderManager {
         }
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn get_order_list_mut(
         &mut self,
         side: &OrderSide,
@@ -370,6 +371,7 @@ impl OrderManager {
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn clean(&mut self, events: &[OrderbookEvent]) {
         for event in events {
             match event {

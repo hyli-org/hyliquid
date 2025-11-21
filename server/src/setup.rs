@@ -83,7 +83,7 @@ pub async fn setup_database(config: &Conf, clean_db: bool) -> Result<PgPool> {
     Ok(pool)
 }
 
-pub fn init_tracing() {
+pub fn init_tracing() -> opentelemetry_sdk::trace::SdkTracerProvider {
     // Set up W3C trace context propagator
     global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
 
@@ -114,8 +114,8 @@ pub fn init_tracing() {
     // Get tracer before setting as global
     let tracer = tracer_provider.tracer("hyliquid-orderbook");
 
-    // Set as global tracer provider
-    let _ = global::set_tracer_provider(tracer_provider);
+    // Set as global tracer provider (keep a clone so caller can choose to flush/shutdown)
+    let _ = global::set_tracer_provider(tracer_provider.clone());
 
     // Configure tracing subscriber with env filter
     let env_filter = EnvFilter::builder()
@@ -131,6 +131,8 @@ pub fn init_tracing() {
         .init();
 
     tracing::info!("Tracing initialized with OTLP exporter to http://localhost:4317");
+
+    tracer_provider
 }
 
 pub struct ServiceContext {

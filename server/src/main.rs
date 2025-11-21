@@ -87,9 +87,11 @@ fn main() -> Result<()> {
 }
 
 async fn actual_main(args: Args, config: Conf) -> Result<()> {
-    if args.tracing {
-        init_tracing();
-    }
+    let _tracing_provider = if args.tracing {
+        Some(init_tracing())
+    } else {
+        None
+    };
 
     let config = Arc::new(config);
 
