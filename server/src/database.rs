@@ -5,7 +5,7 @@ use std::time::Instant;
 use anyhow::Result;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_modules::{
-    bus::{BusMessage, SharedMessageBus},
+    bus::{command_response::Query, BusMessage, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
@@ -18,7 +18,7 @@ use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, Instrument};
 
 use crate::services::user_service::UserService;
 use crate::{prover::OrderbookProverRequest, services::asset_service::AssetService};
@@ -54,6 +54,8 @@ pub struct DatabaseMetrics {
     pub notification_duration: Histogram<f64>,
     /// Duration of transaction commit
     pub transaction_commit_duration: Histogram<f64>,
+    /// Duration of blob transaction sending
+    pub blob_send_duration: Histogram<f64>,
 }
 
 impl DatabaseMetrics {
@@ -158,6 +160,12 @@ impl DatabaseMetrics {
                 .with_unit("s")
                 .with_boundaries(latency_buckets.clone())
                 .build(),
+            blob_send_duration: meter
+                .f64_histogram("db.blob.send.duration")
+                .with_description("Duration of blob transaction sending in seconds")
+                .with_unit("s")
+                .with_boundaries(latency_buckets.clone())
+                .build(),
         }
     }
 
@@ -192,7 +200,7 @@ impl BusMessage for DatabaseRequest {
 module_bus_client! {
     #[derive(Debug)]
     struct DatabaseModuleBusClient {
-        receiver(DatabaseRequest),
+        receiver(Query<DatabaseRequest, bool>),
     }
 }
 
@@ -205,68 +213,50 @@ pub struct DatabaseModuleCtx {
     pub metrics: DatabaseMetrics,
 }
 
-pub struct DatabaseModule {
+/// Service for database operations that can be called directly
+#[derive(Clone)]
+pub struct DatabaseService {
     ctx: Arc<DatabaseModuleCtx>,
-    bus: DatabaseModuleBusClient,
 }
 
-impl Module for DatabaseModule {
-    type Context = Arc<DatabaseModuleCtx>;
-
-    async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-        let bus = DatabaseModuleBusClient::new_from_bus(bus.new_handle()).await;
-        Ok(DatabaseModule { ctx, bus })
+impl DatabaseService {
+    pub fn new(ctx: Arc<DatabaseModuleCtx>) -> Self {
+        Self { ctx }
     }
 
-    async fn run(&mut self) -> Result<()> {
-        self.start().await?;
-        Ok(())
-    }
-}
-
-impl DatabaseModule {
-    pub async fn start(&mut self) -> Result<()> {
-        module_handle_messages! {
-            on_self self,
-
-            listen<DatabaseRequest> request => {
-                _ = log_error!(self.handle_database_request(request).await, "handle database request")
-            }
-        };
-        Ok(())
-    }
-
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    async fn handle_database_request(&mut self, request: DatabaseRequest) -> Result<()> {
-        match request {
-            DatabaseRequest::WriteEvents {
-                user,
-                tx_hash,
-                blob_tx,
-                prover_request,
-            } => {
-                log_error!(
-                    self.write_events(&user, tx_hash.clone(), prover_request)
-                        .await,
-                    "Failed to write events"
-                )?;
-                if !self.ctx.no_blobs {
-                    log_error!(
-                        self.ctx.client.send_tx_blob(blob_tx).await,
-                        "Failed to send blob tx"
-                    )?;
-                }
-            }
+    /// Write events to the database and optionally send blob transaction
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self,)))]
+    pub async fn write_events(
+        &self,
+        user: UserInfo,
+        tx_hash: TxHash,
+        blob_tx: BlobTransaction,
+        prover_request: OrderbookProverRequest,
+    ) -> Result<()> {
+        log_error!(
+            self.write_events_internal(&user, tx_hash.clone(), &prover_request)
+                .await,
+            "Failed to write events"
+        )?;
+        if !self.ctx.no_blobs {
+            let blob_send_start = Instant::now();
+            log_error!(
+                self.ctx.client.send_tx_blob(blob_tx).await,
+                "Failed to send blob tx"
+            )?;
+            self.ctx
+                .metrics
+                .record(&self.ctx.metrics.blob_send_duration, blob_send_start, &[]);
         }
         Ok(())
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    async fn write_events(
+    async fn write_events_internal(
         &self,
         user_info: &UserInfo,
         tx_hash: TxHash,
-        prover_request: OrderbookProverRequest,
+        prover_request: &OrderbookProverRequest,
     ) -> Result<()> {
         let write_events_start = Instant::now();
         let user = &user_info.user;
@@ -279,7 +269,14 @@ impl DatabaseModule {
         let mut trigger_notify_orders = false;
 
         let tx_begin_start = Instant::now();
-        let mut tx = log_error!(self.ctx.pool.begin().await, "Failed to begin transaction")?;
+        let mut tx = log_error!(
+            self.ctx
+                .pool
+                .begin()
+                .instrument(tracing::info_span!("begin_transaction"))
+                .await,
+            "Failed to begin transaction"
+        )?;
         self.ctx.metrics.record(
             &self.ctx.metrics.transaction_begin_duration,
             tx_begin_start,
@@ -291,6 +288,7 @@ impl DatabaseModule {
             sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
                 .bind(tx_hash.0.clone())
                 .fetch_one(&mut *tx)
+                .instrument(tracing::info_span!("create_commit"))
                 .await,
             "Failed to create commit"
         )?;
@@ -330,6 +328,7 @@ impl DatabaseModule {
                         .bind(quote_asset.asset_id)
                         .bind(MarketStatus::Active)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_pair"))
                         .await,
                         "Failed to create pair"
                     )?;
@@ -380,6 +379,7 @@ impl DatabaseModule {
                         .bind(asset.asset_id)
                         .bind(amount as i64)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("update_balance"))
                         .await,
                         "Failed to update balance"
                     )?;
@@ -391,6 +391,7 @@ impl DatabaseModule {
                         .bind(asset.asset_id)
                         .bind(amount as i64)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_balance_event"))
                         .await,
                         "Failed to create balance event"
                     )?;
@@ -442,6 +443,7 @@ impl DatabaseModule {
                         .bind(order.price.map(|p| p as i64))
                         .bind(order.quantity as i64)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_order"))
                         .await,
                         "Failed to create order"
                     )?;
@@ -460,6 +462,7 @@ impl DatabaseModule {
                         .bind(order.price.map(|p| p as i64))
                         .bind(order.quantity as i64)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_order_event"))
                         .await,
                         "Failed to create order event"
                     )?;
@@ -492,6 +495,7 @@ impl DatabaseModule {
                         )
                         .bind(order_id.clone())
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("update_order_as_cancelled"))
                         .await,
                         "Failed to update order as cancelled"
                     )?;
@@ -505,6 +509,7 @@ impl DatabaseModule {
                         .bind(commit_id)
                         .bind(order_id)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_order_event"))
                         .await,
                         "Failed to create order event"
                     )?;
@@ -558,6 +563,7 @@ impl DatabaseModule {
                         )
                         .bind(order_id.clone())
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("update_order_as_filled"))
                         .await,
                         "Failed to update order as filled"
                     )?;
@@ -573,6 +579,7 @@ impl DatabaseModule {
                         .bind(commit_id)
                         .bind(order_id.clone())
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_order_event"))
                         .await,
                         "Failed to create order event"
                     )?;
@@ -595,6 +602,7 @@ impl DatabaseModule {
                         .bind(instrument.instrument_id)
                         .bind(events_user_id)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("insert_trade_event"))
                         .await,
                         "Failed to insert trade event"
                     )?;
@@ -651,6 +659,7 @@ impl DatabaseModule {
                         .bind(remaining_quantity as i64)
                         .bind(order_id.clone())
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("update_order_as_partially_filled"))
                         .await,
                         "Failed to update order as partially filled"
                     )?;
@@ -665,6 +674,7 @@ impl DatabaseModule {
                         .bind(commit_id)
                         .bind(order_id.clone())
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_order_event"))
                         .await,
                         "Failed to create order event"
                     )?;
@@ -688,6 +698,7 @@ impl DatabaseModule {
                         .bind(executed_quantity as i64)
                         .bind(events_user_id)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("insert_trade_event"))
                         .await,
                         "Failed to insert trade event"
                     )?;
@@ -749,6 +760,7 @@ impl DatabaseModule {
                         .bind(user_id)
                         .bind(session_keys)
                         .execute(&mut *tx)
+                        .instrument(tracing::info_span!("create_user_session_key"))
                         .await,
                         "Failed to create user session key"
                     )?;
@@ -773,6 +785,7 @@ impl DatabaseModule {
                         .bind(nonce as i64)
                         .bind(user)
                         .fetch_one(&mut *tx)
+                        .instrument(tracing::info_span!("increment_nonce"))
                         .await,
                         "Failed to increment nonce"
                     )?;
@@ -783,6 +796,7 @@ impl DatabaseModule {
                             .bind(user_id)
                             .bind(nonce as i64)
                             .execute(&mut *tx)
+                            .instrument(tracing::info_span!("insert_user_event_nonce"))
                             .await,
                         "Failed to insert user event nonce"
                     )?;
@@ -814,9 +828,11 @@ impl DatabaseModule {
             .bind(tx_hash.0.clone())
             .bind(json_data)
             .execute(&mut *tx)
+            .instrument(tracing::info_span!("insert_prover_request"))
             .await,
             "Failed to insert prover request"
         )?;
+
         self.ctx.metrics.record(
             &self.ctx.metrics.prover_request_insert_duration,
             prover_insert_start,
@@ -840,6 +856,7 @@ impl DatabaseModule {
             .bind(user_info_data)
             .bind(events_data)
             .execute(&mut *tx)
+            .instrument(tracing::info_span!("insert_contract_events"))
             .await,
             "Failed to insert contract events"
         )?;
@@ -855,6 +872,7 @@ impl DatabaseModule {
             log_error!(
                 sqlx::query("select pg_notify('trades', 'trades')")
                     .execute(&mut *tx)
+                    .instrument(tracing::info_span!("notify_trades"))
                     .await,
                 "Failed to notify 'trades'"
             )?;
@@ -871,6 +889,7 @@ impl DatabaseModule {
             log_error!(
                 sqlx::query("select pg_notify('orders', 'orders')")
                     .execute(&mut *tx)
+                    .instrument(tracing::info_span!("notify_orders"))
                     .await,
                 "Failed to notify 'orders'"
             )?;
@@ -888,6 +907,7 @@ impl DatabaseModule {
                 sqlx::query("select pg_notify('book', $1)")
                     .bind(symbol)
                     .execute(&mut *tx)
+                    .instrument(tracing::info_span!("notify_book"))
                     .await,
                 "Failed to notify 'book'"
             )?;
@@ -899,7 +919,12 @@ impl DatabaseModule {
         }
 
         let commit_start = Instant::now();
-        log_error!(tx.commit().await, "Failed to commit transaction")?;
+        log_error!(
+            tx.commit()
+                .instrument(tracing::info_span!("commit_transaction"))
+                .await,
+            "Failed to commit transaction"
+        )?;
         self.ctx.metrics.record(
             &self.ctx.metrics.transaction_commit_duration,
             commit_start,
@@ -912,6 +937,7 @@ impl DatabaseModule {
             log_error!(
                 sqlx::query("select pg_notify('instruments', 'instruments')")
                     .execute(&self.ctx.pool)
+                    .instrument(tracing::info_span!("notify_instruments"))
                     .await,
                 "Failed to notify 'instruments'"
             )?;
@@ -923,6 +949,7 @@ impl DatabaseModule {
             let mut asset_service = self.ctx.asset_service.write().await;
             asset_service
                 .reload_instrument_map()
+                .instrument(tracing::info_span!("reload_instrument_map"))
                 .await
                 .map_err(|e| anyhow::anyhow!("{}", e.1))?;
         }
@@ -937,3 +964,58 @@ impl DatabaseModule {
         Ok(())
     }
 }
+
+// pub struct DatabaseModule {
+//     ctx: Arc<DatabaseModuleCtx>,
+//     bus: DatabaseModuleBusClient,
+// }
+
+// impl Module for DatabaseModule {
+//     type Context = Arc<DatabaseModuleCtx>;
+
+//     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+//         let bus = DatabaseModuleBusClient::new_from_bus(bus.new_handle()).await;
+//         Ok(DatabaseModule { ctx, bus })
+//     }
+
+//     async fn run(&mut self) -> Result<()> {
+//         self.start().await?;
+//         Ok(())
+//     }
+// }
+
+// impl DatabaseModule {
+//     pub async fn start(&mut self) -> Result<()> {
+//         module_handle_messages! {
+//             on_self self,
+//             command_response<DatabaseRequest, bool> cmd => {
+//                         _ = log_error!(self.handle_database_request(cmd).await, "handle database request")?;
+//                     Ok(true)
+//             }
+//         };
+//         Ok(())
+//     }
+
+//     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+//     async fn handle_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
+//         let service = DatabaseService::new(self.ctx.clone());
+//         match request {
+//             DatabaseRequest::WriteEvents {
+//                 user,
+//                 tx_hash,
+//                 blob_tx,
+//                 prover_request,
+//             } => {
+//                 service
+//                     .write_events(
+//                         user.clone(),
+//                         tx_hash.clone(),
+//                         blob_tx.clone(),
+//                         prover_request.clone(),
+//                     )
+//                     .await?;
+//             }
+//         }
+//         Ok(())
+//     }
+// }

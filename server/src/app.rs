@@ -20,7 +20,7 @@ use borsh::BorshSerialize;
 use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
 use hex;
 use hyli_modules::{
-    bus::{BusClientSender, BusMessage, SharedMessageBus},
+    bus::{command_response::Query, BusClientSender, BusMessage, SharedMessageBus},
     log_error, log_warn, module_bus_client, module_handle_messages,
     modules::{BuildApiContextInner, Module},
 };
@@ -46,8 +46,10 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::debug;
 
 use crate::{
-    database::DatabaseRequest, prover::OrderbookProverRequest,
-    services::asset_service::AssetService, services::user_service::UserService,
+    database::{DatabaseModuleCtx, DatabaseRequest, DatabaseService},
+    prover::OrderbookProverRequest,
+    services::asset_service::AssetService,
+    services::user_service::UserService,
 };
 use rand::RngCore;
 
@@ -68,6 +70,8 @@ pub struct AppMetrics {
     pub events_applied_count: Histogram<u64>,
     /// Event processing duration
     pub event_apply_duration: Histogram<f64>,
+    /// Duration of database service lock acquisition
+    pub database_service_lock_duration: Histogram<f64>,
 }
 
 impl AppMetrics {
@@ -91,6 +95,7 @@ impl AppMetrics {
             5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 25000.0,
             50000.0, 100000.0,
         ];
+        let lock_buckets_clone = lock_buckets.clone();
 
         Self {
             http_request_duration: meter
@@ -135,6 +140,12 @@ impl AppMetrics {
                 .with_description("Duration of applying events to orderbook in seconds")
                 .with_unit("s")
                 .with_boundaries(latency_buckets)
+                .build(),
+            database_service_lock_duration: meter
+                .f64_histogram("database.service.lock.duration")
+                .with_description("Duration of database service lock acquisition in seconds")
+                .with_unit("s")
+                .with_boundaries(lock_buckets_clone)
                 .build(),
         }
     }
@@ -197,6 +208,12 @@ impl AppMetrics {
             &[KeyValue::new("operation", operation.to_string())],
         );
     }
+
+    #[inline]
+    fn record_database_service_lock(&self, duration: Duration) {
+        self.database_service_lock_duration
+            .record(duration.as_secs_f64(), &[]);
+    }
 }
 
 impl Default for AppMetrics {
@@ -218,6 +235,7 @@ pub struct OrderbookModuleCtx {
     pub client: Arc<NodeApiHttpClient>,
     pub asset_service: Arc<RwLock<AssetService>>,
     pub user_service: Arc<RwLock<UserService>>,
+    pub database_ctx: Arc<DatabaseModuleCtx>,
 }
 
 #[derive(Debug, Clone)]
@@ -253,7 +271,7 @@ pub struct OrderbookModuleBusClient {
 module_bus_client! {
 #[derive(Debug)]
 struct RouterBusClient {
-    sender(DatabaseRequest),
+    // sender(Query<DatabaseRequest, bool>),
     // No receiver here ! Because RouterBus is cloned
 }
 }
@@ -267,6 +285,7 @@ impl Module for OrderbookModule {
         let router_bus = RouterBusClient::new_from_bus(bus.new_handle()).await;
         let bus = OrderbookModuleBusClient::new_from_bus(bus.new_handle()).await;
 
+        let database_service = DatabaseService::new(ctx.database_ctx.clone());
         let router_ctx = RouterCtx {
             orderbook_cn: ctx.orderbook_cn.clone(),
             default_state: ctx.default_state.clone(),
@@ -278,6 +297,7 @@ impl Module for OrderbookModule {
             client: ctx.client.clone(),
             action_id_counter: Arc::new(AtomicU32::new(0)),
             metrics: AppMetrics::new(),
+            database_service: Arc::new(RwLock::new(database_service)),
         };
 
         let cors = CorsLayer::new()
@@ -466,6 +486,7 @@ struct RouterCtx {
     pub client: Arc<NodeApiHttpClient>,
     pub action_id_counter: Arc<AtomicU32>,
     pub metrics: AppMetrics,
+    pub database_service: Arc<RwLock<DatabaseService>>,
 }
 
 // --------------------------------------------------------
@@ -986,7 +1007,7 @@ async fn deposit(
     result
 }
 
-// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -1371,16 +1392,20 @@ async fn process_orderbook_action<T: BorshSerialize>(
         nonce: action_id,
     };
 
-    // Send write events request to database module
-    // Database module will send the blob tx to the node
-    debug!("Sending write events request to database module for tx {tx_hash:#}");
-    let mut bus = ctx.bus.clone();
-    bus.send(DatabaseRequest::WriteEvents {
-        user: user_info,
-        tx_hash: tx_hash.clone(),
-        blob_tx,
-        prover_request,
-    })?;
-
-    Ok(Json(tx_hash))
+    // Write events directly using database service
+    debug!("Writing events to database for tx {tx_hash:#}");
+    let lock_start = Instant::now();
+    let database_service = ctx.database_service.read().await;
+    ctx.metrics
+        .record_database_service_lock(lock_start.elapsed());
+    match database_service
+        .write_events(user_info, tx_hash.clone(), blob_tx, prover_request)
+        .await
+    {
+        Ok(_) => Ok(Json(tx_hash)),
+        Err(e) => Err(AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            anyhow::anyhow!("Failed to write events: {e}"),
+        )),
+    }
 }

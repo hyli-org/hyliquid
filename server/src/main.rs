@@ -19,7 +19,7 @@ use server::{
     app::{OrderbookModule, OrderbookModuleCtx},
     bridge::{BridgeModule, BridgeModuleCtx},
     conf::Conf,
-    database::{DatabaseModule, DatabaseModuleCtx},
+    database::DatabaseModuleCtx,
     prover::{OrderbookProverCtx, OrderbookProverModule},
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
@@ -168,6 +168,15 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         openapi: Default::default(),
     });
 
+    let database_ctx = Arc::new(DatabaseModuleCtx {
+        pool: pool.clone(),
+        user_service: user_service.clone(),
+        asset_service: asset_service.clone(),
+        client: node_client.clone(),
+        no_blobs: args.no_blobs,
+        metrics: server::database::DatabaseMetrics::new(),
+    });
+
     let orderbook_ctx = Arc::new(OrderbookModuleCtx {
         api: api_ctx.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
@@ -176,15 +185,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         asset_service: asset_service.clone(),
         user_service: user_service.clone(),
         client: node_client.clone(),
-    });
-
-    let database_ctx = Arc::new(DatabaseModuleCtx {
-        pool: pool.clone(),
-        user_service: user_service.clone(),
-        asset_service: asset_service.clone(),
-        client: node_client.clone(),
-        no_blobs: args.no_blobs,
-        metrics: server::database::DatabaseMetrics::new(),
+        database_ctx: database_ctx.clone(),
     });
 
     let api_module_ctx = Arc::new(ApiModuleCtx {
@@ -230,9 +231,9 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
             .await?;
     }
 
-    handler
-        .build_module::<DatabaseModule>(database_ctx.clone())
-        .await?;
+    // handler
+    //     .build_module::<DatabaseModule>(database_ctx.clone())
+    //     .await?;
 
     handler
         .build_module::<ApiModule>(api_module_ctx.clone())

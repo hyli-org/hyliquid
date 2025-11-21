@@ -36,7 +36,7 @@ CREATE TYPE market_status AS ENUM (
 
 -- Exemple: BTC/USDT
 CREATE TABLE instruments (
-    commit_id bigint NOT NULL REFERENCES commits (commit_id),
+    commit_id bigint NOT NULL,
     instrument_id bigserial PRIMARY KEY,
     symbol text UNIQUE NOT NULL, -- 'BTC/USDT'
     -- Smallest price increment
@@ -47,8 +47,8 @@ CREATE TABLE instruments (
     -- requires: order.qty % qty_step = 0
     qty_step bigint NOT NULL,
     -- eg. BTC/USDT => base=BTC, quote=USDT
-    base_asset_id bigint NOT NULL REFERENCES assets (asset_id),
-    quote_asset_id bigint NOT NULL REFERENCES assets (asset_id),
+    base_asset_id bigint NOT NULL,
+    quote_asset_id bigint NOT NULL,
     status market_status NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
 );
@@ -65,7 +65,7 @@ CREATE TYPE user_status AS ENUM (
 
 CREATE TABLE users (
     user_id bigserial PRIMARY KEY,
-    commit_id bigint NOT NULL REFERENCES commits (commit_id),
+    commit_id bigint NOT NULL,
     identity TEXT UNIQUE NOT NULL,
     salt BYTEA NOT NULL,
     nonce bigint NOT NULL DEFAULT 0,
@@ -75,15 +75,15 @@ CREATE TABLE users (
 
 -- Append only, latest line (max commit_id) has all session keys for a user
 CREATE TABLE user_session_keys (
-    user_id bigint NOT NULL REFERENCES users (user_id),
-    commit_id bigint NOT NULL REFERENCES commits (commit_id),
+    user_id bigint NOT NULL,
+    commit_id bigint NOT NULL,
     session_keys BYTEA[] NOT NULL,
     PRIMARY KEY (user_id, session_keys)
 );
 
 CREATE TABLE balances (
-    user_id bigint NOT NULL REFERENCES users (user_id),
-    asset_id bigint NOT NULL REFERENCES assets (asset_id),
+    user_id bigint NOT NULL,
+    asset_id bigint NOT NULL,
     total bigint NOT NULL DEFAULT 0, -- quantity owned
     reserved bigint NOT NULL DEFAULT 0, -- quantity reserved for open orders
     available bigint GENERATED ALWAYS AS (total - reserved) STORED,
@@ -126,8 +126,8 @@ CREATE TYPE order_status AS ENUM (
 
 CREATE TABLE orders (
     order_id text NOT NULL PRIMARY KEY,
-    user_id bigint NOT NULL REFERENCES users (user_id),
-    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
+    user_id bigint NOT NULL,
+    instrument_id bigint NOT NULL,
     side order_side NOT NULL,
     type order_type NOT NULL,
     price bigint, -- fixed-point (nullable for market)
@@ -151,7 +151,7 @@ CREATE TABLE order_events (
     event_id bigserial PRIMARY KEY,
     order_id text NOT NULL,
     user_id bigint NOT NULL,
-    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
+    instrument_id bigint NOT NULL,
     side order_side NOT NULL,
     type order_type NOT NULL,
     price bigint NOT NULL,
@@ -170,7 +170,7 @@ CREATE TABLE trade_events (
     taker_order_id text NOT NULL,
     maker_user_id bigint NOT NULL,
     taker_user_id bigint NOT NULL,
-    instrument_id bigint NOT NULL REFERENCES instruments (instrument_id),
+    instrument_id bigint NOT NULL,
     price bigint NOT NULL,
     qty bigint NOT NULL,
     side order_side NOT NULL, -- côté du taker
@@ -190,7 +190,7 @@ CREATE TABLE balance_events (
   commit_id   bigint NOT NULL,
   event_id    bigserial PRIMARY KEY,
   user_id     bigint NOT NULL,
-  asset_id    bigint NOT NULL REFERENCES assets (asset_id),
+  asset_id    bigint NOT NULL,
   total       bigint NOT NULL DEFAULT 0,
   reserved    bigint NOT NULL DEFAULT 0,
   kind        balance_event_kind NOT NULL,
