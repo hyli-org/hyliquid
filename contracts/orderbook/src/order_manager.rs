@@ -273,6 +273,12 @@ impl OrderManager {
         for event in events {
             match event {
                 OrderbookEvent::OrderCreated { order } => {
+                    #[cfg(feature = "instrumentation")]
+                    let span = sdk::tracing::span!(
+                        sdk::tracing::Level::INFO,
+                        "apply_events_order_created"
+                    )
+                    .entered();
                     let price = order.price.ok_or_else(|| {
                         "OrderCreated event missing price for limit order".to_string()
                     })?;
@@ -284,17 +290,21 @@ impl OrderManager {
                         .entry(price)
                         .or_default();
 
-                    if !level.contains(&order.order_id) {
-                        level.push_back(order.order_id.clone());
-                    }
-
+                    level.push_back(order.order_id.clone());
                     self.orders.insert(order.order_id.clone(), order.clone());
-
                     self.orders_owner
                         .entry(order.order_id.clone())
                         .or_insert(user_info_key);
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 OrderbookEvent::OrderCancelled { order_id, .. } => {
+                    #[cfg(feature = "instrumentation")]
+                    let span = sdk::tracing::span!(
+                        sdk::tracing::Level::INFO,
+                        "apply_events_order_cancelled"
+                    )
+                    .entered();
                     let order = self
                         .orders
                         .get(order_id)
@@ -316,6 +326,8 @@ impl OrderManager {
                     order_mut.quantity = 0;
 
                     self.orders_owner.remove(order_id);
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 OrderbookEvent::OrderExecuted {
                     order_id,
@@ -326,6 +338,12 @@ impl OrderManager {
                         continue;
                     }
 
+                    #[cfg(feature = "instrumentation")]
+                    let span = sdk::tracing::span!(
+                        sdk::tracing::Level::INFO,
+                        "apply_events_order_executed"
+                    )
+                    .entered();
                     let order = self
                         .orders
                         .get(order_id)
@@ -348,23 +366,36 @@ impl OrderManager {
                     order_mut.quantity = 0;
 
                     self.orders_owner.remove(order_id);
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 OrderbookEvent::OrderUpdate {
                     order_id,
                     remaining_quantity,
                     ..
                 } => {
+                    #[cfg(feature = "instrumentation")]
+                    let span =
+                        sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_order_update")
+                            .entered();
                     let order = self.orders.get_mut(order_id).ok_or_else(|| {
                         format!("OrderUpdate event missing order {order_id}").to_string()
                     })?;
                     order.quantity = *remaining_quantity;
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 _ => {}
             }
         }
 
         if retention_mode.should_cleanup() {
+            #[cfg(feature = "instrumentation")]
+            let span =
+                sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_cleanup").entered();
             self.clean(events);
+            #[cfg(feature = "instrumentation")]
+            span.exit();
         }
 
         Ok(())

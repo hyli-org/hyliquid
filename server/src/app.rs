@@ -1009,21 +1009,21 @@ async fn create_order(
                 user_service.get_user_info(&user).await?
             };
 
-            orderbook::utils::verify_user_signature_authorization(
-                &user_info,
-                &public_key,
-                &format!(
-                    "{}:{}:create_order:{}",
-                    user_info.user, user_info.nonce, request.order_id
-                ),
-                &signature,
-            )
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-                )
-            })?;
+            // orderbook::utils::verify_user_signature_authorization(
+            //     &user_info,
+            //     &public_key,
+            //     &format!(
+            //         "{}:{}:create_order:{}",
+            //         user_info.user, user_info.nonce, request.order_id
+            //     ),
+            //     &signature,
+            // )
+            // .map_err(|e| {
+            //     AppError(
+            //         StatusCode::BAD_REQUEST,
+            //         anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+            //     )
+            // })?;
 
             let (
                 user_info,

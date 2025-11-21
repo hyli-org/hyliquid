@@ -422,6 +422,7 @@ impl ExecuteState {
         Ok(orderbook)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn get_balances(&self) -> HashMap<Symbol, HashMap<H256, Balance>> {
         self.balances.clone()
     }
@@ -433,11 +434,13 @@ impl ExecuteState {
             .unwrap_or_default()
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn get_orders(&self) -> HashMap<String, Order> {
         self.order_manager.orders.clone()
     }
 
     /// Applies events and removes zeroed orders from the manager, keeping only the live view.
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn apply_events(
         &mut self,
         user_info: &UserInfo,
@@ -456,6 +459,7 @@ impl ExecuteState {
         self.apply_events_with_mode(user_info, events, OrderRetentionMode::RetainForProof)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     fn apply_events_with_mode(
         &mut self,
         user_info: &UserInfo,
@@ -465,22 +469,36 @@ impl ExecuteState {
         for event in events {
             match event {
                 OrderbookEvent::PairCreated { pair, info } => {
+                    #[cfg(feature = "instrumentation")]
+                    let span =
+                        sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_pair_created")
+                            .entered();
                     self.register_asset(&pair.0, &info.base)?;
                     self.register_asset(&pair.1, &info.quote)?;
                     self.balances.entry(pair.0.clone()).or_default();
                     self.balances.entry(pair.1.clone()).or_default();
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 OrderbookEvent::BalanceUpdated {
                     user,
                     symbol,
                     amount,
                 } => {
+                    #[cfg(feature = "instrumentation")]
+                    let span = sdk::tracing::span!(
+                        sdk::tracing::Level::INFO,
+                        "apply_events_balance_updated"
+                    )
+                    .entered();
                     let user_info = if user == &user_info.user {
                         user_info.clone()
                     } else {
                         self.get_user_info(user)?
                     };
                     self.update_balances(symbol, vec![(user_info.get_key(), Balance(*amount))])?;
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 OrderbookEvent::SessionKeyAdded {
                     user,
@@ -489,6 +507,12 @@ impl ExecuteState {
                     session_keys,
                     ..
                 } => {
+                    #[cfg(feature = "instrumentation")]
+                    let span = sdk::tracing::span!(
+                        sdk::tracing::Level::INFO,
+                        "apply_events_session_key_added"
+                    )
+                    .entered();
                     let entry = self
                         .users_info
                         .entry(user.clone())
@@ -502,13 +526,23 @@ impl ExecuteState {
                     entry.salt = salt.clone();
                     entry.nonce = *nonce;
                     entry.session_keys = session_keys.clone();
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 OrderbookEvent::NonceIncremented { user, nonce } => {
+                    #[cfg(feature = "instrumentation")]
+                    let span = sdk::tracing::span!(
+                        sdk::tracing::Level::INFO,
+                        "apply_events_nonce_incremented"
+                    )
+                    .entered();
                     let entry = self
                         .users_info
                         .entry(user.clone())
                         .or_insert(user_info.clone());
                     entry.nonce = *nonce;
+                    #[cfg(feature = "instrumentation")]
+                    span.exit();
                 }
                 _ => {}
             }

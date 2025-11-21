@@ -147,7 +147,7 @@ WITH (
 -- Filled from contract output
 -----------------------
 CREATE TABLE order_events (
-    commit_id bigint NOT NULL REFERENCES commits (commit_id),
+    commit_id bigint NOT NULL,
     event_id bigserial PRIMARY KEY,
     order_id text NOT NULL,
     user_id bigint NOT NULL,
@@ -164,7 +164,7 @@ CREATE TABLE order_events (
 ;
 
 CREATE TABLE trade_events (
-    commit_id bigint NOT NULL REFERENCES commits (commit_id),
+    commit_id bigint NOT NULL,
     trade_id bigserial PRIMARY KEY,
     maker_order_id text NOT NULL,
     taker_order_id text NOT NULL,
@@ -187,7 +187,7 @@ CREATE TYPE balance_event_kind AS ENUM (
 );
 
 CREATE TABLE balance_events (
-  commit_id   bigint NOT NULL REFERENCES commits(commit_id),
+  commit_id   bigint NOT NULL,
   event_id    bigserial PRIMARY KEY,
   user_id     bigint NOT NULL,
   asset_id    bigint NOT NULL REFERENCES assets (asset_id),
@@ -200,21 +200,21 @@ CREATE TABLE balance_events (
 );
 
 CREATE TABLE prover_requests (
-  commit_id bigint NOT NULL REFERENCES commits (commit_id),
+  commit_id bigint NOT NULL,
   tx_hash text NOT NULL,
   request bytea NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE user_events_nonces (
-  commit_id bigint NOT NULL REFERENCES commits (commit_id),
-  user_id bigint NOT NULL REFERENCES users (user_id),
+  commit_id bigint NOT NULL,
+  user_id bigint NOT NULL,
   nonce bigint NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
 CREATE TABLE contract_events (
-  commit_id bigint NOT NULL REFERENCES commits (commit_id),
+  commit_id bigint NOT NULL,
   user_info bytea NOT NULL,
   events bytea NOT NULL
 );

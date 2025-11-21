@@ -185,7 +185,9 @@ pub enum DatabaseRequest {
     },
 }
 
-impl BusMessage for DatabaseRequest {}
+impl BusMessage for DatabaseRequest {
+    const CAPACITY: usize = 10000000;
+}
 
 module_bus_client! {
     #[derive(Debug)]

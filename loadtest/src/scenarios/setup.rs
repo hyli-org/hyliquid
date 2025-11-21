@@ -55,6 +55,7 @@ async fn add_session_key_transaction(user: &mut GooseUser) -> TransactionResult 
 
     let user_state = user.get_session_data_mut::<UserState>().unwrap();
     user_state.session_key_added = true;
+    info!("Session key added for {}", user_auth.identity);
 
     Ok(())
 }
@@ -236,6 +237,7 @@ async fn get_nonce_transaction(user: &mut GooseUser) -> TransactionResult {
     .unwrap();
 
     user_state.nonce = current_nonce;
+    info!("User {} nonce: {}", user_state.auth.identity, current_nonce);
 
     Ok(())
 }
