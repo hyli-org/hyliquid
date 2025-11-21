@@ -1,9 +1,10 @@
+use std::collections::HashMap;
+
 use client_sdk::contract_indexer::AppError;
 use orderbook::model::UserInfo;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use sqlx::{PgConnection, PgPool, Row};
-use std::collections::BTreeMap;
 use tracing::debug;
 
 pub struct UserService {
@@ -143,7 +144,7 @@ impl UserService {
     }
 
     /// Get all users from the database for a given commit_id
-    pub async fn get_all_users(&self, commit_id: i64) -> BTreeMap<String, UserInfo> {
+    pub async fn get_all_users(&self, commit_id: i64) -> HashMap<String, UserInfo> {
         // Fetch all users from the database and store them in the user_id_map
         debug!("Fetching all users from the database");
         // TODO this query might need to be optimized

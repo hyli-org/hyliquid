@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::HashMap,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -515,16 +515,10 @@ pub struct WithdrawRequest {
 // API-friendly representation of OrderManager for JSON serialization
 #[derive(Debug, Clone, Serialize)]
 pub struct OrderManagerAPI {
-    pub orders: std::collections::BTreeMap<String, Order>,
-    pub bid_orders: std::collections::BTreeMap<
-        String,
-        std::collections::BTreeMap<String, std::collections::VecDeque<String>>,
-    >,
-    pub ask_orders: std::collections::BTreeMap<
-        String,
-        std::collections::BTreeMap<String, std::collections::VecDeque<String>>,
-    >,
-    pub orders_owner: std::collections::BTreeMap<String, String>,
+    pub orders: HashMap<String, Order>,
+    pub bid_orders: HashMap<String, HashMap<String, std::collections::VecDeque<String>>>,
+    pub ask_orders: HashMap<String, HashMap<String, std::collections::VecDeque<String>>>,
+    pub orders_owner: HashMap<String, String>,
 }
 
 impl From<&orderbook::order_manager::OrderManager> for OrderManagerAPI {
@@ -574,9 +568,9 @@ impl From<&orderbook::order_manager::OrderManager> for OrderManagerAPI {
 // API-friendly representation of the state for JSON serialization
 #[derive(Debug, Clone, Serialize)]
 pub struct ExecuteStateAPI {
-    pub assets_info: BTreeMap<String, AssetInfo>,
-    pub users_info: BTreeMap<String, UserInfo>,
-    pub balances: BTreeMap<String, BTreeMap<String, orderbook::model::Balance>>,
+    pub assets_info: HashMap<String, AssetInfo>,
+    pub users_info: HashMap<String, UserInfo>,
+    pub balances: HashMap<String, HashMap<String, orderbook::model::Balance>>,
     pub order_manager: OrderManagerAPI,
 }
 
