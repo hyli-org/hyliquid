@@ -967,6 +967,43 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -976,12 +1013,8 @@
                 "value": 0
               },
               {
-                "color": "yellow",
-                "value": 1000
-              },
-              {
                 "color": "red",
-                "value": 5000
+                "value": 80
               }
             ]
           },
@@ -991,27 +1024,23 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 6,
+        "w": 12,
         "x": 12,
         "y": 42
       },
-      "id": 13,
+      "id": 16,
       "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
         },
-        "showPercentChange": false,
-        "textMode": "value_and_name",
-        "wideLayout": true
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
       },
       "pluginVersion": "12.2.1",
       "targets": [
@@ -1020,81 +1049,13 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "rate(orderbook_lock_duration_seconds_count[15s])",
-          "legendFormat": "Lock acquisitions/sec",
+          "expr": "sum by(method) (rate(orderbook_method_duration_seconds_count[15s]))",
+          "legendFormat": "{{method}}",
           "refId": "A"
         }
       ],
-      "title": "Lock Contention Rate",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "prometheus",
-        "uid": "PBFA97CFB590B2093"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "yellow",
-                "value": 0.01
-              },
-              {
-                "color": "red",
-                "value": 0.1
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 6,
-        "x": 18,
-        "y": 42
-      },
-      "id": 14,
-      "options": {
-        "colorMode": "background",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "pluginVersion": "12.2.1",
-      "targets": [
-        {
-          "datasource": {
-            "type": "prometheus",
-            "uid": "PBFA97CFB590B2093"
-          },
-          "expr": "rate(orderbook_lock_duration_seconds_sum[15s]) / rate(orderbook_lock_duration_seconds_count[15s])",
-          "legendFormat": "Avg lock wait",
-          "refId": "A"
-        }
-      ],
-      "title": "Average Lock Wait Time",
-      "type": "stat"
+      "title": "Orderbook Method Call Rate",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1170,7 +1131,7 @@
           "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "hideZeros": false,
@@ -1185,8 +1146,10 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
+          "editorMode": "code",
           "expr": "histogram_quantile(0.95, sum by(method, le) (rate(orderbook_method_duration_seconds_bucket[15s])))",
           "legendFormat": "{{method}} (p95)",
+          "range": true,
           "refId": "A"
         },
         {
@@ -1277,7 +1240,7 @@
           "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "hideZeros": false,
@@ -1292,8 +1255,10 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.50, rate(orderbook_event_apply_duration_seconds_bucket[15s]))",
-          "legendFormat": "p50",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.50, sum by(operation, le) (rate(orderbook_event_apply_duration_seconds_bucket[15s])))",
+          "legendFormat": "p50 {{operation}}",
+          "range": true,
           "refId": "A"
         },
         {
@@ -1301,8 +1266,10 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, rate(orderbook_event_apply_duration_seconds_bucket[15s]))",
-          "legendFormat": "p95",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by(operation, le) (rate(orderbook_event_apply_duration_seconds_bucket[15s])))",
+          "legendFormat": "p95 {{operation}}",
+          "range": true,
           "refId": "B"
         },
         {
@@ -1310,8 +1277,10 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.99, rate(orderbook_event_apply_duration_seconds_bucket[15s]))",
-          "legendFormat": "p99",
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by(operation, le) (rate(orderbook_event_apply_duration_seconds_bucket[15s])))",
+          "legendFormat": "p99 {{operation}}",
+          "range": true,
           "refId": "C"
         }
       ],
@@ -1392,7 +1361,7 @@
           "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "hideZeros": false,
@@ -1437,10 +1406,10 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "histogram_avg(rate(orderbook_lock_duration_seconds_bucket[15s]))",
+          "expr": "histogram_quantile(0.75, rate(orderbook_lock_duration_seconds_bucket[15s]))",
           "hide": false,
           "instant": false,
-          "legendFormat": "__auto",
+          "legendFormat": "p75",
           "range": true,
           "refId": "D"
         }
@@ -1453,6 +1422,7 @@
         "type": "prometheus",
         "uid": "PBFA97CFB590B2093"
       },
+      "description": "Duration of event application to orderbook state",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -1492,6 +1462,8 @@
               "mode": "off"
             }
           },
+          "decimals": 0,
+          "fieldMinMax": false,
           "mappings": [],
           "thresholds": {
             "mode": "absolute",
@@ -1506,7 +1478,7 @@
               }
             ]
           },
-          "unit": "ops"
+          "unit": "none"
         },
         "overrides": []
       },
@@ -1516,13 +1488,13 @@
         "x": 12,
         "y": 58
       },
-      "id": 16,
+      "id": 19,
       "options": {
         "legend": {
           "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "tooltip": {
           "hideZeros": false,
@@ -1537,13 +1509,198 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by(method) (rate(orderbook_method_duration_seconds_count[15s]))",
-          "legendFormat": "{{method}}",
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "histogram_quantile(0.50, sum by(operation, le) (rate(orderbook_events_applied_count_bucket[15s])))",
+          "format": "time_series",
+          "instant": false,
+          "interval": "",
+          "legendFormat": "p50 {{operation}}",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.95, sum by(operation, le) (rate(orderbook_events_applied_count_bucket[15s])))",
+          "legendFormat": "p95 {{operation}}",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "histogram_quantile(0.99, sum by(operation, le) (rate(orderbook_events_applied_count_bucket[15s])))",
+          "legendFormat": "p99 {{operation}}",
+          "range": true,
+          "refId": "C"
+        }
+      ],
+      "title": "Event Applied Count",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 0.01
+              },
+              {
+                "color": "red",
+                "value": 0.1
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 66
+      },
+      "id": 14,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "avg (rate(orderbook_lock_duration_seconds_sum[15s])) / avg (rate(orderbook_lock_duration_seconds_count[15s]))",
+          "hide": false,
+          "instant": false,
+          "legendFormat": "Global average",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "exemplar": false,
+          "expr": "sum by(operation) (rate(orderbook_lock_duration_seconds_sum[15s])) / sum by(operation) (rate(orderbook_lock_duration_seconds_count[15s]))",
+          "format": "time_series",
+          "instant": false,
+          "interval": "",
+          "legendFormat": "{{operation}}",
+          "range": true,
           "refId": "A"
         }
       ],
-      "title": "Orderbook Method Call Rate",
-      "type": "timeseries"
+      "title": "Average Lock Wait Time",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "yellow",
+                "value": 1000
+              },
+              {
+                "color": "red",
+                "value": 5000
+              }
+            ]
+          },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 73
+      },
+      "id": 13,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "12.2.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(orderbook_lock_duration_seconds_count[15s])",
+          "legendFormat": "{{operation}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Lock Contention Rate",
+      "type": "stat"
     }
   ],
   "preload": false,
@@ -1578,5 +1735,5 @@
   "timezone": "browser",
   "title": "HTTP API Metrics - HyLiquid",
   "uid": "http-api-metrics-hylquid",
-  "version": 1
+  "version": 2
 }
