@@ -47,7 +47,7 @@ use tracing::debug;
 
 use crate::{
     database::DatabaseRequest, prover::OrderbookProverRequest,
-    services::asset_service::AssetService,
+    services::asset_service::AssetService, services::user_service::UserService,
 };
 use rand::RngCore;
 
@@ -64,6 +64,8 @@ pub struct AppMetrics {
     pub orderbook_method_duration: Histogram<f64>,
     /// Count of orderbook lock acquisitions
     pub orderbook_lock_duration: Histogram<f64>,
+    /// Count of events applied
+    pub events_applied_count: Histogram<u64>,
     /// Event processing duration
     pub event_apply_duration: Histogram<f64>,
 }
@@ -119,6 +121,15 @@ impl AppMetrics {
                 .with_unit("s")
                 .with_boundaries(lock_buckets)
                 .build(),
+            events_applied_count: meter
+                .u64_histogram("orderbook.events.applied.count")
+                .with_description("Count of events applied")
+                .with_unit("count")
+                .with_boundaries(vec![
+                    0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0,
+                    15.0, 16.0, 17.0, 18.0, 19.0, 20.0,
+                ])
+                .build(),
             event_apply_duration: meter
                 .f64_histogram("orderbook.event.apply.duration")
                 .with_description("Duration of applying events to orderbook in seconds")
@@ -156,15 +167,19 @@ impl AppMetrics {
     }
 
     #[inline]
-    fn record_lock(&self, duration: Duration) {
-        self.orderbook_lock_duration
-            .record(duration.as_secs_f64(), &[]);
+    fn record_lock(&self, duration: Duration, operation: &str) {
+        self.orderbook_lock_duration.record(
+            duration.as_secs_f64(),
+            &[KeyValue::new("operation", operation.to_string())],
+        );
     }
 
     #[inline]
-    fn record_event_apply(&self, duration: Duration) {
-        self.event_apply_duration
-            .record(duration.as_secs_f64(), &[]);
+    fn record_event_apply(&self, duration: Duration, operation: &str) {
+        self.event_apply_duration.record(
+            duration.as_secs_f64(),
+            &[KeyValue::new("operation", operation.to_string())],
+        );
     }
 
     #[inline]
@@ -172,6 +187,14 @@ impl AppMetrics {
         self.orderbook_method_duration.record(
             duration.as_secs_f64(),
             &[KeyValue::new("method", method.to_string())],
+        );
+    }
+
+    #[inline]
+    fn record_events_applied(&self, count: usize, operation: &str) {
+        self.events_applied_count.record(
+            count as u64,
+            &[KeyValue::new("operation", operation.to_string())],
         );
     }
 }
@@ -194,6 +217,7 @@ pub struct OrderbookModuleCtx {
     pub default_state: orderbook::model::ExecuteState,
     pub client: Arc<NodeApiHttpClient>,
     pub asset_service: Arc<RwLock<AssetService>>,
+    pub user_service: Arc<RwLock<UserService>>,
 }
 
 #[derive(Debug, Clone)]
@@ -250,6 +274,7 @@ impl Module for OrderbookModule {
             orderbook: orderbook.clone(),
             lane_id: ctx.lane_id.clone(),
             asset_service: ctx.asset_service.clone(),
+            user_service: ctx.user_service.clone(),
             client: ctx.client.clone(),
             action_id_counter: Arc::new(AtomicU32::new(0)),
             metrics: AppMetrics::new(),
@@ -437,6 +462,7 @@ struct RouterCtx {
     pub orderbook: Arc<Mutex<orderbook::model::ExecuteState>>,
     pub lane_id: LaneId,
     pub asset_service: Arc<RwLock<AssetService>>,
+    pub user_service: Arc<RwLock<UserService>>,
     pub client: Arc<NodeApiHttpClient>,
     pub action_id_counter: Arc<AtomicU32>,
     pub metrics: AppMetrics,
@@ -607,7 +633,7 @@ async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
     let result = async {
         let lock_start = Instant::now();
         let orderbook = ctx.orderbook.lock().await;
-        ctx.metrics.record_lock(lock_start.elapsed());
+        ctx.metrics.record_lock(lock_start.elapsed(), "get_state");
 
         let api_state = ExecuteStateAPI::from(&*orderbook);
         Ok(Json(api_state))
@@ -638,7 +664,7 @@ async fn get_nonce(
 
         let lock_start = Instant::now();
         let orderbook = ctx.orderbook.lock().await;
-        ctx.metrics.record_lock(lock_start.elapsed());
+        ctx.metrics.record_lock(lock_start.elapsed(), "get_nonce");
 
         let nonce = orderbook
             .get_user_info(&user)
@@ -735,7 +761,7 @@ async fn create_pair(
         let (user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
-            ctx.metrics.record_lock(lock_start.elapsed());
+            ctx.metrics.record_lock(lock_start.elapsed(), "create_pair");
 
             // Get user_info if exists, otherwise create a new one with random salt
             let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
@@ -755,7 +781,8 @@ async fn create_pair(
             orderbook
                 .apply_events(&user_info, &events)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-            ctx.metrics.record_event_apply(apply_start.elapsed());
+            ctx.metrics
+                .record_event_apply(apply_start.elapsed(), "create_pair");
 
             (user_info, events)
         };
@@ -808,7 +835,8 @@ async fn add_session_key(
         let (user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
-            ctx.metrics.record_lock(lock_start.elapsed());
+            ctx.metrics
+                .record_lock(lock_start.elapsed(), "add_session_key");
 
             debug!(
                 "Getting user info for user {user}. Orderbook users info: {:?}",
@@ -847,7 +875,8 @@ async fn add_session_key(
             orderbook
                 .apply_events(&user_info, &events)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-            ctx.metrics.record_event_apply(apply_start.elapsed());
+            ctx.metrics
+                .record_event_apply(apply_start.elapsed(), "add_session_key");
 
             (user_info, events)
         };
@@ -903,7 +932,7 @@ async fn deposit(
         let (user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
-            ctx.metrics.record_lock(lock_start.elapsed());
+            ctx.metrics.record_lock(lock_start.elapsed(), "deposit");
 
             // Get user_info if exists, otherwise create a new one with random salt
             let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
@@ -922,7 +951,8 @@ async fn deposit(
             orderbook
                 .apply_events(&user_info, &events)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-            ctx.metrics.record_event_apply(apply_start.elapsed());
+            ctx.metrics
+                .record_event_apply(apply_start.elapsed(), "deposit");
 
             (user_info, events)
         };
@@ -974,6 +1004,27 @@ async fn create_order(
 
             debug!("Creating order for user {user}. Order: {:?}", request);
 
+            let user_info = {
+                let user_service = ctx.user_service.read().await;
+                user_service.get_user_info(&user).await?
+            };
+
+            orderbook::utils::verify_user_signature_authorization(
+                &user_info,
+                &public_key,
+                &format!(
+                    "{}:{}:create_order:{}",
+                    user_info.user, user_info.nonce, request.order_id
+                ),
+                &signature,
+            )
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+                )
+            })?;
+
             let (
                 user_info,
                 events,
@@ -987,28 +1038,12 @@ async fn create_order(
                 let lock_duration = lock_start.elapsed();
                 let operation_start = Instant::now();
 
-                let user_info = orderbook.get_user_info(&user).map_err(|e| {
-                    AppError(
-                        StatusCode::BAD_REQUEST,
-                        anyhow::anyhow!("Could not find user {user}: {e}"),
-                    )
-                })?;
-
-                orderbook::utils::verify_user_signature_authorization(
-                    &user_info,
-                    &public_key,
-                    &format!(
-                        "{}:{}:create_order:{}",
-                        user_info.user, user_info.nonce, request.order_id
-                    ),
-                    &signature,
-                )
-                .map_err(|e| {
-                    AppError(
-                        StatusCode::BAD_REQUEST,
-                        anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-                    )
-                })?;
+                // let user_info = orderbook.get_user_info(&user).map_err(|e| {
+                //     AppError(
+                //         StatusCode::BAD_REQUEST,
+                //         anyhow::anyhow!("Could not find user {user}: {e}"),
+                //     )
+                // })?;
 
                 let method_start = Instant::now();
                 let events = log_warn!(
@@ -1040,11 +1075,14 @@ async fn create_order(
                     operation_duration,
                 )
             };
-            ctx.metrics.record_lock(lock_duration);
+            ctx.metrics.record_lock(lock_duration, "create_order");
             ctx.metrics.record_method(method_duration, "execute_order");
-            ctx.metrics.record_event_apply(apply_duration);
             ctx.metrics
-                .record_operation(operation_duration, "execute_order");
+                .record_event_apply(apply_duration, "create_order");
+            ctx.metrics
+                .record_operation(operation_duration, "create_order");
+            ctx.metrics
+                .record_events_applied(events.len(), "create_order");
 
             let action_private_input = &CreateOrderPrivateInput {
                 public_key,
@@ -1097,7 +1135,8 @@ async fn cancel_order(
         let (user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
-            ctx.metrics.record_lock(lock_start.elapsed());
+            ctx.metrics
+                .record_lock(lock_start.elapsed(), "cancel_order");
 
             let user_info = orderbook.get_user_info(&user).map_err(|e| {
                 AppError(
@@ -1146,7 +1185,8 @@ async fn cancel_order(
             orderbook
                 .apply_events(&user_info, &events)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-            ctx.metrics.record_event_apply(apply_start.elapsed());
+            ctx.metrics
+                .record_event_apply(apply_start.elapsed(), "cancel_order");
 
             (user_info, events)
         };
@@ -1206,7 +1246,7 @@ async fn withdraw(
         let (user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
-            ctx.metrics.record_lock(lock_start.elapsed());
+            ctx.metrics.record_lock(lock_start.elapsed(), "withdraw");
 
             let user_info = orderbook.get_user_info(&user).map_err(|e| {
                 AppError(
@@ -1255,7 +1295,8 @@ async fn withdraw(
             orderbook
                 .apply_events(&user_info, &events)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
-            ctx.metrics.record_event_apply(apply_start.elapsed());
+            ctx.metrics
+                .record_event_apply(apply_start.elapsed(), "withdraw");
 
             (user_info, events)
         };

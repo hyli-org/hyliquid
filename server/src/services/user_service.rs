@@ -48,6 +48,42 @@ impl UserService {
         Ok(user_id)
     }
 
+    pub async fn get_user_info(&self, user: &str) -> Result<UserInfo, AppError> {
+        let row = sqlx::query(
+            "
+            SELECT 
+                u.identity, 
+                u.salt, 
+                u.nonce, 
+                (SELECT session_keys 
+                 FROM user_session_keys 
+                 WHERE user_id = u.user_id 
+                 ORDER BY commit_id DESC 
+                 LIMIT 1) as session_keys
+            FROM users u
+            WHERE u.identity = $1
+            ",
+        )
+        .bind(user)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|_e| {
+            AppError(
+                StatusCode::NOT_FOUND,
+                anyhow::anyhow!("User not found: {user}"),
+            )
+        })?;
+
+        Ok(UserInfo {
+            user: row.get("identity"),
+            salt: row.get("salt"),
+            nonce: row.get::<i64, _>("nonce") as u32,
+            session_keys: row
+                .get::<Option<Vec<Vec<u8>>>, _>("session_keys")
+                .unwrap_or_default(),
+        })
+    }
+
     pub async fn get_balances(&self, user: &str) -> Result<UserBalances, AppError> {
         let mut tx = self.pool.begin().await?;
         let user_id = self.get_user_id(user, &mut tx).await?;

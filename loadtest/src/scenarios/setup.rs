@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use goose::prelude::*;
 use server::services::user_service::Balance;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::http_client::OrderbookClient;
 use crate::state::UserState;
@@ -213,12 +213,20 @@ async fn get_nonce_transaction(user: &mut GooseUser) -> TransactionResult {
     let user_state = user.get_session_data_mut::<UserState>().unwrap();
 
     let client = OrderbookClient::new(&config).unwrap();
+    let mut attempts = 0;
     let current_nonce = loop {
         match client.get_nonce(&user_state.auth).await {
             Ok(nonce) => break Ok(nonce),
             Err(e) => {
                 if e.to_string().contains("404") {
                     tokio::time::sleep(Duration::from_millis(100)).await;
+                    attempts += 1;
+                    if attempts % 100 == 0 {
+                        warn!(
+                            "User {} nonce not found, retrying... (attempts: {})",
+                            user_state.auth.identity, attempts
+                        );
+                    }
                     continue;
                 }
                 break Err(e);

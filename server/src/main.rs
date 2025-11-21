@@ -172,6 +172,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         lane_id: validator_lane_id.clone(),
         default_state: light_state.clone(),
         asset_service: asset_service.clone(),
+        user_service: user_service.clone(),
         client: node_client.clone(),
     });
 
