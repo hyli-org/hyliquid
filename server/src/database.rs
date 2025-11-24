@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -17,7 +18,7 @@ use orderbook::model::{OrderbookEvent, UserInfo};
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
-use tokio::sync::RwLock;
+use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, Instrument};
 
 use crate::services::user_service::UserService;
@@ -921,6 +922,8 @@ impl DatabaseService {
 pub struct DatabaseModule {
     ctx: Arc<DatabaseModuleCtx>,
     bus: DatabaseModuleBusClient,
+    worker_txs: Vec<mpsc::UnboundedSender<DatabaseRequest>>,
+    next_worker: std::sync::atomic::AtomicUsize,
 }
 
 impl Module for DatabaseModule {
@@ -928,7 +931,56 @@ impl Module for DatabaseModule {
 
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let bus = DatabaseModuleBusClient::new_from_bus(bus.new_handle()).await;
-        Ok(DatabaseModule { ctx, bus })
+        let mut worker_txs = Vec::new();
+        let mut worker_rxs = Vec::new();
+
+        // Create 15 worker channels
+        for _ in 0..15 {
+            let (tx, rx) = mpsc::unbounded_channel();
+            worker_txs.push(tx);
+            worker_rxs.push(rx);
+        }
+
+        // Spawn worker tasks
+        for (worker_id, mut rx) in worker_rxs.into_iter().enumerate() {
+            let ctx = ctx.clone();
+            tokio::spawn(async move {
+                while let Some(request) = rx.recv().await {
+                    let service = DatabaseService::new(ctx.clone());
+                    let result = match request {
+                        DatabaseRequest::WriteEvents {
+                            user,
+                            tx_hash,
+                            blob_tx,
+                            prover_request,
+                        } => {
+                            service
+                                .write_events(
+                                    user.clone(),
+                                    tx_hash.clone(),
+                                    blob_tx.clone(),
+                                    prover_request.clone(),
+                                )
+                                .await
+                        }
+                    };
+                    if let Err(e) = result {
+                        tracing::error!(
+                            "Worker {} failed to process database request: {}",
+                            worker_id,
+                            e
+                        );
+                    }
+                }
+            });
+        }
+
+        Ok(DatabaseModule {
+            ctx,
+            bus,
+            worker_txs,
+            next_worker: AtomicUsize::new(0),
+        })
     }
 
     async fn run(&mut self) -> Result<()> {
@@ -939,13 +991,25 @@ impl Module for DatabaseModule {
 
 impl DatabaseModule {
     pub async fn start(&mut self) -> Result<()> {
+        // Handle incoming messages and dispatch to workers
         module_handle_messages! {
             on_self self,
             command_response<DatabaseRequest, bool> cmd => {
-                        _ = log_error!(self.handle_database_request(cmd).await, "handle database request")?;
+                        _ = log_error!(self.dispatch_database_request(cmd).await, "dispatch database request")?;
                     Ok(true)
             }
         };
+        Ok(())
+    }
+
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    async fn dispatch_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
+        // Round-robin distribution to workers
+        let worker_index = self
+            .next_worker
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            % self.worker_txs.len();
+        self.worker_txs[worker_index].send(request.clone())?;
         Ok(())
     }
 
