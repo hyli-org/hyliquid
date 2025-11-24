@@ -564,6 +564,40 @@ impl ExecuteState {
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    pub fn get_user_names(
+        &self,
+        user_keys: &HashSet<H256>,
+    ) -> Result<HashMap<H256, String>, String> {
+        if user_keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut result = HashMap::with_capacity(user_keys.len());
+
+        for user_info in self.users_info.values() {
+            let key = user_info.get_key().0;
+
+            if user_keys.contains(&H256(key)) {
+                result.insert(H256(key), user_info.user.clone());
+            }
+        }
+
+        if result.len() != user_keys.len() {
+            let missing_keys: Vec<String> = user_keys
+                .iter()
+                .filter(|key| !result.contains_key(key))
+                .map(|key| hex::encode(key.as_slice()))
+                .collect();
+
+            return Err(format!(
+                "No user info found for key(s): {}",
+                missing_keys.join(", ")
+            ));
+        }
+
+        Ok(result)
+    }
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn increment_nonce_and_save_user_info(
         &mut self,
         user_info: &UserInfo,
@@ -681,11 +715,13 @@ impl ExecuteState {
         // Balance change aggregation system based on events
         let mut balance_changes: HashMap<Symbol, HashMap<H256, Balance>> = self.get_balances();
         let mut touched_accounts: HashMap<Symbol, HashSet<H256>> = HashMap::new();
+        let mut user_keys: HashSet<H256> = HashSet::new();
 
         // Helper function to record balance changes
         fn record_balance_change(
             balance_changes: &mut HashMap<Symbol, HashMap<H256, Balance>>,
             touched_accounts: &mut HashMap<Symbol, HashSet<H256>>,
+            user_keys: &mut HashSet<H256>,
             user_info_key: &H256,
             symbol: &Symbol,
             amount: i128,
@@ -710,6 +746,7 @@ impl ExecuteState {
                 .entry(symbol.clone())
                 .or_default()
                 .insert(*user_info_key);
+            user_keys.insert(*user_info_key);
             Ok(())
         }
 
@@ -717,13 +754,28 @@ impl ExecuteState {
         fn record_transfer(
             balance_changes: &mut HashMap<Symbol, HashMap<H256, Balance>>,
             touched_accounts: &mut HashMap<Symbol, HashSet<H256>>,
+            user_keys: &mut HashSet<H256>,
             from: &H256,
             to: &H256,
             symbol: &Symbol,
             amount: i128,
         ) -> Result<(), String> {
-            record_balance_change(balance_changes, touched_accounts, from, symbol, -amount)?;
-            record_balance_change(balance_changes, touched_accounts, to, symbol, amount)?;
+            record_balance_change(
+                balance_changes,
+                touched_accounts,
+                user_keys,
+                from,
+                symbol,
+                -amount,
+            )?;
+            record_balance_change(
+                balance_changes,
+                touched_accounts,
+                user_keys,
+                to,
+                symbol,
+                amount,
+            )?;
             Ok(())
         }
 
@@ -748,6 +800,7 @@ impl ExecuteState {
                     record_balance_change(
                         &mut balance_changes,
                         &mut touched_accounts,
+                        &mut user_keys,
                         user_info_key,
                         &symbol,
                         quantity,
@@ -777,6 +830,7 @@ impl ExecuteState {
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     executed_order_user_info,
                                     base_symbol,
@@ -786,6 +840,7 @@ impl ExecuteState {
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     quote_symbol,
                                     (executed_order.price.unwrap() * executed_order.quantity
@@ -801,6 +856,7 @@ impl ExecuteState {
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     executed_order_user_info,
                                     quote_symbol,
@@ -811,6 +867,7 @@ impl ExecuteState {
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     base_symbol,
                                     executed_order.quantity as i128,
@@ -844,6 +901,7 @@ impl ExecuteState {
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     updated_order_user_info,
                                     base_symbol,
@@ -853,6 +911,7 @@ impl ExecuteState {
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     quote_symbol,
                                     (updated_order.price.unwrap() * executed_quantity / base_scale)
@@ -868,6 +927,7 @@ impl ExecuteState {
                                 record_transfer(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     updated_order_user_info,
                                     quote_symbol,
@@ -878,6 +938,7 @@ impl ExecuteState {
                                 record_balance_change(
                                     &mut balance_changes,
                                     &mut touched_accounts,
+                                    &mut user_keys,
                                     user_info_key,
                                     base_symbol,
                                     *executed_quantity as i128,
@@ -891,6 +952,9 @@ impl ExecuteState {
                 _ => {} // Ignore other events for balance changes
             }
         }
+
+        // Load user_name from user_key
+        let user_names = self.get_user_names(&user_keys)?;
 
         // Updating balances
         for (symbol, user_keys) in touched_accounts {
@@ -906,11 +970,15 @@ impl ExecuteState {
                     )
                 })?;
 
-                let user_name = if user_key == *user_info_key {
-                    user_info.user.clone()
-                } else {
-                    self.get_user_info_from_key(&user_key)?.user.clone()
-                };
+                let user_name = user_names
+                    .get(&user_key)
+                    .ok_or_else(|| {
+                        format!(
+                            "User name for key {} not found",
+                            hex::encode(user_key.as_slice())
+                        )
+                    })?
+                    .clone();
 
                 events.push(OrderbookEvent::BalanceUpdated {
                     user: user_name,
