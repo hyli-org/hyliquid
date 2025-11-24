@@ -30,6 +30,10 @@ path = "src/bin/craft_reth_deposit.rs"
 name = "seed_reth_collateral"
 path = "src/bin/seed_reth_collateral.rs"
 
+[[bin]]
+name = "register_reth_collateral"
+path = "src/bin/register_reth_collateral.rs"
+
 [dependencies]
 orderbook = { workspace = true, features = ["sqlx"] }
 sdk = { workspace = true, features = ["tracing"] }
@@ -74,6 +78,7 @@ tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.18", features = ["env-filter"] }
 clap = "4.5.28"
 rustls = { version = "0.23.31", features = ["ring"] }
+eyre = "0.6.12"
 
 opentelemetry = "0.28"
 opentelemetry-prometheus = { version = "0.28.0" }

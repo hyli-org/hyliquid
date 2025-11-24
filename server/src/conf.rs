@@ -43,6 +43,7 @@ pub struct BridgeConfig {
     pub eth_rpc_ws_url: String,
     pub eth_rpc_http_url: String,
     pub eth_signer_private_key: String,
+    pub eth_chain_id: u64,
 }
 
 impl Conf {

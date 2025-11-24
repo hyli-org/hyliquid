@@ -1,13 +1,11 @@
 use std::{
     collections::HashMap,
-    str::FromStr,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc,
     },
 };
 
-use alloy::primitives::{keccak256, Address, B256};
 use anyhow::anyhow;
 use axum::{
     extract::{Extension, Path},
@@ -22,16 +20,11 @@ use client_sdk::{
 };
 use hex;
 use hyli_modules::modules::{BuildApiContextInner, Module};
-use k256::ecdsa::SigningKey;
 use orderbook::{
     model::WithdrawDestination,
     transaction::{OrderbookAction, PermissionnedOrderbookAction},
 };
-use reqwest::Client;
-use sdk::{
-    api::APIRegisterContract, Blob, BlobData, BlobTransaction, ContractName, Identity, ProgramId,
-    StateCommitment, StructuredBlobData, TxHash, Verifier,
-};
+use sdk::{Blob, BlobData, BlobTransaction, ContractName, Identity, StructuredBlobData, TxHash};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, RwLock};
@@ -43,10 +36,7 @@ use hyli_modules::{
     module_bus_client,
 };
 
-use crate::{
-    app::{OrderbookRequest, PendingDeposit, PendingWithdraw},
-    conf::BridgeConfig,
-};
+use crate::app::{OrderbookRequest, PendingDeposit, PendingWithdraw};
 
 /// Alternate bridge module built around an embedded Reth flow.
 ///
@@ -67,7 +57,6 @@ pub struct RethBridgeModuleCtx {
     pub orderbook_cn: ContractName,
     pub collateral_token_cn: ContractName,
     pub client: Arc<NodeApiHttpClient>,
-    pub bridge_config: BridgeConfig,
     // Placeholder for future embedded Reth config (datadir, chain id, mnemonic, etc.)
 }
 
@@ -154,7 +143,7 @@ impl Module for RethBridgeModule {
         let api = Router::new()
             .route("/reth_bridge/deposit", post(deposit))
             .route("/reth_bridge/withdraw", post(withdraw))
-            .route("/reth_bridge/status/:job_id", get(status))
+            .route("/reth_bridge/status/{job_id}", get(status))
             .layer(Extension(router_ctx))
             .layer(cors);
 
@@ -163,14 +152,6 @@ impl Module for RethBridgeModule {
                 guard.replace(router.merge(api));
             }
         }
-
-        ensure_collateral_registered(
-            ctx.client.as_ref(),
-            &ctx.collateral_token_cn,
-            &ctx.orderbook_cn,
-            &ctx.bridge_config,
-        )
-        .await?;
 
         Ok(Self {
             bus: RethBridgeBusClient::new_from_bus(bus.new_handle()).await,
@@ -424,114 +405,4 @@ impl RethBridgeModule {
 
         Ok(())
     }
-}
-
-fn encode_contract_name(contract_name: &ContractName) -> ContractName {
-    ContractName(contract_name.0.replace('/', "%2F"))
-}
-
-async fn ensure_collateral_registered(
-    client: &NodeApiHttpClient,
-    contract_name: &ContractName,
-    orderbook_cn: &ContractName,
-    bridge_config: &BridgeConfig,
-) -> anyhow::Result<()> {
-    let encoded_name = encode_contract_name(contract_name);
-    if let Ok(existing) = client.get_contract(encoded_name.clone()).await {
-        if existing.verifier.0 != "reth" {
-            anyhow::bail!(
-                "Hyli contract {} already registered with verifier {}",
-                contract_name.0,
-                existing.verifier.0
-            );
-        }
-        return Ok(());
-    }
-
-    let (state_root, block_hash) = fetch_block_metadata(
-        &bridge_config.eth_rpc_http_url,
-        bridge_config.eth_contract_deploy_block,
-    )
-    .await?;
-
-    let contract_address = Address::from_str(&bridge_config.eth_contract_address)
-        .map_err(|err| anyhow!("invalid collateral contract address: {err}"))?;
-    let program_id = derive_program_pubkey(orderbook_cn);
-    let mut constructor_metadata = Vec::new();
-    constructor_metadata.extend_from_slice(contract_address.as_slice());
-    constructor_metadata.extend_from_slice(block_hash.as_slice());
-    constructor_metadata.extend_from_slice(program_id.0.as_slice());
-    constructor_metadata.extend_from_slice(state_root.as_slice());
-
-    let payload = APIRegisterContract {
-        verifier: Verifier("reth".into()),
-        program_id,
-        state_commitment: StateCommitment(state_root.as_slice().to_vec()),
-        contract_name: encoded_name,
-        timeout_window: None,
-        constructor_metadata: Some(constructor_metadata),
-    };
-
-    client
-        .register_contract(payload)
-        .await
-        .map_err(|err| anyhow!("registering collateral contract on Hyli: {err}"))?;
-
-    Ok(())
-}
-
-async fn fetch_block_metadata(rpc_url: &str, block_number: u64) -> anyhow::Result<(B256, B256)> {
-    let payload = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": "eth_getBlockByNumber",
-        "params": [format!("0x{:x}", block_number), false],
-        "id": 1,
-    });
-
-    let resp = Client::new()
-        .post(rpc_url)
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|err| anyhow!("fetching block {block_number} from {rpc_url}: {err}"))?;
-    let value: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|err| anyhow!("parsing block response: {err}"))?;
-    let block = value
-        .get("result")
-        .ok_or_else(|| anyhow!("missing result in block response"))?;
-    let hash_str = block
-        .get("hash")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("missing block hash"))?;
-    let state_root_str = block
-        .get("stateRoot")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| anyhow!("missing stateRoot"))?;
-
-    let block_hash =
-        B256::from_str(hash_str).map_err(|err| anyhow!("invalid block hash {hash_str}: {err}"))?;
-    let state_root = B256::from_str(state_root_str)
-        .map_err(|err| anyhow!("invalid state root {state_root_str}: {err}"))?;
-
-    Ok((state_root, block_hash))
-}
-
-fn derive_program_pubkey(contract_name: &ContractName) -> ProgramId {
-    let mut seed: [u8; 32] = keccak256(contract_name.0.as_bytes()).into();
-    let signing_key = loop {
-        match SigningKey::from_slice(&seed) {
-            Ok(key) => break key,
-            Err(_) => {
-                seed = keccak256(seed).into();
-            }
-        }
-    };
-    let encoded = signing_key
-        .verifying_key()
-        .to_encoded_point(false)
-        .as_bytes()
-        .to_vec();
-    ProgramId(encoded)
 }

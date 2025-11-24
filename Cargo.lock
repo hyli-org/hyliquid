@@ -10769,11 +10769,17 @@ dependencies = [
 name = "reth_harness"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
  "alloy-genesis",
+ "alloy-primitives",
+ "alloy-signer",
+ "alloy-signer-local",
  "bincode",
  "bytes",
  "eyre",
  "futures-util",
+ "hex",
  "reth-db",
  "reth-ethereum",
  "reth-primitives",
@@ -11868,6 +11874,7 @@ dependencies = [
  "clap",
  "config",
  "contracts",
+ "eyre",
  "futures",
  "hex",
  "hyli-client-sdk",

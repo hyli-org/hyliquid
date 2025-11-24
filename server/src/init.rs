@@ -24,6 +24,7 @@ use crate::services::{
     asset_service::AssetService, book_service::BookService, user_service::UserService,
 };
 
+#[derive(Clone, Debug)]
 pub struct ContractInit {
     pub name: ContractName,
     pub program_id: ProgramId,

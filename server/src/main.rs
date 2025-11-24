@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use axum::Router;
 use clap::Parser;
 use client_sdk::helpers::sp1::SP1Prover;
@@ -12,8 +12,8 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
-use hyli_smt_token::account::AccountSMT;
 use prometheus::Registry;
+use reth_harness::{CollateralContractInit, RethHarness};
 use sdk::{api::NodeInfo, info};
 use server::{
     api::{ApiModule, ApiModuleCtx},
@@ -23,11 +23,16 @@ use server::{
     database::{DatabaseModule, DatabaseModuleCtx},
     prover::{OrderbookProverCtx, OrderbookProverModule},
     reth_bridge::{RethBridgeModule, RethBridgeModuleCtx},
+    reth_utils::{
+        derive_address_from_private_key, persist_collateral_metadata,
+        register_reth_collateral_contract, register_reth_collateral_with_data,
+        CollateralRegistrationData, COLLATERAL_METADATA_FILE,
+    },
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
 use std::sync::Arc;
-use tracing::error;
+use tracing::{error, warn};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -38,8 +43,8 @@ pub struct Args {
     #[arg(long, default_value = "orderbook")]
     pub orderbook_cn: String,
 
-    #[arg(long, default_value = "oranj")] // This should be USDC contract or so
-    pub collateral_token_cn: String,
+    #[arg(long)]
+    pub collateral_token_cn: Option<String>,
 
     #[arg(long, default_value = "false")]
     pub clean_db: bool,
@@ -131,30 +136,48 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;
 
+    let collateral_token_cn = args
+        .collateral_token_cn
+        .clone()
+        .unwrap_or_else(|| format!("reth-collateral-{}", args.orderbook_cn));
+
     let orderbook_contract = server::init::ContractInit {
         name: args.orderbook_cn.clone().into(),
         program_id: ORDERBOOK_VK.into(),
         initial_state: full_state.commit(),
         verifier: sdk::verifiers::SP1_4.into(),
     };
-    let collateral_root = *AccountSMT::default().0.root();
-    let collateral_state = sdk::StateCommitment(Into::<[u8; 32]>::into(collateral_root).to_vec());
-    let collateral_contract = server::init::ContractInit {
-        name: args.collateral_token_cn.clone().into(),
-        program_id: sdk::ProgramId(
-            hyli_smt_token::client::tx_executor_handler::metadata::PROGRAM_ID.to_vec(),
-        ),
-        initial_state: collateral_state,
-        verifier: sdk::verifiers::RISC0_3.into(),
-    };
-    let contracts = vec![orderbook_contract, collateral_contract];
+    let contracts = vec![orderbook_contract];
 
-    match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {
-        Ok(_) => {}
-        Err(e) => {
+    if let Err(e) =
+        server::init::init_node(node_client.clone(), contracts.clone(), !args.no_check).await
+    {
+        if args.reth_bridge {
+            // retry without collateral and let the reth bridge register via API later
+            if server::init::init_node(
+                node_client.clone(),
+                vec![contracts[0].clone()],
+                !args.no_check,
+            )
+            .await
+            .is_err()
+            {
+                error!("Error initializing node: {:?}", e);
+                return Ok(());
+            }
+        } else {
             error!("Error initializing node: {:?}", e);
             return Ok(());
         }
+    }
+    if !args.reth_bridge {
+        register_reth_collateral_contract(
+            node_client.as_ref(),
+            &collateral_token_cn.clone().into(),
+            &args.orderbook_cn.clone().into(),
+            &config.bridge,
+        )
+        .await?;
     }
     let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
 
@@ -211,15 +234,77 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
         info!("Building Proving Key");
         let prover = SP1Prover::new(pk).await;
+        let reth_harness = if args.reth_bridge {
+            let mut prefunded = Vec::new();
+            if let Ok(address) =
+                derive_address_from_private_key(&config.bridge.eth_signer_private_key)
+            {
+                prefunded.push(address);
+            }
+            let collateral_init = CollateralContractInit::test_erc20(
+                &config.bridge.eth_signer_private_key,
+            )
+            .map_err(|err| anyhow!("preparing collateral contract for reth harness: {err}"))?;
+            Some(Arc::new(tokio::sync::Mutex::new(
+                RethHarness::new_with_collateral(
+                    config.bridge.eth_chain_id,
+                    prefunded,
+                    collateral_init,
+                )
+                .await
+                .map_err(|err| anyhow!("initializing reth harness for prover: {err}"))?,
+            )))
+        } else {
+            None
+        };
+
+        if args.reth_bridge {
+            let harness_metadata = if let Some(harness) = &reth_harness {
+                let guard = harness.lock().await;
+                guard.collateral_metadata()
+            } else {
+                None
+            };
+
+            if let Some(meta) = harness_metadata {
+                let registration = CollateralRegistrationData {
+                    contract_address: meta.contract_address,
+                    block_hash: meta.block_hash,
+                    state_root: meta.state_root,
+                };
+                register_reth_collateral_with_data(
+                    node_client.as_ref(),
+                    &collateral_token_cn.clone().into(),
+                    &args.orderbook_cn.clone().into(),
+                    registration.clone(),
+                )
+                .await?;
+                let metadata_path = config.data_directory.join(COLLATERAL_METADATA_FILE);
+                if let Err(err) = persist_collateral_metadata(&metadata_path, &registration) {
+                    warn!(error = %err, "failed to persist reth collateral metadata");
+                }
+            } else {
+                register_reth_collateral_contract(
+                    node_client.as_ref(),
+                    &collateral_token_cn.clone().into(),
+                    &args.orderbook_cn.clone().into(),
+                    &config.bridge,
+                )
+                .await?;
+            }
+        }
 
         let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
             api: api_ctx.clone(),
             node_client: node_client.clone(),
             orderbook_cn: args.orderbook_cn.clone().into(),
+            collateral_token_cn: args.reth_bridge.then(|| collateral_token_cn.clone().into()),
             prover: Arc::new(prover),
             lane_id: validator_lane_id,
             initial_orderbook: full_state,
             pool: pool.clone(),
+            reth_harness,
+            reth_chain_id: config.bridge.eth_chain_id,
         });
 
         handler
@@ -241,16 +326,15 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
                 .build_module::<RethBridgeModule>(Arc::new(RethBridgeModuleCtx {
                     api: api_ctx.clone(),
                     orderbook_cn: args.orderbook_cn.clone().into(),
-                    collateral_token_cn: args.collateral_token_cn.clone().into(),
+                    collateral_token_cn: collateral_token_cn.clone().into(),
                     client: node_client.clone(),
-                    bridge_config: config.bridge.clone(),
                 }))
                 .await?;
         } else {
             handler
                 .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
                     api: api_ctx.clone(),
-                    collateral_token_cn: args.collateral_token_cn.clone().into(),
+                    collateral_token_cn: collateral_token_cn.clone().into(),
                     bridge_config: config.bridge.clone(),
                     pool: pool.clone(),
                     asset_service: asset_service.clone(),

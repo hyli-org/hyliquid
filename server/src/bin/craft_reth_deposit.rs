@@ -43,6 +43,10 @@ struct Args {
         help = "Max priority fee per gas (wei)"
     )]
     max_priority_fee_per_gas: u64,
+    #[arg(long, help = "Override the chain id used for signing")]
+    chain_id: Option<u64>,
+    #[arg(long, help = "Override the nonce used for signing")]
+    nonce: Option<u64>,
 }
 
 #[tokio::main]
@@ -70,23 +74,22 @@ async fn main() -> Result<()> {
 
     let provider = ProviderBuilder::new().connect_http(rpc_url.parse().context("parsing RPC URL")?);
 
-    let chain_id: u64 = provider
-        .get_chain_id()
-        .await
-        .context("fetching chain id")?
-        .try_into()
-        .map_err(|err| anyhow!("chain id too large: {err}"))?;
+    let chain_id = args.chain_id.unwrap_or(conf.bridge.eth_chain_id);
 
     let signer = PrivateKeySigner::from_str(args.private_key.trim_start_matches("0x"))
         .context("parsing deposit private key")?;
     let from = signer.address();
 
-    let nonce: u64 = provider
-        .get_transaction_count(from)
-        .await
-        .context("fetching nonce")?
-        .try_into()
-        .map_err(|err| anyhow!("nonce too large: {err}"))?;
+    let nonce: u64 = if let Some(explicit) = args.nonce {
+        explicit
+    } else {
+        provider
+            .get_transaction_count(from)
+            .await
+            .context("fetching nonce")?
+            .try_into()
+            .map_err(|err| anyhow!("nonce too large: {err}"))?
+    };
 
     let calldata = transferCall { to: vault, amount }.abi_encode();
 

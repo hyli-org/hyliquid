@@ -1,10 +1,16 @@
 use std::sync::Arc;
 
+use alloy::{
+    consensus::{TxEip4844Variant, TxEnvelope},
+    eips::eip2718::Decodable2718,
+    primitives::{Address, TxKind},
+};
 use anyhow::{anyhow, bail, Result};
 use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
 use client_sdk::{
     contract_indexer::AppError, helpers::ClientSdkProver, rest_client::NodeApiClient,
 };
+use eyre::Result as EyreResult;
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_bus_client, module_handle_messages,
@@ -17,17 +23,18 @@ use orderbook::{
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::Method;
+use reth_harness::{RethHarness, SubmittedTx};
 use sdk::{
-    BlobIndex, BlockHeight, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction,
-    TxHash,
+    BlobIndex, BlockHeight, Calldata, ContractName, Hashed, IndexedBlobs, LaneId, NodeStateBlock,
+    NodeStateEvent, ProofData, ProofTransaction, StructuredBlob, TransactionData, TxHash, Verifier,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use tokio::sync::Mutex;
 use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
-use crate::app::ExecuteStateAPI;
+use crate::{app::ExecuteStateAPI, reth_utils::derive_program_pubkey};
 
 #[derive(Debug, Clone)]
 pub struct PendingTx {
@@ -57,10 +64,13 @@ pub struct OrderbookProverCtx {
     pub api: Arc<BuildApiContextInner>,
     pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
     pub orderbook_cn: ContractName,
+    pub collateral_token_cn: Option<ContractName>,
     pub lane_id: LaneId,
     pub node_client: Arc<dyn NodeApiClient + Send + Sync>,
     pub initial_orderbook: FullState,
     pub pool: PgPool,
+    pub reth_harness: Option<Arc<tokio::sync::Mutex<RethHarness>>>,
+    pub reth_chain_id: u64,
 }
 
 #[derive(Clone)]
@@ -206,6 +216,151 @@ impl OrderbookProverModule {
         Ok(pending_tx)
     }
 
+    async fn process_reth_blobs(&self, block: &NodeStateBlock) -> Result<()> {
+        let Some(collateral) = &self.ctx.collateral_token_cn else {
+            return Ok(());
+        };
+        let Some(reth) = &self.ctx.reth_harness else {
+            return Ok(());
+        };
+
+        let program_id = derive_program_pubkey(&self.ctx.orderbook_cn);
+        let verifier = Verifier("reth".into());
+
+        for (_, tx) in block.parsed_block.txs.iter() {
+            let TransactionData::Blob(blob_tx) = &tx.transaction_data else {
+                continue;
+            };
+
+            let tx_hash = tx.hashed();
+            let tx_ctx = block.parsed_block.build_tx_ctx(&tx_hash).ok();
+
+            for (blob_index, blob) in blob_tx.blobs.iter().enumerate() {
+                if &blob.contract_name != collateral {
+                    continue;
+                }
+
+                let Ok(structured) = StructuredBlob::<Vec<u8>>::try_from(blob.clone()) else {
+                    warn!(
+                        contract = %blob.contract_name,
+                        block_height = %block.signed_block.height().0,
+                        "could not decode structured blob for collateral contract"
+                    );
+                    continue;
+                };
+
+                let raw_tx = structured.data.parameters;
+                let envelope = match decode_tx_envelope(&raw_tx) {
+                    Ok(env) => env,
+                    Err(err) => {
+                        error!(
+                            contract = %blob.contract_name,
+                            block_height = %block.signed_block.height().0,
+                            "failed to decode collateral blob tx: {err:#}"
+                        );
+                        continue;
+                    }
+                };
+                if let Err(err) =
+                    validate_chain_id(&envelope, self.ctx.reth_chain_id, &blob.contract_name)
+                {
+                    error!(
+                        contract = %blob.contract_name,
+                        block_height = %block.signed_block.height().0,
+                        "reth collateral blob rejected: {err:#}"
+                    );
+                    continue;
+                }
+                if let Ok(meta) = extract_tx_metadata(&envelope) {
+                    let to_human = meta
+                        .to
+                        .map(|addr| format!("{addr:#x}"))
+                        .unwrap_or_else(|| "contract creation".into());
+                    info!(
+                        contract = %blob.contract_name,
+                        block_height = %block.signed_block.height().0,
+                        nonce = meta.nonce,
+                        to = to_human,
+                        tx_type = meta.tx_type,
+                        "reth collateral blob metadata"
+                    );
+                } else {
+                    warn!(
+                        contract = %blob.contract_name,
+                        block_height = %block.signed_block.height().0,
+                        "could not extract tx metadata for collateral blob"
+                    );
+                }
+                info!(
+                    contract = %blob.contract_name,
+                    block_height = %block.signed_block.height().0,
+                    blob_len = raw_tx.len(),
+                    "processing reth collateral blob"
+                );
+                let harness = reth.clone();
+                let node_client = self.ctx.node_client.clone();
+                let contract_name = collateral.clone();
+                let program_id = program_id.clone();
+                let verifier = verifier.clone();
+                let identity = blob_tx.identity.clone();
+                let blobs = blob_tx.blobs.clone();
+                let tx_blob_count = blobs.len();
+                let blob_index = BlobIndex(blob_index);
+                let calldata = Calldata {
+                    tx_hash: tx_hash.clone(),
+                    identity,
+                    blobs: IndexedBlobs::from(blobs),
+                    tx_blob_count,
+                    index: blob_index,
+                    tx_ctx: tx_ctx.clone(),
+                    private_input: Vec::new(),
+                };
+                let calldata_bytes = match borsh::to_vec(&calldata) {
+                    Ok(bytes) => bytes,
+                    Err(err) => {
+                        error!(
+                            contract = %blob.contract_name,
+                            block_height = %block.signed_block.height().0,
+                            "failed to serialize calldata for collateral blob: {err:#}"
+                        );
+                        continue;
+                    }
+                };
+
+                tokio::spawn(async move {
+                    match submit_raw_tx_with_restart(harness, raw_tx).await {
+                        Ok(submission) => {
+                            let proof_payload = build_reth_proof_payload(
+                                calldata_bytes,
+                                submission.stateless_input,
+                                submission.evm_summary,
+                            );
+                            let proof_tx = ProofTransaction {
+                                contract_name,
+                                program_id,
+                                verifier,
+                                proof: ProofData(proof_payload),
+                            };
+
+                            if let Err(err) = node_client.send_tx_proof(proof_tx).await {
+                                error!("failed to send reth proof: {err:#}");
+                            } else {
+                                info!("submitted reth collateral proof to Hyli");
+                            }
+                        }
+                        Err(err) => {
+                            error!(
+                                "reth harness failed to build witness for collateral blob: {err:#}"
+                            );
+                        }
+                    }
+                });
+            }
+        }
+
+        Ok(())
+    }
+
     async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
         match event {
             NodeStateEvent::NewBlock(block) => {
@@ -224,6 +379,8 @@ impl OrderbookProverModule {
                     info!("Prover received block: {}", block.signed_block.height());
                 }
                 tracing::trace!("New block received: {:?}", block);
+
+                self.process_reth_blobs(&block).await?;
 
                 // Use signed_block to efficiently filter transactions by lane_id
                 let tx_hashes: Vec<TxHash> = block
@@ -374,4 +531,164 @@ async fn get_state(State(ctx): State<Ctx>) -> Result<impl IntoResponse, AppError
 
     let api_state = ExecuteStateAPI::from(&orderbook_full_state.state);
     Ok(Json(api_state))
+}
+
+fn validate_chain_id(
+    envelope: &TxEnvelope,
+    expected_chain_id: u64,
+    contract_name: &ContractName,
+) -> Result<()> {
+    match envelope_chain_id(envelope) {
+        Ok(Some(chain_id)) => {
+            if chain_id != expected_chain_id {
+                bail!(
+                    "raw tx for contract {} targets chain id {chain_id}, expected {expected_chain_id}",
+                    contract_name.0
+                );
+            } else {
+                info!(
+                    contract = %contract_name.0,
+                    chain_id,
+                    "reth collateral blob chain id validated"
+                );
+            }
+        }
+        Ok(None) => {
+            bail!(
+                "raw tx for contract {} is missing a replay-protecting chain id",
+                contract_name.0
+            );
+        }
+        Err(err) => {
+            bail!(
+                "failed to decode raw tx for contract {}: {err:#}",
+                contract_name.0
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn decode_tx_envelope(raw_tx: &[u8]) -> Result<TxEnvelope> {
+    let mut slice = raw_tx;
+    TxEnvelope::decode_2718(&mut slice).map_err(|err| anyhow!("decoding tx envelope: {err}"))
+}
+
+fn envelope_chain_id(envelope: &TxEnvelope) -> Result<Option<u64>> {
+    let chain_id = match envelope {
+        TxEnvelope::Legacy(tx) => tx.tx().chain_id,
+        TxEnvelope::Eip2930(tx) => Some(tx.tx().chain_id),
+        TxEnvelope::Eip1559(tx) => Some(tx.tx().chain_id),
+        TxEnvelope::Eip4844(tx) => Some(match tx.tx() {
+            TxEip4844Variant::TxEip4844(inner) => inner.chain_id,
+            TxEip4844Variant::TxEip4844WithSidecar(inner) => inner.tx.chain_id,
+        }),
+        TxEnvelope::Eip7702(tx) => Some(tx.tx().chain_id),
+    };
+    Ok(chain_id)
+}
+
+fn extract_tx_metadata(envelope: &TxEnvelope) -> Result<TxMetadata> {
+    let (nonce, to, tx_type) = match envelope {
+        TxEnvelope::Legacy(tx) => (tx.tx().nonce, txkind_to_address(tx.tx().to), "legacy"),
+        TxEnvelope::Eip2930(tx) => (tx.tx().nonce, txkind_to_address(tx.tx().to), "eip2930"),
+        TxEnvelope::Eip1559(tx) => (tx.tx().nonce, txkind_to_address(tx.tx().to), "eip1559"),
+        TxEnvelope::Eip4844(tx) => match tx.tx() {
+            TxEip4844Variant::TxEip4844(inner) => (inner.nonce, Some(inner.to), "eip4844"),
+            TxEip4844Variant::TxEip4844WithSidecar(inner) => {
+                (inner.tx.nonce, Some(inner.tx.to), "eip4844")
+            }
+        },
+        TxEnvelope::Eip7702(tx) => (tx.tx().nonce, Some(tx.tx().to), "eip7702"),
+    };
+
+    Ok(TxMetadata { nonce, to, tx_type })
+}
+
+struct TxMetadata {
+    nonce: u64,
+    to: Option<Address>,
+    tx_type: &'static str,
+}
+
+fn txkind_to_address(kind: TxKind) -> Option<Address> {
+    match kind {
+        TxKind::Call(addr) => Some(addr),
+        TxKind::Create => None,
+    }
+}
+
+async fn submit_raw_tx_with_restart(
+    harness: Arc<Mutex<RethHarness>>,
+    raw_tx: Vec<u8>,
+) -> Result<SubmittedTx, anyhow::Error> {
+    match submit_raw_tx_once(harness.clone(), raw_tx.clone()).await {
+        Ok(res) => Ok(res),
+        Err(err) => {
+            let err_msg = err.to_string();
+            if should_restart_harness(&err_msg) {
+                warn!(
+                    error = %err_msg,
+                    "reth devnode became unhealthy; restarting harness"
+                );
+                restart_reth_harness(harness.clone())
+                    .await
+                    .map_err(|restart_err| anyhow!(restart_err))?;
+                submit_raw_tx_once(harness, raw_tx)
+                    .await
+                    .map_err(|err| anyhow!(err))
+            } else {
+                Err(anyhow!(err))
+            }
+        }
+    }
+}
+
+async fn submit_raw_tx_once(
+    harness: Arc<Mutex<RethHarness>>,
+    raw_tx: Vec<u8>,
+) -> EyreResult<SubmittedTx> {
+    let mut guard = harness.lock().await;
+    guard.submit_raw_tx(raw_tx).await
+}
+
+async fn restart_reth_harness(harness: Arc<Mutex<RethHarness>>) -> EyreResult<()> {
+    let (chain_id, prefunded, collateral) = {
+        let guard = harness.lock().await;
+        (
+            guard.chain_id(),
+            guard.prefunded_accounts().to_vec(),
+            guard.collateral_config(),
+        )
+    };
+    let new_harness = if let Some(config) = collateral {
+        RethHarness::new_with_collateral(chain_id, prefunded, config).await?
+    } else {
+        RethHarness::new(chain_id, prefunded).await?
+    };
+    let mut guard = harness.lock().await;
+    *guard = new_harness;
+    Ok(())
+}
+
+fn should_restart_harness(error_msg: &str) -> bool {
+    error_msg.contains("Batch transaction sender channel closed")
+        || error_msg.contains("canonical state stream closed unexpectedly")
+}
+
+fn build_reth_proof_payload(
+    calldata_bytes: Vec<u8>,
+    stateless_bytes: Vec<u8>,
+    evm_bytes: Vec<u8>,
+) -> Vec<u8> {
+    let mut proof_payload =
+        Vec::with_capacity(12 + calldata_bytes.len() + stateless_bytes.len() + evm_bytes.len());
+    proof_payload.extend_from_slice(&(calldata_bytes.len() as u32).to_le_bytes());
+    proof_payload.extend_from_slice(&calldata_bytes);
+    proof_payload.extend_from_slice(&(stateless_bytes.len() as u32).to_le_bytes());
+    proof_payload.extend_from_slice(&stateless_bytes);
+    proof_payload.extend_from_slice(&(evm_bytes.len() as u32).to_le_bytes());
+    proof_payload.extend_from_slice(&evm_bytes);
+    proof_payload
 }

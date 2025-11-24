@@ -108,10 +108,13 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         api: api_ctx.clone(),
         node_client: node_client.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
+        collateral_token_cn: None,
         prover: Arc::new(prover),
         lane_id: validator_lane_id,
         initial_orderbook: full_state,
         pool: pool.clone(),
+        reth_harness: None,
+        reth_chain_id: config.bridge.eth_chain_id,
     });
 
     let mut handler = ModulesHandler::new(&bus).await;
