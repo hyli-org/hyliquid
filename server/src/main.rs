@@ -19,7 +19,7 @@ use server::{
     app::{OrderbookModule, OrderbookModuleCtx},
     bridge::{BridgeModule, BridgeModuleCtx},
     conf::Conf,
-    database::DatabaseModuleCtx,
+    database::{DatabaseModule, DatabaseModuleCtx},
     prover::{OrderbookProverCtx, OrderbookProverModule},
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
@@ -231,9 +231,9 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
             .await?;
     }
 
-    // handler
-    //     .build_module::<DatabaseModule>(database_ctx.clone())
-    //     .await?;
+    handler
+        .build_module::<DatabaseModule>(database_ctx.clone())
+        .await?;
 
     handler
         .build_module::<ApiModule>(api_module_ctx.clone())

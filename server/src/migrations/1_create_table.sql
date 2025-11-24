@@ -64,9 +64,8 @@ CREATE TYPE user_status AS ENUM (
 );
 
 CREATE TABLE users (
-    user_id bigserial PRIMARY KEY,
     commit_id bigint NOT NULL,
-    identity TEXT UNIQUE NOT NULL,
+    identity TEXT PRIMARY KEY,
     salt BYTEA NOT NULL,
     nonce bigint NOT NULL DEFAULT 0,
     status user_status NOT NULL DEFAULT 'active',
@@ -75,20 +74,20 @@ CREATE TABLE users (
 
 -- Append only, latest line (max commit_id) has all session keys for a user
 CREATE TABLE user_session_keys (
-    user_id bigint NOT NULL,
+    identity TEXT NOT NULL,
     commit_id bigint NOT NULL,
     session_keys BYTEA[] NOT NULL,
-    PRIMARY KEY (user_id, session_keys)
+    PRIMARY KEY (identity, session_keys)
 );
 
 CREATE TABLE balances (
-    user_id bigint NOT NULL,
+    identity TEXT NOT NULL,
     asset_id bigint NOT NULL,
     total bigint NOT NULL DEFAULT 0, -- quantity owned
     reserved bigint NOT NULL DEFAULT 0, -- quantity reserved for open orders
     available bigint GENERATED ALWAYS AS (total - reserved) STORED,
     updated_at timestamptz NOT NULL DEFAULT now(),
-    PRIMARY KEY (user_id, asset_id),
+    PRIMARY KEY (identity, asset_id),
     CHECK (total >= 0 AND reserved >= 0 AND total >= reserved)
 )
 WITH (
@@ -126,7 +125,7 @@ CREATE TYPE order_status AS ENUM (
 
 CREATE TABLE orders (
     order_id text NOT NULL PRIMARY KEY,
-    user_id bigint NOT NULL,
+    identity TEXT NOT NULL,
     instrument_id bigint NOT NULL,
     side order_side NOT NULL,
     type order_type NOT NULL,
@@ -150,7 +149,7 @@ CREATE TABLE order_events (
     commit_id bigint NOT NULL,
     event_id bigserial PRIMARY KEY,
     order_id text NOT NULL,
-    user_id bigint NOT NULL,
+    identity TEXT NOT NULL,
     instrument_id bigint NOT NULL,
     side order_side NOT NULL,
     type order_type NOT NULL,
@@ -168,8 +167,8 @@ CREATE TABLE trade_events (
     trade_id bigserial PRIMARY KEY,
     maker_order_id text NOT NULL,
     taker_order_id text NOT NULL,
-    maker_user_id bigint NOT NULL,
-    taker_user_id bigint NOT NULL,
+    maker_identity TEXT NOT NULL,
+    taker_identity TEXT NOT NULL,
     instrument_id bigint NOT NULL,
     price bigint NOT NULL,
     qty bigint NOT NULL,
@@ -189,7 +188,7 @@ CREATE TYPE balance_event_kind AS ENUM (
 CREATE TABLE balance_events (
   commit_id   bigint NOT NULL,
   event_id    bigserial PRIMARY KEY,
-  user_id     bigint NOT NULL,
+  identity TEXT NOT NULL,
   asset_id    bigint NOT NULL,
   total       bigint NOT NULL DEFAULT 0,
   reserved    bigint NOT NULL DEFAULT 0,
@@ -208,7 +207,7 @@ CREATE TABLE prover_requests (
 
 CREATE TABLE user_events_nonces (
   commit_id bigint NOT NULL,
-  user_id bigint NOT NULL,
+  identity TEXT NOT NULL,
   nonce bigint NOT NULL DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now()
 );

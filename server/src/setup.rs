@@ -20,7 +20,7 @@ pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/migrations"
 async fn connect_database(config: &Conf) -> Result<PgPool> {
     info!("Connecting to database: {}", config.database_url);
     let pool = PgPoolOptions::new()
-        .max_connections(20)
+        .max_connections(150)
         .acquire_timeout(std::time::Duration::from_secs(1))
         .connect(&config.database_url)
         .await

@@ -19,7 +19,7 @@ services:
       postgres
       -c shared_preload_libraries=pg_stat_statements
       -c pg_stat_statements.track=all
-      -c max_connections=50
+      -c max_connections=200
       -c shared_buffers=4GB
       -c effective_cache_size=12GB
       -c maintenance_work_mem=1GB

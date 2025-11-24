@@ -23,14 +23,13 @@ export interface Instrument {
 }
 
 export interface User {
-  user_id: number;
   identity: string;
   status: UserStatus;
   created_at: Date;
 }
 
 export interface Balance {
-  user_id: number;
+  identity: string;
   asset_id: number;
   total: number;
   reserved: number;
@@ -41,7 +40,7 @@ export interface Balance {
 export interface Order {
   order_id: string;
   instrument_id: number;
-  user_id: number;
+  identity: string;
   side: OrderSide;
   type: OrderType;
   price: number | null;

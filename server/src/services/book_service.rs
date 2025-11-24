@@ -96,7 +96,7 @@ impl BookService {
         JOIN instruments i       ON o.instrument_id = i.instrument_id
         JOIN assets base_asset   ON i.base_asset_id = base_asset.asset_id
         JOIN assets quote_asset  ON i.quote_asset_id = quote_asset.asset_id
-        JOIN users u             ON o.user_id = u.user_id
+        JOIN users u             ON o.identity = u.identity
         WHERE o.status IN ('open','partially_filled')
         ORDER BY o.event_time asc
         ",

@@ -173,7 +173,7 @@ export class DatabaseCallbacks {
     // Get new events since last_seen_trade_id
     this.pool
       .query(
-        "SELECT trade_id, instrument_id, price, qty, trade_time, side, maker_user_id, taker_user_id FROM trade_events WHERE trade_id > $1",
+        "SELECT trade_id, instrument_id, price, qty, trade_time, side, maker_identity, taker_identity FROM trade_events WHERE trade_id > $1",
         [this.last_seen_trade_id]
       )
       .then(async (result) => {
@@ -183,14 +183,14 @@ export class DatabaseCallbacks {
         }
         this.last_seen_trade_id = result.rows[result.rows.length - 1].trade_id;
 
-        // trades sorted by user_id
+        // trades sorted by identity
         const payloads: Map<string, Trade[]> = new Map();
         for (const row of result.rows) {
           const maker_user = await this.userService.getUserById(
-            row.maker_user_id
+            row.maker_identity
           );
           const taker_user = await this.userService.getUserById(
-            row.taker_user_id
+            row.taker_identity
           );
 
           if (maker_user && !payloads.has(maker_user.identity)) {
@@ -210,17 +210,17 @@ export class DatabaseCallbacks {
           if (maker_user) {
             payloads.get(maker_user.identity)!.push(payload);
           }
-          if (taker_user && taker_user.user_id !== maker_user?.user_id) {
+          if (taker_user && taker_user.identity !== maker_user?.identity) {
             payloads.get(taker_user.identity)!.push(payload);
           }
         }
 
-        for (const [user_id, payload] of payloads) {
+        for (const [identity, payload] of payloads) {
           const callbacks = Array.from(
             this.tradeManager.getAllCallbacks().entries()
           )
             .filter(([key, _]) => {
-              return key.split(":")[1] === user_id;
+              return key.split(":")[1] === identity;
             })
             .map(([_, callback]) => callback);
           for (const callback of callbacks) {
@@ -236,7 +236,7 @@ export class DatabaseCallbacks {
   private handleNewOrders() {
     this.pool
       .query(
-        "SELECT event_id, order_id, instrument_id, user_id, side, type, price, qty, qty_filled, status, event_time FROM order_events WHERE event_id > $1",
+        "SELECT event_id, order_id, instrument_id, identity, side, type, price, qty, qty_filled, status, event_time FROM order_events WHERE event_id > $1",
         [this.last_seen_order_id]
       )
       .then(async (result) => {
@@ -248,7 +248,7 @@ export class DatabaseCallbacks {
         this.last_seen_order_id = result.rows[result.rows.length - 1].event_id;
         const payloads: Map<string, Order[]> = new Map();
         for (const row of result.rows) {
-          const user = await this.userService.getUserById(row.user_id);
+          const user = await this.userService.getUserById(row.identity);
           if (user) {
             if (!payloads.has(user.identity)) {
               payloads.set(user.identity, []);
@@ -256,7 +256,7 @@ export class DatabaseCallbacks {
             const payload: Order = {
               order_id: row.order_id,
               instrument_id: parseInt(row.instrument_id, 10),
-              user_id: parseInt(row.user_id, 10),
+              identity: row.identity,
               side: row.side,
               type: row.type,
               price: parseInt(row.price, 10),
@@ -271,12 +271,12 @@ export class DatabaseCallbacks {
             payloads.get(user.identity)!.push(payload);
           }
         }
-        for (const [user_id, payload] of payloads) {
+        for (const [identity, payload] of payloads) {
           const callbacks = Array.from(
             this.orderManager.getAllCallbacks().entries()
           )
             .filter(([key, _]) => {
-              return key.split(":")[1] === user_id;
+              return key.split(":")[1] === identity;
             })
             .map(([_, callback]) => callback);
           for (const callback of callbacks) {

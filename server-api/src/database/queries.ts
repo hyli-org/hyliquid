@@ -51,25 +51,15 @@ export class DatabaseQueries {
     return result.rows;
   }
 
-  async getUserByIdentity(
-    identity: string
-  ): Promise<{ user_id: number } | null> {
+  async getUserById(identity: string): Promise<User> {
     const result = await this.pool.query(
-      "SELECT user_id FROM users WHERE identity = $1",
+      "SELECT * FROM users WHERE identity = $1",
       [identity]
     );
     return result.rows[0] || null;
   }
 
-  async getUserById(userId: number): Promise<User> {
-    const result = await this.pool.query(
-      "SELECT * FROM users WHERE user_id = $1",
-      [userId]
-    );
-    return result.rows[0] || null;
-  }
-
-  async getUserBalances(userId: number): Promise<
+  async getUserBalances(identity: string): Promise<
     Array<{
       symbol: string;
       total: number;
@@ -86,9 +76,9 @@ export class DatabaseQueries {
       JOIN 
         assets ON balances.asset_id = assets.asset_id
       WHERE 
-        balances.user_id = $1
+        balances.identity = $1
     `,
-      [userId]
+      [identity]
     );
     return result.rows.map((row) => ({
       symbol: row.symbol,
@@ -98,16 +88,16 @@ export class DatabaseQueries {
     }));
   }
 
-  async getUserNonce(userId: number): Promise<number> {
+  async getUserNonce(identity: string): Promise<number> {
     const result = await this.pool.query(
-      "SELECT nonce FROM users WHERE user_id = $1",
-      [userId]
+      "SELECT nonce FROM users WHERE identity = $1",
+      [identity]
     );
     return parseInt(result.rows[0].nonce, 10);
   }
 
   async getUserOrders(
-    userId: number,
+    identity: string,
     page: number = 1,
     limit: number = 20,
     sortBy: string = "created_at",
@@ -130,21 +120,21 @@ export class DatabaseQueries {
 
     // Get total count
     const countResult = await this.pool.query(
-      "SELECT COUNT(*) FROM orders WHERE user_id = $1",
-      [userId]
+      "SELECT COUNT(*) FROM orders WHERE identity = $1",
+      [identity]
     );
     const total = parseInt(countResult.rows[0].count, 10);
 
     // Get paginated results
     const result = await this.pool.query(
-      `SELECT * FROM orders WHERE user_id = $1 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $2 OFFSET $3`,
-      [userId, limit, offset]
+      `SELECT * FROM orders WHERE identity = $1 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $2 OFFSET $3`,
+      [identity, limit, offset]
     );
 
     const orders = result.rows.map((row) => ({
       order_id: row.order_id,
       instrument_id: parseInt(row.instrument_id, 10),
-      user_id: parseInt(row.user_id, 10),
+      identity: row.identity,
       side: row.side,
       type: row.type,
       price: parseInt(row.price, 10),
@@ -160,7 +150,7 @@ export class DatabaseQueries {
   }
 
   async getUserOrdersByPair(
-    userId: number,
+    identity: string,
     instrumentId: number,
     page: number = 1,
     limit: number = 20,
@@ -184,21 +174,21 @@ export class DatabaseQueries {
 
     // Get total count
     const countResult = await this.pool.query(
-      "SELECT COUNT(*) FROM orders WHERE user_id = $1 AND instrument_id = $2",
-      [userId, instrumentId]
+      "SELECT COUNT(*) FROM orders WHERE identity = $1 AND instrument_id = $2",
+      [identity, instrumentId]
     );
     const total = parseInt(countResult.rows[0].count, 10);
 
     // Get paginated results
     const result = await this.pool.query(
-      `SELECT * FROM orders WHERE user_id = $1 AND instrument_id = $2 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $3 OFFSET $4`,
-      [userId, instrumentId, limit, offset]
+      `SELECT * FROM orders WHERE identity = $1 AND instrument_id = $2 ORDER BY ${safeSortBy} ${safeSortOrder} LIMIT $3 OFFSET $4`,
+      [identity, instrumentId, limit, offset]
     );
 
     const orders = result.rows.map((row) => ({
       order_id: row.order_id,
       instrument_id: parseInt(row.instrument_id, 10),
-      user_id: parseInt(row.user_id, 10),
+      identity: row.identity,
       side: row.side,
       type: row.type,
       price: parseInt(row.price, 10),
@@ -274,14 +264,14 @@ export class DatabaseQueries {
     return parseInt(result.rows?.[0]?.sum, 10) || 0;
   }
 
-  async getUserTrades(userId: number): Promise<Array<Trade>> {
+  async getUserTrades(identity: string): Promise<Array<Trade>> {
     const result = await this.pool.query(
       `
       SELECT trade_id, instrument_id, price, qty, trade_time, side FROM trade_events WHERE 
-      taker_user_id = $1
-      OR maker_user_id = $1;
+      taker_identity = $1
+      OR maker_identity = $1;
     `,
-      [userId]
+      [identity]
     );
     return result.rows.map((row) => ({
       trade_id: parseInt(row.trade_id, 10),
@@ -294,17 +284,17 @@ export class DatabaseQueries {
   }
 
   async getUserTradesByPair(
-    userId: number,
+    identity: string,
     instrumentId: number
   ): Promise<Array<Trade>> {
     const result = await this.pool.query(
       `
       SELECT trade_id, instrument_id, price, qty, trade_time, side FROM trade_events WHERE 
-      taker_user_id = $1
-      OR maker_user_id = $1
+      taker_identity = $1
+      OR maker_identity = $1
       AND instrument_id = $2;
     `,
-      [userId, instrumentId]
+      [identity, instrumentId]
     );
     return result.rows.map((row) => ({
       trade_id: parseInt(row.trade_id, 10),

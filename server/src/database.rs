@@ -352,42 +352,34 @@ impl DatabaseService {
                     let asset = asset_service
                         .get_asset(&symbol)
                         .ok_or_else(|| anyhow::anyhow!("Asset not found: {symbol}"))?;
-                    let user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(&user, &mut tx)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
 
                     debug!(
                         "Updating balance for user {} with asset {:?} and amount {}",
                         user, asset, amount
                     );
 
-                    log_error!(
-                        sqlx::query(
-                            "
-                        INSERT INTO balances (user_id, asset_id, total)
-                        VALUES ($1, $2, $3)
-                        ON CONFLICT (user_id, asset_id) DO UPDATE SET
-                            total = $3
-                        ",
-                        )
-                        .bind(user_id)
-                        .bind(asset.asset_id)
-                        .bind(amount as i64)
-                        .execute(&mut *tx)
-                        .instrument(tracing::info_span!("update_balance"))
-                        .await,
-                        "Failed to update balance"
-                    )?;
+                    // log_error!(
+                    //     sqlx::query(
+                    //         "
+                    //     INSERT INTO balances (identity, asset_id, total)
+                    //     VALUES ($1, $2, $3)
+                    //     ON CONFLICT (identity, asset_id) DO UPDATE SET
+                    //         total = $3
+                    //     ",
+                    //     )
+                    //     .bind(user.clone())
+                    //     .bind(asset.asset_id)
+                    //     .bind(amount as i64)
+                    //     .execute(&mut *tx)
+                    //     .instrument(tracing::info_span!("update_balance"))
+                    //     .await,
+                    //     "Failed to update balance"
+                    // )?;
 
                     log_error!(
-                        sqlx::query("INSERT INTO balance_events (commit_id, user_id, asset_id, total, kind) VALUES ($1, $2, $3, $4, 'transfer')")
+                        sqlx::query("INSERT INTO balance_events (commit_id, identity, asset_id, total, kind) VALUES ($1, $2, $3, $4, 'transfer')")
                         .bind(commit_id)
-                        .bind(user_id)
+                        .bind(user)
                         .bind(asset.asset_id)
                         .bind(amount as i64)
                         .execute(&mut *tx)
@@ -421,23 +413,14 @@ impl DatabaseService {
                         user, instrument, order
                     );
 
-                    let events_user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(user, &mut tx)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
-
                     symbol_book_updated.insert(symbol);
 
                     log_error!(
-                        sqlx::query("INSERT INTO orders (order_id, instrument_id, user_id, side, type, price, qty)
+                        sqlx::query("INSERT INTO orders (order_id, instrument_id, identity, side, type, price, qty)
                                      VALUES ($1, $2, $3, $4, $5, $6, $7)")
                         .bind(order.order_id.clone())
                         .bind(instrument.instrument_id)
-                        .bind(events_user_id)
+                        .bind(user.clone())
                         .bind(order.order_side.clone())
                         .bind(order.order_type.clone())
                         .bind(order.price.map(|p| p as i64))
@@ -450,12 +433,12 @@ impl DatabaseService {
 
                     log_error!(
                         sqlx::query(
-                            "INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
+                            "INSERT INTO order_events (commit_id, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status)
                             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 0, 'open')"
                         )
                         .bind(commit_id)
-                        .bind(order.order_id.clone())
-                        .bind(events_user_id)
+                        .bind(order.order_id)
+                        .bind(user)
                         .bind(instrument.instrument_id)
                         .bind(order.order_side)
                         .bind(order.order_type)
@@ -503,8 +486,8 @@ impl DatabaseService {
                     log_error!(
                         sqlx::query(
                             "
-                            INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
-                            VALUES select $1, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status from orders where order_id = $2"
+                            INSERT INTO order_events (commit_id, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status)
+                            VALUES select $1, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status from orders where order_id = $2"
                         )
                         .bind(commit_id)
                         .bind(order_id)
@@ -544,21 +527,12 @@ impl DatabaseService {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
 
-                    let events_user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(user, &mut tx)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
-
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
                     log_error!(
                         sqlx::query(
                             "
-                        UPDATE orders SET status = 'filled', qty_filled = qty WHERE order_id = $1 returning user_id
+                        UPDATE orders SET status = 'filled', qty_filled = qty WHERE order_id = $1
                         ",
                         )
                         .bind(order_id.clone())
@@ -572,8 +546,8 @@ impl DatabaseService {
                     log_error!(
                         sqlx::query(
                             "
-                            INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
-                            SELECT $1, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
+                            INSERT INTO order_events (commit_id, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status)
+                            SELECT $1, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
                             "
                         )
                         .bind(commit_id)
@@ -591,8 +565,8 @@ impl DatabaseService {
                             WITH maker_order AS (
                                 SELECT * FROM orders WHERE order_id = $2
                             )
-                            INSERT INTO trade_events (commit_id, maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
-                            SELECT $1, $2, $3, $4, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.user_id, $5
+                            INSERT INTO trade_events (commit_id, maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_identity, taker_identity)
+                            SELECT $1, $2, $3, $4, maker_order.price, maker_order.qty, get_other_side(maker_order.side), maker_order.identity, $5
                             FROM maker_order
                             "
                         )
@@ -600,7 +574,7 @@ impl DatabaseService {
                         .bind(order_id)
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
-                        .bind(events_user_id)
+                        .bind(user)
                         .execute(&mut *tx)
                         .instrument(tracing::info_span!("insert_trade_event"))
                         .await,
@@ -639,21 +613,12 @@ impl DatabaseService {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
 
-                    let events_user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(user, &mut tx)
-                        .await
-                        .map_err(|e| anyhow::anyhow!("{}", e.1))?;
-
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
 
                     log_error!(
                         sqlx::query(
                             "
-                        UPDATE orders SET status = 'partially_filled', qty_filled = qty - $1 WHERE order_id = $2 returning user_id
+                        UPDATE orders SET status = 'partially_filled', qty_filled = qty - $1 WHERE order_id = $2
                         ",
                         )
                         .bind(remaining_quantity as i64)
@@ -667,8 +632,8 @@ impl DatabaseService {
                     log_error!(
                         sqlx::query(
                             "
-                            INSERT INTO order_events (commit_id, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status)
-                            SELECT $1, order_id, user_id, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
+                            INSERT INTO order_events (commit_id, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status)
+                            SELECT $1, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
                             "
                         )
                         .bind(commit_id)
@@ -686,8 +651,8 @@ impl DatabaseService {
                             WITH maker_order AS (
                                 SELECT * FROM orders WHERE order_id = $2
                             )
-                            INSERT INTO trade_events (commit_id, maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_user_id, taker_user_id)
-                            SELECT $1, $2, $3, $4, maker_order.price, $5, get_other_side(maker_order.side), maker_order.user_id, $6
+                            INSERT INTO trade_events (commit_id, maker_order_id, taker_order_id, instrument_id, price, qty, side, maker_identity, taker_identity)
+                            SELECT $1, $2, $3, $4, maker_order.price, $5, get_other_side(maker_order.side), maker_order.identity, $6
                             FROM maker_order
                             "
                         )
@@ -696,7 +661,7 @@ impl DatabaseService {
                         .bind(taker_order_id)
                         .bind(instrument.instrument_id)
                         .bind(executed_quantity as i64)
-                        .bind(events_user_id)
+                        .bind(user)
                         .execute(&mut *tx)
                         .instrument(tracing::info_span!("insert_trade_event"))
                         .await,
@@ -720,44 +685,34 @@ impl DatabaseService {
                     session_keys,
                 } => {
                     let user_ops_start = Instant::now();
-                    let fetched_user_id = self
-                        .ctx
-                        .user_service
-                        .read()
-                        .await
-                        .get_user_id(&user, &mut tx)
-                        .await;
+                    let fetched_user_id = self.ctx.user_service.read().await.get_nonce(&user).await;
 
-                    let user_id = if let Err(e) = fetched_user_id {
+                    if let Err(e) = fetched_user_id {
                         if e.0 == StatusCode::NOT_FOUND {
                             info!("Creating user {}", user);
-                            let row = log_error!(
+                            log_error!(
                                 sqlx::query(
-                                    "INSERT INTO users (commit_id, identity, salt, nonce) VALUES ($1, $2, $3, $4) ON CONFLICT (identity) DO UPDATE SET nonce = EXCLUDED.nonce RETURNING user_id"
+                                    "INSERT INTO users (commit_id, identity, salt, nonce) VALUES ($1, $2, $3, $4) ON CONFLICT (identity) DO UPDATE SET nonce = EXCLUDED.nonce"
                                 )
                                 .bind(commit_id)
                                 .bind(user.clone())
                                 .bind(salt)
                                 .bind(nonce as i64)
-                                .fetch_one(&mut *tx)
+                                .execute(&mut *tx)
                                 .await,
                                 "Failed to create user"
                             )?;
-                            row.get::<i64, _>("user_id")
                         } else {
                             return Err(anyhow::anyhow!("{}", e.1));
                         }
-                    } else {
-                        let user_id = fetched_user_id.map_err(|e| anyhow::anyhow!("{}", e.1))?;
-                        user_id
-                    };
+                    }
 
                     debug!("Setting user session keys for user {}", user);
 
                     log_error!(
-                        sqlx::query("INSERT INTO user_session_keys (commit_id, user_id, session_keys) VALUES ($1, $2, $3)")
+                        sqlx::query("INSERT INTO user_session_keys (commit_id, identity, session_keys) VALUES ($1, $2, $3)")
                         .bind(commit_id)
-                        .bind(user_id)
+                        .bind(user)
                         .bind(session_keys)
                         .execute(&mut *tx)
                         .instrument(tracing::info_span!("create_user_session_key"))
@@ -778,22 +733,20 @@ impl DatabaseService {
                 OrderbookEvent::NonceIncremented { user, nonce } => {
                     debug!("Incrementing nonce for user {}", user);
                     let user_ops_start = Instant::now();
-                    let row = log_error!(
-                        sqlx::query(
-                            "UPDATE users SET nonce = $1 WHERE identity = $2 RETURNING user_id"
-                        )
-                        .bind(nonce as i64)
-                        .bind(user)
-                        .fetch_one(&mut *tx)
-                        .instrument(tracing::info_span!("increment_nonce"))
-                        .await,
+                    log_error!(
+                        sqlx::query("UPDATE users SET nonce = $1 WHERE identity = $2")
+                            .bind(nonce as i64)
+                            .bind(user.clone())
+                            .execute(&mut *tx)
+                            .instrument(tracing::info_span!("increment_nonce"))
+                            .await,
                         "Failed to increment nonce"
                     )?;
-                    let user_id = row.get::<i64, _>("user_id");
+
                     log_error!(
-                        sqlx::query("INSERT INTO user_events_nonces (commit_id, user_id, nonce) VALUES ($1, $2, $3)")
+                        sqlx::query("INSERT INTO user_events_nonces (commit_id, identity, nonce) VALUES ($1, $2, $3)")
                             .bind(commit_id)
-                            .bind(user_id)
+                            .bind(user)
                             .bind(nonce as i64)
                             .execute(&mut *tx)
                             .instrument(tracing::info_span!("insert_user_event_nonce"))
@@ -866,57 +819,57 @@ impl DatabaseService {
             &[],
         );
 
-        if trigger_notify_trades {
-            debug!("Notifying trades");
-            let notify_start = Instant::now();
-            log_error!(
-                sqlx::query("select pg_notify('trades', 'trades')")
-                    .execute(&mut *tx)
-                    .instrument(tracing::info_span!("notify_trades"))
-                    .await,
-                "Failed to notify 'trades'"
-            )?;
-            self.ctx.metrics.record(
-                &self.ctx.metrics.notification_duration,
-                notify_start,
-                &[KeyValue::new("channel", "trades")],
-            );
-        }
+        // if trigger_notify_trades {
+        //     debug!("Notifying trades");
+        //     let notify_start = Instant::now();
+        //     log_error!(
+        //         sqlx::query("select pg_notify('trades', 'trades')")
+        //             .execute(&mut *tx)
+        //             .instrument(tracing::info_span!("notify_trades"))
+        //             .await,
+        //         "Failed to notify 'trades'"
+        //     )?;
+        //     self.ctx.metrics.record(
+        //         &self.ctx.metrics.notification_duration,
+        //         notify_start,
+        //         &[KeyValue::new("channel", "trades")],
+        //     );
+        // }
 
-        if trigger_notify_orders {
-            debug!("Notifying orders");
-            let notify_start = Instant::now();
-            log_error!(
-                sqlx::query("select pg_notify('orders', 'orders')")
-                    .execute(&mut *tx)
-                    .instrument(tracing::info_span!("notify_orders"))
-                    .await,
-                "Failed to notify 'orders'"
-            )?;
-            self.ctx.metrics.record(
-                &self.ctx.metrics.notification_duration,
-                notify_start,
-                &[KeyValue::new("channel", "orders")],
-            );
-        }
+        // if trigger_notify_orders {
+        //     debug!("Notifying orders");
+        //     let notify_start = Instant::now();
+        //     log_error!(
+        //         sqlx::query("select pg_notify('orders', 'orders')")
+        //             .execute(&mut *tx)
+        //             .instrument(tracing::info_span!("notify_orders"))
+        //             .await,
+        //         "Failed to notify 'orders'"
+        //     )?;
+        //     self.ctx.metrics.record(
+        //         &self.ctx.metrics.notification_duration,
+        //         notify_start,
+        //         &[KeyValue::new("channel", "orders")],
+        //     );
+        // }
 
-        for symbol in symbol_book_updated {
-            debug!("Notifying book for symbol {}", symbol);
-            let notify_start = Instant::now();
-            log_error!(
-                sqlx::query("select pg_notify('book', $1)")
-                    .bind(symbol)
-                    .execute(&mut *tx)
-                    .instrument(tracing::info_span!("notify_book"))
-                    .await,
-                "Failed to notify 'book'"
-            )?;
-            self.ctx.metrics.record(
-                &self.ctx.metrics.notification_duration,
-                notify_start,
-                &[KeyValue::new("channel", "book")],
-            );
-        }
+        // for symbol in symbol_book_updated {
+        //     debug!("Notifying book for symbol {}", symbol);
+        //     let notify_start = Instant::now();
+        //     log_error!(
+        //         sqlx::query("select pg_notify('book', $1)")
+        //             .bind(symbol)
+        //             .execute(&mut *tx)
+        //             .instrument(tracing::info_span!("notify_book"))
+        //             .await,
+        //         "Failed to notify 'book'"
+        //     )?;
+        //     self.ctx.metrics.record(
+        //         &self.ctx.metrics.notification_duration,
+        //         notify_start,
+        //         &[KeyValue::new("channel", "book")],
+        //     );
+        // }
 
         let commit_start = Instant::now();
         log_error!(
@@ -965,57 +918,57 @@ impl DatabaseService {
     }
 }
 
-// pub struct DatabaseModule {
-//     ctx: Arc<DatabaseModuleCtx>,
-//     bus: DatabaseModuleBusClient,
-// }
+pub struct DatabaseModule {
+    ctx: Arc<DatabaseModuleCtx>,
+    bus: DatabaseModuleBusClient,
+}
 
-// impl Module for DatabaseModule {
-//     type Context = Arc<DatabaseModuleCtx>;
+impl Module for DatabaseModule {
+    type Context = Arc<DatabaseModuleCtx>;
 
-//     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
-//         let bus = DatabaseModuleBusClient::new_from_bus(bus.new_handle()).await;
-//         Ok(DatabaseModule { ctx, bus })
-//     }
+    async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
+        let bus = DatabaseModuleBusClient::new_from_bus(bus.new_handle()).await;
+        Ok(DatabaseModule { ctx, bus })
+    }
 
-//     async fn run(&mut self) -> Result<()> {
-//         self.start().await?;
-//         Ok(())
-//     }
-// }
+    async fn run(&mut self) -> Result<()> {
+        self.start().await?;
+        Ok(())
+    }
+}
 
-// impl DatabaseModule {
-//     pub async fn start(&mut self) -> Result<()> {
-//         module_handle_messages! {
-//             on_self self,
-//             command_response<DatabaseRequest, bool> cmd => {
-//                         _ = log_error!(self.handle_database_request(cmd).await, "handle database request")?;
-//                     Ok(true)
-//             }
-//         };
-//         Ok(())
-//     }
+impl DatabaseModule {
+    pub async fn start(&mut self) -> Result<()> {
+        module_handle_messages! {
+            on_self self,
+            command_response<DatabaseRequest, bool> cmd => {
+                        _ = log_error!(self.handle_database_request(cmd).await, "handle database request")?;
+                    Ok(true)
+            }
+        };
+        Ok(())
+    }
 
-//     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-//     async fn handle_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
-//         let service = DatabaseService::new(self.ctx.clone());
-//         match request {
-//             DatabaseRequest::WriteEvents {
-//                 user,
-//                 tx_hash,
-//                 blob_tx,
-//                 prover_request,
-//             } => {
-//                 service
-//                     .write_events(
-//                         user.clone(),
-//                         tx_hash.clone(),
-//                         blob_tx.clone(),
-//                         prover_request.clone(),
-//                     )
-//                     .await?;
-//             }
-//         }
-//         Ok(())
-//     }
-// }
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    async fn handle_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
+        let service = DatabaseService::new(self.ctx.clone());
+        match request {
+            DatabaseRequest::WriteEvents {
+                user,
+                tx_hash,
+                blob_tx,
+                prover_request,
+            } => {
+                service
+                    .write_events(
+                        user.clone(),
+                        tx_hash.clone(),
+                        blob_tx.clone(),
+                        prover_request.clone(),
+                    )
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+}

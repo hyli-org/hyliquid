@@ -28,28 +28,15 @@ export class UserService {
   /**
    * Get user by identity
    */
-  async getUserById(userId: number): Promise<User | null> {
-    return this.queries.getUserById(userId);
-  }
-
-  /**
-   * Get user ID by identity, with fallback to database lookup
-   */
-  async getUserId(user: string): Promise<number> {
-    const userRecord = await this.queries.getUserByIdentity(user);
-    if (!userRecord) {
-      throw new CustomError(`User not found: ${user}`, 404);
-    }
-
-    return userRecord.user_id;
+  async getUserById(identity: string): Promise<User | null> {
+    return this.queries.getUserById(identity);
   }
 
   /**
    * Get user balances
    */
   async getBalances(user: string): Promise<UserBalances> {
-    const userId = await this.getUserId(user);
-    const balanceRows = await this.queries.getUserBalances(userId);
+    const balanceRows = await this.queries.getUserBalances(user);
 
     const balances: BalanceResponse[] = balanceRows.map((row) => ({
       symbol: row.symbol,
@@ -65,8 +52,7 @@ export class UserService {
    * Get user nonce
    */
   async getNonce(user: string): Promise<number> {
-    const userId = await this.getUserId(user);
-    const nonce = await this.queries.getUserNonce(userId);
+    const nonce = await this.queries.getUserNonce(user);
     return nonce;
   }
 
@@ -77,14 +63,13 @@ export class UserService {
     user: string,
     pagination: PaginationQuery = {}
   ): Promise<PaginatedUserOrders> {
-    const userId = await this.getUserId(user);
     const page = pagination.page || 1;
     const limit = Math.min(pagination.limit || 20, 100); // Cap at 100 items per page
     const sortBy = pagination.sort_by || "created_at";
     const sortOrder = pagination.sort_order || "desc";
 
     const { orders, total } = await this.queries.getUserOrders(
-      userId,
+      user,
       page,
       limit,
       sortBy,
@@ -114,14 +99,13 @@ export class UserService {
     instrumentId: number,
     pagination: PaginationQuery = {}
   ): Promise<PaginatedUserOrders> {
-    const userId = await this.getUserId(user);
     const page = pagination.page || 1;
     const limit = Math.min(pagination.limit || 20, 100); // Cap at 100 items per page
     const sortBy = pagination.sort_by || "created_at";
     const sortOrder = pagination.sort_order || "desc";
 
     const { orders, total } = await this.queries.getUserOrdersByPair(
-      userId,
+      user,
       instrumentId,
       page,
       limit,
@@ -148,8 +132,7 @@ export class UserService {
    * Get user trades
    */
   async getTrades(user: string): Promise<UserTrades> {
-    const userId = await this.getUserId(user);
-    const trades = await this.queries.getUserTrades(userId);
+    const trades = await this.queries.getUserTrades(user);
     return { trades };
   }
 
@@ -157,11 +140,13 @@ export class UserService {
    * Get user trades by pair
    */
   async getTradesByPair(
-    user: string,
+    identity: string,
     instrumentId: number
   ): Promise<UserTrades> {
-    const userId = await this.getUserId(user);
-    const trades = await this.queries.getUserTradesByPair(userId, instrumentId);
+    const trades = await this.queries.getUserTradesByPair(
+      identity,
+      instrumentId
+    );
     return { trades };
   }
 
@@ -169,6 +154,6 @@ export class UserService {
    * Check if a user exists
    */
   hasUser(user: string): boolean {
-    return this.queries.getUserByIdentity(user) !== null;
+    return this.queries.getUserById(user) !== null;
   }
 }

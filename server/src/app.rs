@@ -20,7 +20,10 @@ use borsh::BorshSerialize;
 use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
 use hex;
 use hyli_modules::{
-    bus::{command_response::Query, BusClientSender, BusMessage, SharedMessageBus},
+    bus::{
+        command_response::{CmdRespClient, Query},
+        BusClientSender, BusMessage, SharedMessageBus,
+    },
     log_error, log_warn, module_bus_client, module_handle_messages,
     modules::{BuildApiContextInner, Module},
 };
@@ -271,7 +274,7 @@ pub struct OrderbookModuleBusClient {
 module_bus_client! {
 #[derive(Debug)]
 struct RouterBusClient {
-    // sender(Query<DatabaseRequest, bool>),
+    sender(Query<DatabaseRequest, bool>),
     // No receiver here ! Because RouterBus is cloned
 }
 }
@@ -1394,18 +1397,43 @@ async fn process_orderbook_action<T: BorshSerialize>(
 
     // Write events directly using database service
     debug!("Writing events to database for tx {tx_hash:#}");
+    let mut bus = ctx.bus.clone();
     let lock_start = Instant::now();
-    let database_service = ctx.database_service.read().await;
-    ctx.metrics
-        .record_database_service_lock(lock_start.elapsed());
-    match database_service
-        .write_events(user_info, tx_hash.clone(), blob_tx, prover_request)
+    match bus
+        .shutdown_aware_request::<()>(DatabaseRequest::WriteEvents {
+            user: user_info.clone(),
+            tx_hash: tx_hash.clone(),
+            blob_tx,
+            prover_request,
+        })
         .await
     {
-        Ok(_) => Ok(Json(tx_hash)),
-        Err(e) => Err(AppError(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            anyhow::anyhow!("Failed to write events: {e}"),
-        )),
+        Ok(_) => {
+            ctx.metrics
+                .record_database_service_lock(lock_start.elapsed());
+            Ok(Json(tx_hash))
+        }
+        Err(e) => {
+            ctx.metrics
+                .record_database_service_lock(lock_start.elapsed());
+            Err(AppError(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                anyhow::anyhow!("Failed to write events: {e}"),
+            ))
+        }
     }
+    // let lock_start = Instant::now();
+    // let database_service = ctx.database_service.read().await;
+    // ctx.metrics
+    //     .record_database_service_lock(lock_start.elapsed());
+    // match database_service
+    //     .write_events(user_info, tx_hash.clone(), blob_tx, prover_request)
+    //     .await
+    // {
+    //     Ok(_) => Ok(Json(tx_hash)),
+    //     Err(e) => Err(AppError(
+    //         StatusCode::INTERNAL_SERVER_ERROR,
+    //         anyhow::anyhow!("Failed to write events: {e}"),
+    //     )),
+    // }
 }

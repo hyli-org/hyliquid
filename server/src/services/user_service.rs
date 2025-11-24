@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::Context;
 use client_sdk::contract_indexer::AppError;
 use orderbook::model::UserInfo;
 use reqwest::StatusCode;
@@ -29,25 +30,6 @@ impl UserService {
         UserService { pool }
     }
 
-    /// Return the user_id for a given identity
-    /// Store it in memory for faster access
-    pub async fn get_user_id(&self, user: &str, tx: &mut PgConnection) -> Result<i64, AppError> {
-        let row = sqlx::query("SELECT user_id, salt, nonce FROM users WHERE identity = $1")
-            .bind(user)
-            .fetch_one(tx)
-            .await
-            .map_err(|_e| {
-                AppError(
-                    StatusCode::NOT_FOUND,
-                    anyhow::anyhow!("User not found: {user}"),
-                )
-            })?;
-
-        let user_id = row.get::<i64, _>("user_id");
-
-        Ok(user_id)
-    }
-
     pub async fn get_user_info(&self, user: &str) -> Result<UserInfo, AppError> {
         let row = sqlx::query(
             "
@@ -57,7 +39,7 @@ impl UserService {
                 u.nonce, 
                 (SELECT session_keys 
                  FROM user_session_keys 
-                 WHERE user_id = u.user_id 
+                 WHERE identity = u.identity 
                  ORDER BY commit_id DESC 
                  LIMIT 1) as session_keys
             FROM users u
@@ -86,7 +68,6 @@ impl UserService {
 
     pub async fn get_balances(&self, user: &str) -> Result<UserBalances, AppError> {
         let mut tx = self.pool.begin().await?;
-        let user_id = self.get_user_id(user, &mut tx).await?;
         let rows = sqlx::query(
             "
         SELECT 
@@ -96,11 +77,11 @@ impl UserService {
         JOIN 
             assets ON balances.asset_id = assets.asset_id
         WHERE 
-            balances.user_id = $1
+            balances.identity = $1
         ;
         ",
         )
-        .bind(user_id)
+        .bind(user)
         .fetch_all(&mut *tx)
         .await?;
 
@@ -125,7 +106,6 @@ impl UserService {
         commit_id: i64,
     ) -> Result<UserBalances, AppError> {
         let mut tx = self.pool.begin().await?;
-        let user_id = self.get_user_id(user, &mut tx).await?;
         let rows = sqlx::query(
             "
             SELECT 
@@ -135,18 +115,18 @@ impl UserService {
             JOIN 
                 assets ON be.asset_id = assets.asset_id
             WHERE 
-                be.user_id = $1
+                be.identity = $1
                 AND be.commit_id = 
                     (SELECT MAX(commit_id) FROM balance_events 
                         WHERE 
-                            user_id = be.user_id 
+                            identity = be.identity 
                             AND asset_id = be.asset_id
                             AND commit_id <= $2
                     )
             ;
         ",
         )
-        .bind(user_id)
+        .bind(user)
         .bind(commit_id)
         .fetch_all(&mut *tx)
         .await?;
@@ -168,15 +148,21 @@ impl UserService {
 
     pub async fn get_nonce(&self, user: &str) -> Result<u32, AppError> {
         let mut tx = self.pool.begin().await?;
-        let user_id = self.get_user_id(user, &mut tx).await?;
-        let row = sqlx::query("SELECT nonce FROM users WHERE user_id = $1")
-            .bind(user_id)
-            .fetch_one(&mut *tx)
-            .await?;
+        let row = sqlx::query("SELECT nonce FROM users WHERE identity = $1")
+            .bind(user)
+            .fetch_optional(&mut *tx)
+            .await
+            .context("Failed to get nonce")?;
 
         tx.commit().await?;
 
-        Ok(row.get::<i64, _>("nonce") as u32)
+        row.map(|row| row.get::<i64, _>("nonce") as u32)
+            .ok_or_else(|| {
+                AppError(
+                    StatusCode::NOT_FOUND,
+                    anyhow::anyhow!("User not found: {user}"),
+                )
+            })
     }
 
     /// Get all users from the database for a given commit_id
@@ -186,20 +172,20 @@ impl UserService {
         // TODO this query might need to be optimized
         let rows = sqlx::query(
             "
-            SELECT u.identity, u.user_id, u.salt, uen.nonce, 
+            SELECT u.identity, u.salt, uen.nonce, 
                    usk.session_keys as session_keys
             FROM users u
-            LEFT JOIN user_session_keys usk ON u.user_id = usk.user_id
-            LEFT JOIN user_events_nonces uen ON u.user_id = uen.user_id
+            LEFT JOIN user_session_keys usk ON u.identity = usk.identity
+            LEFT JOIN user_events_nonces uen ON u.identity = uen.identity
             WHERE 
                 usk.commit_id = 
                     (SELECT MAX(commit_id) FROM user_session_keys 
-                        WHERE user_id = u.user_id
+                        WHERE identity = u.identity
                         AND commit_id <= $1
                     )
                 AND uen.commit_id = 
                     (SELECT MAX(commit_id) FROM user_events_nonces 
-                        WHERE user_id = u.user_id
+                        WHERE identity = u.identity
                         AND commit_id <= $1
                     )
         ",
