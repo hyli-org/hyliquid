@@ -16,7 +16,7 @@ use crate::zk::H256;
 #[derive(Debug, Default, Clone, Serialize, BorshDeserialize, BorshSerialize)]
 pub struct ExecuteState {
     pub assets_info: HashMap<Symbol, AssetInfo>, // symbol -> (decimals, precision)
-    pub users_info: HashMap<String, UserInfo>,
+    pub users_info_store: UserInfoStore,
     pub balances: HashMap<Symbol, HashMap<H256, Balance>>,
     pub order_manager: OrderManager,
 }
@@ -302,7 +302,12 @@ impl ExecuteState {
         user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Compute the new balance
-        let balance = self.get_balance(user_info, symbol);
+        let user_key = self
+            .users_info_store
+            .get_key_by_name(&user_info.user)
+            .copied()
+            .unwrap_or_else(|| user_info.get_key());
+        let balance = self.get_balance(&user_key, symbol);
         let new_balance = Balance(balance.0.checked_add(amount).ok_or("Balance overflow")?);
 
         Ok(vec![OrderbookEvent::BalanceUpdated {
@@ -319,7 +324,12 @@ impl ExecuteState {
         amount: &u64,
         user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        let balance = self.get_balance(user_info, symbol);
+        let user_key = self
+            .users_info_store
+            .get_key_by_name(&user_info.user)
+            .copied()
+            .unwrap_or_else(|| user_info.get_key());
+        let balance = self.get_balance(&user_key, symbol);
 
         if balance.0 < *amount {
             return Err(format!(
@@ -358,7 +368,12 @@ impl ExecuteState {
             OrderSide::Ask => order.pair.0.clone(),
         };
 
-        let current_balance = self.get_balance(user_info, &required_symbol).0;
+        let user_key = self
+            .users_info_store
+            .get_key_by_name(&user_info.user)
+            .copied()
+            .unwrap_or_else(|| user_info.get_key());
+        let current_balance = self.get_balance(&user_key, &required_symbol).0;
         let new_balance = current_balance
             .checked_add(order.quantity)
             .ok_or("Balance overflow")?;
@@ -381,10 +396,9 @@ impl ExecuteState {
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn get_user_info_from_key(&self, key: &H256) -> Result<UserInfo, String> {
-        self.users_info
-            .iter()
-            .find(|(_, info)| info.get_key() == *key)
-            .map(|(_, info)| info.clone())
+        self.users_info_store
+            .get_by_key(key)
+            .cloned()
             .ok_or_else(|| {
                 format!(
                     "No user info found for key {:?}",
@@ -395,10 +409,7 @@ impl ExecuteState {
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn has_user_info_key(&self, user_info_key: H256) -> Result<bool, String> {
-        Ok(self
-            .users_info
-            .values()
-            .any(|user_info| user_info.get_key() == user_info_key))
+        Ok(self.users_info_store.contains_key(&user_info_key))
     }
 
     pub fn from_data(
@@ -409,7 +420,7 @@ impl ExecuteState {
     ) -> Result<Self, String> {
         let mut orderbook = ExecuteState {
             assets_info: HashMap::new(),
-            users_info,
+            users_info_store: UserInfoStore::from_hashmap(users_info),
             balances,
             order_manager,
         };
@@ -427,10 +438,10 @@ impl ExecuteState {
         self.balances.clone()
     }
 
-    pub fn get_balance(&self, user: &UserInfo, symbol: &str) -> Balance {
+    pub fn get_balance(&self, user_key: &H256, symbol: &str) -> Balance {
         self.balances
             .get(symbol)
-            .and_then(|balances| balances.get(&user.get_key()).cloned())
+            .and_then(|balances| balances.get(user_key).cloned())
             .unwrap_or_default()
     }
 
@@ -491,12 +502,11 @@ impl ExecuteState {
                         "apply_events_balance_updated"
                     )
                     .entered();
-                    let user_info = if user == &user_info.user {
-                        user_info.clone()
-                    } else {
-                        self.get_user_info(user)?
-                    };
-                    self.update_balances(symbol, vec![(user_info.get_key(), Balance(*amount))])?;
+                    let user_key = *self
+                        .users_info_store
+                        .get_key_by_name(user)
+                        .ok_or_else(|| format!("Can't update balance, user {} not found", user))?;
+                    self.update_balances(symbol, vec![(user_key, Balance(*amount))])?;
                     #[cfg(feature = "instrumentation")]
                     span.exit();
                 }
@@ -513,19 +523,12 @@ impl ExecuteState {
                         "apply_events_session_key_added"
                     )
                     .entered();
-                    let entry = self
-                        .users_info
-                        .entry(user.clone())
-                        .or_insert_with(|| UserInfo {
-                            user: user.clone(),
-                            salt: salt.clone(),
-                            nonce: *nonce,
-                            session_keys: session_keys.clone(),
-                        });
-
-                    entry.salt = salt.clone();
-                    entry.nonce = *nonce;
-                    entry.session_keys = session_keys.clone();
+                    self.users_info_store.upsert_from_parts(
+                        user.clone(),
+                        salt.clone(),
+                        *nonce,
+                        session_keys.clone(),
+                    );
                     #[cfg(feature = "instrumentation")]
                     span.exit();
                 }
@@ -536,11 +539,19 @@ impl ExecuteState {
                         "apply_events_nonce_incremented"
                     )
                     .entered();
-                    let entry = self
-                        .users_info
-                        .entry(user.clone())
-                        .or_insert(user_info.clone());
-                    entry.nonce = *nonce;
+                    let fallback = {
+                        let mut info = user_info.clone();
+                        info.user = user.clone();
+                        info
+                    };
+
+                    let mut info = self
+                        .users_info_store
+                        .get_by_name(user)
+                        .cloned()
+                        .unwrap_or(fallback);
+                    info.nonce = *nonce;
+                    self.users_info_store.insert(info);
                     #[cfg(feature = "instrumentation")]
                     span.exit();
                 }
@@ -548,55 +559,28 @@ impl ExecuteState {
             }
         }
 
+        let user_key = self
+            .users_info_store
+            .get_key_by_name(&user_info.user)
+            .cloned()
+            .unwrap_or(user_info.get_key());
+
         self.order_manager
-            .apply_events(user_info.get_key(), events, retention_mode)
+            .apply_events(user_key, events, retention_mode)
     }
 
     pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {
         self.order_manager.orders_owner.get(order_id)
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn get_user_info(&self, user: &str) -> Result<UserInfo, String> {
-        self.users_info
-            .get(user)
+        self.users_info_store
+            .get_by_name(user)
             .cloned()
             .ok_or_else(|| format!("User info not found for user '{user}'"))
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn get_user_names(
-        &self,
-        user_keys: &HashSet<H256>,
-    ) -> Result<HashMap<H256, String>, String> {
-        if user_keys.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let mut result = HashMap::with_capacity(user_keys.len());
-
-        for user_info in self.users_info.values() {
-            let key = user_info.get_key().0;
-
-            if user_keys.contains(&H256(key)) {
-                result.insert(H256(key), user_info.user.clone());
-            }
-        }
-
-        if result.len() != user_keys.len() {
-            let missing_keys: Vec<String> = user_keys
-                .iter()
-                .filter(|key| !result.contains_key(key))
-                .map(|key| hex::encode(key.as_slice()))
-                .collect();
-
-            return Err(format!(
-                "No user info found for key(s): {}",
-                missing_keys.join(", ")
-            ));
-        }
-
-        Ok(result)
-    }
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub fn increment_nonce_and_save_user_info(
         &mut self,
@@ -608,8 +592,7 @@ impl ExecuteState {
             .checked_add(1)
             .ok_or("Nonce overflow")?;
 
-        self.users_info
-            .insert(updated_user_info.user.clone(), updated_user_info.clone());
+        self.users_info_store.insert(updated_user_info.clone());
 
         Ok(OrderbookEvent::NonceIncremented {
             user: user_info.user.clone(),
@@ -697,7 +680,10 @@ impl ExecuteState {
         user_info: &UserInfo,
         order: Order,
     ) -> Result<Vec<OrderbookEvent>, String> {
-        let user_info_key = &user_info.get_key();
+        let user_info_key = self
+            .users_info_store
+            .get_key_by_name(&user_info.user)
+            .ok_or_else(|| format!("User {} not found", user_info.user))?;
         let mut events = Vec::new();
 
         // Use OrderManager to handle order logic
@@ -954,7 +940,7 @@ impl ExecuteState {
         }
 
         // Load user_name from user_key
-        let user_names = self.get_user_names(&user_keys)?;
+        let user_names = self.users_info_store.names_for_keys(&user_keys)?;
 
         // Updating balances
         for (symbol, user_keys) in touched_accounts {
@@ -1157,6 +1143,145 @@ pub struct UserInfo {
     pub salt: Vec<u8>,
     pub nonce: u32,
     pub session_keys: Vec<Vec<u8>>,
+}
+
+#[derive(Debug, Default, Clone, Serialize, BorshDeserialize, BorshSerialize)]
+pub struct UserInfoStore {
+    user_info_by_name: HashMap<String, UserInfo>,
+    name_by_key: HashMap<H256, String>,
+    key_by_name: HashMap<String, H256>,
+}
+
+impl UserInfoStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn from_hashmap(users: HashMap<String, UserInfo>) -> Self {
+        let mut store = Self::default();
+        for (user, mut user_info) in users {
+            user_info.user = user;
+            store.insert(user_info);
+        }
+        store
+    }
+
+    pub fn insert(&mut self, user_info: UserInfo) {
+        self.remove_by_name(&user_info.user);
+        let key = user_info.get_key();
+
+        self.name_by_key.insert(key, user_info.user.clone());
+        self.key_by_name.insert(user_info.user.clone(), key);
+        self.user_info_by_name
+            .insert(user_info.user.clone(), user_info);
+    }
+
+    pub fn upsert_from_parts(
+        &mut self,
+        user: String,
+        salt: Vec<u8>,
+        nonce: u32,
+        session_keys: Vec<Vec<u8>>,
+    ) {
+        let mut info = self
+            .user_info_by_name
+            .remove(&user)
+            .unwrap_or_else(|| UserInfo::new(user.clone(), salt.clone()));
+
+        info.user = user.clone();
+        info.salt = salt;
+        info.nonce = nonce;
+        info.session_keys = session_keys;
+
+        self.insert(info);
+    }
+
+    pub fn update(&mut self, user: &str, updater: impl FnOnce(UserInfo) -> UserInfo) {
+        if let Some(existing) = self.user_info_by_name.remove(user) {
+            let updated = updater(existing);
+            self.insert(updated);
+        }
+    }
+
+    pub fn get_by_name(&self, user: &str) -> Option<&UserInfo> {
+        self.user_info_by_name.get(user)
+    }
+
+    pub fn get_by_key(&self, key: &H256) -> Option<&UserInfo> {
+        self.name_by_key
+            .get(key)
+            .and_then(|user| self.user_info_by_name.get(user))
+    }
+
+    pub fn get_name_by_key(&self, key: &H256) -> Option<&String> {
+        self.name_by_key.get(key)
+    }
+
+    pub fn get_key_by_name(&self, user: &str) -> Option<&H256> {
+        self.key_by_name.get(user)
+    }
+
+    pub fn contains_key(&self, key: &H256) -> bool {
+        self.name_by_key.contains_key(key)
+    }
+
+    pub fn names_for_keys(
+        &self,
+        user_keys: &HashSet<H256>,
+    ) -> Result<HashMap<H256, String>, String> {
+        if user_keys.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut result = HashMap::with_capacity(user_keys.len());
+        for key in user_keys {
+            if let Some(user) = self.name_by_key.get(key) {
+                result.insert(*key, user.clone());
+            }
+        }
+
+        if result.len() != user_keys.len() {
+            let missing_keys: Vec<String> = user_keys
+                .iter()
+                .filter(|key| !result.contains_key(key))
+                .map(|key| hex::encode(key.as_slice()))
+                .collect();
+
+            return Err(format!(
+                "No user info found for key(s): {}",
+                missing_keys.join(", ")
+            ));
+        }
+
+        Ok(result)
+    }
+
+    pub fn values(&self) -> impl Iterator<Item = &UserInfo> {
+        self.user_info_by_name.values()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &UserInfo)> {
+        self.user_info_by_name.iter()
+    }
+
+    pub fn into_values(self) -> impl Iterator<Item = UserInfo> {
+        self.user_info_by_name.into_values()
+    }
+
+    pub fn len(&self) -> usize {
+        self.user_info_by_name.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.user_info_by_name.is_empty()
+    }
+
+    fn remove_by_name(&mut self, user: &str) {
+        if let Some(existing) = self.user_info_by_name.remove(user) {
+            self.name_by_key.remove(&existing.get_key());
+            self.key_by_name.remove(user);
+        }
+    }
 }
 
 // To avoid recomputing powers of 10
