@@ -84,28 +84,17 @@ impl AppMetrics {
     }
 
     pub fn with_meter(meter: Meter) -> Self {
-        // Custom buckets for millisecond-level latencies
-        // Covers: 1ms, 2.5ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s, 25s, 50s, 100s, 250s, 500s, 1000s
-        let latency_buckets = vec![
-            0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0,
-            50.0, 100.0, 250.0, 500.0, 1000.0,
+        let extended_buckets = vec![
+            0.0, 5.0, 10.0, 25.0, 50.0, 75.0, 100.0, 250.0, 500.0, 600.0, 700.0, 800.0, 900.0,
+            1000.0, 1100.0, 1200.0, 1300.0, 1400.0, 1500.0, 1600.0, 1700.0, 1800.0, 1900.0, 2000.0,
+            2500.0, 3000.0, 3500.0, 4000.0, 4500.0, 5000.0, 5500.0, 6000.0, 7000.0, 8000.0, 9000.0,
+            10000.0, 11000.0, 12000.0, 13000.0, 14000.0, 15000.0, 16000.0, 20000.0, 25000.0,
         ];
-
-        // Tighter buckets for lock duration (expecting microsecond to low millisecond range)
-        // Covers: 10μs, 50μs, 100μs, 500μs, 1ms, 5ms, 10ms, 50ms, 100ms, 250ms, 500ms, 1000ms, 2500ms, 5000ms, 10000ms, 25000ms, 50000ms, 100000ms
-        let lock_buckets = vec![
-            0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
-            5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0, 5000.0, 10000.0, 25000.0,
-            50000.0, 100000.0,
-        ];
-        let lock_buckets_clone = lock_buckets.clone();
-
         Self {
             http_request_duration: meter
                 .f64_histogram("http.request.duration")
                 .with_description("HTTP request duration in seconds")
-                .with_unit("s")
-                .with_boundaries(latency_buckets.clone())
+                .with_unit("ms")
                 .build(),
             http_request_count: meter
                 .u64_counter("http.request.count")
@@ -114,20 +103,17 @@ impl AppMetrics {
             orderbook_operation_duration: meter
                 .f64_histogram("orderbook.operation.duration")
                 .with_description("Orderbook operation duration in seconds")
-                .with_unit("s")
-                .with_boundaries(latency_buckets.clone())
+                .with_unit("us")
                 .build(),
             orderbook_method_duration: meter
                 .f64_histogram("orderbook.method.duration")
                 .with_description("Orderbook method call duration in seconds (business logic only)")
-                .with_unit("s")
-                .with_boundaries(latency_buckets.clone())
+                .with_unit("us")
                 .build(),
             orderbook_lock_duration: meter
                 .f64_histogram("orderbook.lock.duration")
                 .with_description("Duration of orderbook lock acquisition in seconds")
-                .with_unit("s")
-                .with_boundaries(lock_buckets)
+                .with_unit("us")
                 .build(),
             events_applied_count: meter
                 .u64_histogram("orderbook.events.applied.count")
@@ -141,21 +127,20 @@ impl AppMetrics {
             event_apply_duration: meter
                 .f64_histogram("orderbook.event.apply.duration")
                 .with_description("Duration of applying events to orderbook in seconds")
-                .with_unit("s")
-                .with_boundaries(latency_buckets)
+                .with_unit("us")
+                .with_boundaries(extended_buckets.clone())
                 .build(),
             database_service_lock_duration: meter
                 .f64_histogram("database.service.lock.duration")
                 .with_description("Duration of database service lock acquisition in seconds")
-                .with_unit("s")
-                .with_boundaries(lock_buckets_clone)
+                .with_unit("us")
                 .build(),
         }
     }
 
     #[inline]
     fn record_request(&self, start: Instant, endpoint: &str, status: u16) {
-        let duration = start.elapsed().as_secs_f64();
+        let duration = start.elapsed().as_millis() as f64;
         self.http_request_duration.record(
             duration,
             &[
@@ -175,7 +160,7 @@ impl AppMetrics {
     #[inline]
     fn record_operation(&self, duration: Duration, operation: &str) {
         self.orderbook_operation_duration.record(
-            duration.as_secs_f64(),
+            duration.as_micros() as f64,
             &[KeyValue::new("operation", operation.to_string())],
         );
     }
@@ -183,7 +168,7 @@ impl AppMetrics {
     #[inline]
     fn record_lock(&self, duration: Duration, operation: &str) {
         self.orderbook_lock_duration.record(
-            duration.as_secs_f64(),
+            duration.as_micros() as f64,
             &[KeyValue::new("operation", operation.to_string())],
         );
     }
@@ -191,7 +176,7 @@ impl AppMetrics {
     #[inline]
     fn record_event_apply(&self, duration: Duration, operation: &str) {
         self.event_apply_duration.record(
-            duration.as_secs_f64(),
+            duration.as_micros() as f64,
             &[KeyValue::new("operation", operation.to_string())],
         );
     }
@@ -199,7 +184,7 @@ impl AppMetrics {
     #[inline]
     fn record_method(&self, duration: Duration, method: &str) {
         self.orderbook_method_duration.record(
-            duration.as_secs_f64(),
+            duration.as_micros() as f64,
             &[KeyValue::new("method", method.to_string())],
         );
     }
@@ -215,7 +200,7 @@ impl AppMetrics {
     #[inline]
     fn record_database_service_lock(&self, duration: Duration) {
         self.database_service_lock_duration
-            .record(duration.as_secs_f64(), &[]);
+            .record(duration.as_micros() as f64, &[]);
     }
 }
 
