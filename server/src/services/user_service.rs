@@ -5,7 +5,7 @@ use client_sdk::contract_indexer::AppError;
 use orderbook::model::UserInfo;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use sqlx::{PgConnection, PgPool, Row};
+use sqlx::{PgPool, Row};
 use tracing::debug;
 
 pub struct UserService {

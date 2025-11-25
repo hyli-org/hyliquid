@@ -266,8 +266,8 @@ impl DatabaseService {
 
         let mut symbol_book_updated = HashSet::<String>::new();
         let mut reload_instrument_map = false;
-        let mut trigger_notify_trades = false;
-        let mut trigger_notify_orders = false;
+        // let mut trigger_notify_trades = false;
+        // let mut trigger_notify_orders = false;
 
         let tx_begin_start = Instant::now();
         let mut tx = log_error!(
@@ -400,7 +400,7 @@ impl DatabaseService {
                     );
                 }
                 OrderbookEvent::OrderCreated { order } => {
-                    trigger_notify_orders = true;
+                    // trigger_notify_orders = true;
                     let order_create_start = Instant::now();
 
                     let symbol = format!("{}/{}", order.pair.0, order.pair.1);
@@ -466,7 +466,7 @@ impl DatabaseService {
                         "Cancelling order for user {} with order id {:?} and pair {:?}",
                         user, order_id, pair
                     );
-                    trigger_notify_orders = true;
+                    // trigger_notify_orders = true;
                     let order_cancel_start = Instant::now();
 
                     symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
@@ -517,8 +517,8 @@ impl DatabaseService {
                         "Executing order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
-                    trigger_notify_orders = true;
-                    trigger_notify_trades = true;
+                    // trigger_notify_orders = true;
+                    // trigger_notify_trades = true;
                     let order_execute_start = Instant::now();
 
                     let asset_service = self.ctx.asset_service.read().await;
@@ -603,8 +603,8 @@ impl DatabaseService {
                         "Updating order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
-                    trigger_notify_trades = true;
-                    trigger_notify_orders = true;
+                    // trigger_notify_trades = true;
+                    // trigger_notify_orders = true;
                     let order_update_start = Instant::now();
 
                     let asset_service = self.ctx.asset_service.read().await;
@@ -920,7 +920,7 @@ impl DatabaseService {
 }
 
 pub struct DatabaseModule {
-    ctx: Arc<DatabaseModuleCtx>,
+    _ctx: Arc<DatabaseModuleCtx>,
     bus: DatabaseModuleBusClient,
     worker_txs: Vec<mpsc::UnboundedSender<DatabaseRequest>>,
     next_worker: std::sync::atomic::AtomicUsize,
@@ -976,7 +976,7 @@ impl Module for DatabaseModule {
         }
 
         Ok(DatabaseModule {
-            ctx,
+            _ctx: ctx,
             bus,
             worker_txs,
             next_worker: AtomicUsize::new(0),
@@ -995,7 +995,7 @@ impl DatabaseModule {
         module_handle_messages! {
             on_self self,
             command_response<DatabaseRequest, bool> cmd => {
-                        _ = log_error!(self.dispatch_database_request(cmd).await, "dispatch database request")?;
+                        log_error!(self.dispatch_database_request(cmd).await, "dispatch database request")?;
                     Ok(true)
             }
         };
@@ -1013,26 +1013,26 @@ impl DatabaseModule {
         Ok(())
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    async fn handle_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
-        let service = DatabaseService::new(self.ctx.clone());
-        match request {
-            DatabaseRequest::WriteEvents {
-                user,
-                tx_hash,
-                blob_tx,
-                prover_request,
-            } => {
-                service
-                    .write_events(
-                        user.clone(),
-                        tx_hash.clone(),
-                        blob_tx.clone(),
-                        prover_request.clone(),
-                    )
-                    .await?;
-            }
-        }
-        Ok(())
-    }
+    // #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    // async fn handle_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
+    //     let service = DatabaseService::new(self.ctx.clone());
+    //     match request {
+    //         DatabaseRequest::WriteEvents {
+    //             user,
+    //             tx_hash,
+    //             blob_tx,
+    //             prover_request,
+    //         } => {
+    //             service
+    //                 .write_events(
+    //                     user.clone(),
+    //                     tx_hash.clone(),
+    //                     blob_tx.clone(),
+    //                     prover_request.clone(),
+    //                 )
+    //                 .await?;
+    //         }
+    //     }
+    //     Ok(())
+    // }
 }
