@@ -332,6 +332,41 @@ fn deposit_updates_balance_and_event() {
 }
 
 #[test]
+fn deposit_reth_bridge_updates_balance() {
+    let mut orderbook = build_orderbook();
+    let pair = sample_pair();
+    let mut user = test_user("carol");
+
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::CreatePair {
+            pair: pair.clone(),
+            info: make_pair_info(&pair, 3, 2),
+        },
+        Vec::new(),
+    );
+
+    let events = execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::DepositRethBridge {
+            symbol: pair.1.clone(),
+            amount: 1_200,
+        },
+        Vec::new(),
+    );
+
+    assert_eq!(orderbook.state.get_balance(&user, &pair.1).0, 1_200);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events[0],
+        OrderbookEvent::BalanceUpdated { ref user, ref symbol, amount }
+            if user == "carol" && symbol == &pair.1 && amount == 1_200
+    ));
+}
+
+#[test]
 fn withdraw_deducts_balance() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();

@@ -77,6 +77,10 @@ pub enum PermissionnedOrderbookAction {
         symbol: String,
         amount: u64,
     },
+    DepositRethBridge {
+        symbol: String,
+        amount: u64,
+    },
     CreateOrder(Order),
     Cancel {
         order_id: String,
@@ -146,6 +150,9 @@ impl ExecuteState {
                 )
             }
             PermissionnedOrderbookAction::Deposit { symbol, amount } => {
+                self.deposit(&symbol, amount, user_info)
+            }
+            PermissionnedOrderbookAction::DepositRethBridge { symbol, amount } => {
                 self.deposit(&symbol, amount, user_info)
             }
             PermissionnedOrderbookAction::CreateOrder(Order {

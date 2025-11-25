@@ -352,7 +352,7 @@ impl RethBridgeModule {
                 let deposit_amount = u64::try_from(*amount).map_err(|_| {
                     anyhow!("deposit amount {} exceeds supported range (u64)", amount)
                 })?;
-                PermissionnedOrderbookAction::Deposit {
+                PermissionnedOrderbookAction::DepositRethBridge {
                     symbol: symbol.clone(),
                     amount: deposit_amount,
                 }

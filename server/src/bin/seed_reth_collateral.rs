@@ -76,8 +76,12 @@ struct Args {
     max_priority_fee_per_gas: u64,
     #[arg(long, help = "Override the chain id used for signing")]
     chain_id: Option<u64>,
-    #[arg(long, help = "Override the starting nonce for the mint signer")]
-    nonce: Option<u64>,
+    #[arg(
+        long,
+        default_value = "1",
+        help = "Starting nonce for the mint signer (defaults to 1 because 0 is used for deployment)"
+    )]
+    nonce: u64,
     #[arg(
         long,
         default_value_t = false,
@@ -166,13 +170,14 @@ async fn main() -> Result<()> {
         nonce_store.reset(&nonce_key);
     }
 
-    if let Some(explicit) = args.nonce {
-        nonce_store.set(&nonce_key, explicit);
-        println!(
-            "Using explicit nonce {} for signer {:#x} on chain {}",
-            explicit, from, chain_id
-        );
-    } else if args.use_rpc_nonce {
+    let explicit = args.nonce;
+    nonce_store.set(&nonce_key, explicit);
+    println!(
+        "Using starting nonce {} for signer {:#x} on chain {}",
+        explicit, from, chain_id
+    );
+
+    if args.use_rpc_nonce {
         match provider.get_transaction_count(from).await {
             Ok(value) => {
                 let rpc_nonce: u64 = value
@@ -193,7 +198,7 @@ async fn main() -> Result<()> {
     }
 
     if nonce_store.get(&nonce_key).is_none() {
-        nonce_store.ensure_default(&nonce_key, 0);
+        nonce_store.ensure_default(&nonce_key, args.nonce);
     }
 
     for entry in &args.recipients {

@@ -5,11 +5,12 @@ use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     order_manager::OrderManager,
+    reth::{derive_program_pubkey, extract_erc20_recipient, program_address_from_program_id},
     transaction::{OrderbookAction, PermissionnedOrderbookAction},
     zk::smt::GetKey,
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
-use sdk::{BlockHeight, ContractName, StructuredBlob};
+use sdk::{BlobIndex, BlockHeight, Calldata, ContractName, StructuredBlob, StructuredBlobData};
 
 use crate::zk::H256;
 
@@ -19,6 +20,75 @@ pub struct ExecuteState {
     pub users_info: BTreeMap<String, UserInfo>,
     pub balances: BTreeMap<Symbol, BTreeMap<H256, Balance>>,
     pub order_manager: OrderManager,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdk::{Blob, BlobData, Identity, IndexedBlobs, StructuredBlobData, TxHash};
+
+    fn build_state(symbol: &str, contract: &str) -> ExecuteState {
+        let mut state = ExecuteState::default();
+        state.assets_info.insert(
+            symbol.to_string(),
+            AssetInfo::new(6, ContractName(contract.to_string())),
+        );
+        state
+    }
+
+    fn build_erc20_blob(contract: &str, recipient: [u8; 20]) -> Blob {
+        let payload = crate::reth::encode_erc20_transfer_payload(recipient, 1);
+        let raw_tx = crate::reth::build_typed_eip1559_tx(payload, [0u8; 20]);
+        Blob {
+            contract_name: ContractName(contract.to_string()),
+            data: BlobData::from(StructuredBlobData {
+                caller: None,
+                callees: None,
+                parameters: raw_tx,
+            }),
+        }
+    }
+
+    fn base_calldata(blob: Blob) -> Calldata {
+        Calldata {
+            identity: Identity("user@test".into()),
+            blobs: IndexedBlobs::from(vec![blob]),
+            tx_blob_count: 1,
+            index: BlobIndex(0),
+            tx_hash: TxHash("0xdead".into()),
+            tx_ctx: None,
+            private_input: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn reth_bridge_deposit_validates_recipient() {
+        let symbol = "USDC";
+        let contract_name = ContractName("orderbook".into());
+        let program_id = derive_program_pubkey(&contract_name);
+        let expected = program_address_from_program_id(&program_id);
+        let blob = build_erc20_blob(symbol, expected);
+        let calldata = base_calldata(blob);
+        let state = build_state(symbol, symbol);
+
+        state
+            .ensure_reth_bridge_deposit(&calldata, &contract_name, symbol)
+            .expect("deposit should succeed");
+    }
+
+    #[test]
+    fn reth_bridge_deposit_rejects_wrong_recipient() {
+        let symbol = "USDC";
+        let contract_name = ContractName("orderbook".into());
+        let blob = build_erc20_blob(symbol, [0u8; 20]);
+        let calldata = base_calldata(blob);
+        let state = build_state(symbol, symbol);
+
+        let err = state
+            .ensure_reth_bridge_deposit(&calldata, &contract_name, symbol)
+            .expect_err("deposit should fail");
+        assert!(err.contains("derived program address"));
+    }
 }
 
 #[derive(
@@ -310,6 +380,44 @@ impl ExecuteState {
             symbol: symbol.to_string(),
             amount: new_balance.0,
         }])
+    }
+
+    pub fn ensure_reth_bridge_deposit(
+        &self,
+        calldata: &Calldata,
+        orderbook_contract: &ContractName,
+        symbol: &str,
+    ) -> Result<(), String> {
+        let asset_info = self
+            .assets_info
+            .get(symbol)
+            .ok_or_else(|| format!("Asset info for symbol {symbol} not found"))?;
+
+        let first_blob = calldata
+            .blobs
+            .get(&BlobIndex(0))
+            .ok_or_else(|| "Deposit calldata missing ERC20 transfer blob".to_string())?;
+
+        if first_blob.contract_name != asset_info.contract_name {
+            return Err(format!(
+                "First blob must target {} but found {}",
+                asset_info.contract_name.0, first_blob.contract_name.0
+            ));
+        }
+
+        let structured: StructuredBlobData<Vec<u8>> =
+            StructuredBlobData::try_from(first_blob.data.clone())
+                .map_err(|_| "Failed to decode ERC20 blob".to_string())?;
+
+        let recipient =
+            extract_erc20_recipient(structured.parameters.as_slice()).map_err(|err| err)?;
+        let program_id = derive_program_pubkey(orderbook_contract);
+        let expected = program_address_from_program_id(&program_id);
+        if recipient != expected {
+            return Err("ERC20 transfer does not target the derived program address".into());
+        }
+
+        Ok(())
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]

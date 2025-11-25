@@ -24,7 +24,7 @@ impl sdk::ZkContract for ZkVmState {
     /// Entry point of the contract's logic
     fn execute(&mut self, calldata: &sdk::Calldata) -> RunResult {
         // Parse contract inputs
-        let (action, ctx) = sdk::utils::parse_raw_calldata::<OrderbookAction>(calldata)?;
+        let (action, execution_ctx) = sdk::utils::parse_raw_calldata::<OrderbookAction>(calldata)?;
 
         let Some(tx_ctx) = &calldata.tx_ctx else {
             panic!("tx_ctx is missing");
@@ -46,6 +46,22 @@ impl sdk::ZkContract for ZkVmState {
         }
 
         let mut state = self.into_orderbook_state();
+
+        let action = match action {
+            OrderbookAction::PermissionnedOrderbookAction(
+                PermissionnedOrderbookAction::DepositRethBridge { symbol, amount },
+                nonce,
+            ) => {
+                state
+                    .ensure_reth_bridge_deposit(calldata, &execution_ctx.contract_name, &symbol)
+                    .unwrap_or_else(|e| panic!("{e}"));
+                OrderbookAction::PermissionnedOrderbookAction(
+                    PermissionnedOrderbookAction::Deposit { symbol, amount },
+                    nonce,
+                )
+            }
+            other => other,
+        };
 
         // Verify that orderbook_manager.order_owners is populated with valid users info
         state
@@ -74,7 +90,7 @@ impl sdk::ZkContract for ZkVmState {
                 if let PermissionnedOrderbookAction::Identify = action {
                     // Identify action does not change the state
                     self.take_changes_back(&mut state)?;
-                    return Ok((vec![], ctx, vec![]));
+                    return Ok((vec![], execution_ctx, vec![]));
                 }
 
                 let user_info = permissionned_private_input.user_info.clone();
@@ -139,7 +155,7 @@ impl sdk::ZkContract for ZkVmState {
 
         self.take_changes_back(&mut state)?;
 
-        Ok((res, ctx, vec![]))
+        Ok((res, execution_ctx, vec![]))
     }
 
     fn commit(&self) -> StateCommitment {
