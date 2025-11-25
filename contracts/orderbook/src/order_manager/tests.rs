@@ -70,6 +70,20 @@ fn make_market_order(id: &str, side: OrderSide, quantity: u64) -> Order {
     }
 }
 
+/// Executes an order and returns generated events
+pub fn execute_order(
+    order_manager: &mut OrderManager,
+    user_info_key: &H256,
+    order: &Order,
+) -> Result<Vec<OrderbookEvent>, String> {
+    let events = order_manager.execute_order_dry_run(order)?;
+    for event in &events {
+        order_manager.apply_event(*user_info_key, event)?;
+    }
+
+    Ok(events)
+}
+
 struct TestSigner {
     signing_key: SigningKey,
     public_key: Vec<u8>,
@@ -484,8 +498,7 @@ fn limit_bid_inserts_when_no_liquidity() {
     let user = test_user("alice");
     let order = make_limit_order("bid-1", OrderSide::Bid, 101, 5);
 
-    let events = manager
-        .execute_order(&user.get_key(), &order)
+    let events = execute_order(&mut manager, &user.get_key(), &order)
         .expect("order execution should succeed");
 
     assert_eq!(events.len(), 1);
@@ -506,8 +519,7 @@ fn limit_bid_matches_existing_ask() {
         .expect("resting ask should be stored");
 
     let taker_order = make_limit_order("bid-1", OrderSide::Bid, 110, 5);
-    let events = manager
-        .execute_order(&taker_user.get_key(), &taker_order)
+    let events = execute_order(&mut manager, &taker_user.get_key(), &taker_order)
         .expect("matching limit bid should succeed");
     manager.clean(&events);
 
@@ -533,8 +545,7 @@ fn limit_bid_inserts_when_price_too_low() {
         .expect("resting ask should be stored");
 
     let taker_order = make_limit_order("bid-1", OrderSide::Bid, 110, 5);
-    let events = manager
-        .execute_order(&taker_user.get_key(), &taker_order)
+    let events = execute_order(&mut manager, &taker_user.get_key(), &taker_order)
         .expect("non crossing bid becomes resting");
 
     assert!(matches!(
@@ -559,9 +570,8 @@ fn limit_ask_inserts_when_no_bids() {
     let user = test_user("frank");
     let order = make_limit_order("ask-1", OrderSide::Ask, 105, 7);
 
-    let events = manager
-        .execute_order(&user.get_key(), &order)
-        .expect("ask with no bids should rest");
+    let events =
+        execute_order(&mut manager, &user.get_key(), &order).expect("ask with no bids should rest");
 
     assert!(matches!(
         events.last(),
@@ -590,8 +600,7 @@ fn limit_ask_matches_existing_bid_partial() {
         .expect("resting bid should be stored");
 
     let taker_order = make_limit_order("ask-1", OrderSide::Ask, 100, 6);
-    let events = manager
-        .execute_order(&taker_user.get_key(), &taker_order)
+    let events = execute_order(&mut manager, &taker_user.get_key(), &taker_order)
         .expect("matching ask should succeed");
 
     let updated_bid = manager.orders.get(&resting_bid.order_id).unwrap();
@@ -617,8 +626,7 @@ fn limit_ask_inserts_when_price_above_best_bid() {
         .expect("resting bid should be stored");
 
     let taker_order = make_limit_order("ask-1", OrderSide::Ask, 120, 6);
-    let events = manager
-        .execute_order(&taker_user.get_key(), &taker_order)
+    let events = execute_order(&mut manager, &taker_user.get_key(), &taker_order)
         .expect("non crossing ask becomes resting");
 
     assert!(matches!(
@@ -642,8 +650,7 @@ fn market_bid_requires_liquidity() {
     let user = test_user("alice");
     let order = make_market_order("mkt-bid", OrderSide::Bid, 5);
 
-    let err = manager
-        .execute_order(&user.get_key(), &order)
+    let err = execute_order(&mut manager, &user.get_key(), &order)
         .expect_err("market order without liquidity should fail");
     assert!(err.contains("No matching Bid orders"));
 }
@@ -668,12 +675,12 @@ fn market_bid_consumes_multiple_asks() {
         )
         .unwrap();
 
-    let events = manager
-        .execute_order(
-            &taker.get_key(),
-            &make_market_order("bid-1", OrderSide::Bid, 5),
-        )
-        .expect("market bid should execute against asks");
+    let events = execute_order(
+        &mut manager,
+        &taker.get_key(),
+        &make_market_order("bid-1", OrderSide::Bid, 5),
+    )
+    .expect("market bid should execute against asks");
 
     assert!(manager.orders.contains_key("ask-2"));
     assert_eq!(manager.orders.get("ask-2").unwrap().quantity, 2);
@@ -703,12 +710,12 @@ fn bid_execute_then_create_if_price_defer() {
             &maker2.get_key(),
         )
         .unwrap();
-    let events = manager
-        .execute_order(
-            &taker.get_key(),
-            &make_limit_order("ask-1", OrderSide::Ask, 200, 2),
-        )
-        .unwrap();
+    let events = execute_order(
+        &mut manager,
+        &taker.get_key(),
+        &make_limit_order("ask-1", OrderSide::Ask, 200, 2),
+    )
+    .unwrap();
     assert!(matches!(events[0], OrderbookEvent::OrderExecuted { .. }));
     assert!(matches!(events[1], OrderbookEvent::OrderCreated { .. }));
     assert!(events.len() == 2);
@@ -734,12 +741,12 @@ fn market_ask_consumes_bids() {
         )
         .unwrap();
 
-    let events = manager
-        .execute_order(
-            &taker.get_key(),
-            &make_market_order("ask-1", OrderSide::Ask, 4),
-        )
-        .expect("market ask should execute against bids");
+    let events = execute_order(
+        &mut manager,
+        &taker.get_key(),
+        &make_market_order("ask-1", OrderSide::Ask, 4),
+    )
+    .expect("market ask should execute against bids");
 
     assert!(manager.orders.contains_key("bid-2"));
     assert_eq!(manager.orders.get("bid-2").unwrap().quantity, 1);
@@ -756,8 +763,7 @@ fn market_ask_without_bids_fails() {
     let user = test_user("eve");
     let order = make_market_order("ask-1", OrderSide::Ask, 3);
 
-    let err = manager
-        .execute_order(&user.get_key(), &order)
+    let err = execute_order(&mut manager, &user.get_key(), &order)
         .expect_err("market ask without bids should fail");
     assert!(err.contains("No matching Ask orders"), "{err}");
 }
