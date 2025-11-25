@@ -544,12 +544,25 @@ impl ExecuteState {
                     #[cfg(feature = "instrumentation")]
                     span.exit();
                 }
-                _ => {}
+                OrderbookEvent::OrderCancelled { .. }
+                | OrderbookEvent::OrderCreated { .. }
+                | OrderbookEvent::OrderExecuted { .. }
+                | OrderbookEvent::OrderUpdate { .. } => {
+                    self.order_manager.apply_event(user_info.get_key(), event)?;
+                }
             }
         }
 
-        self.order_manager
-            .apply_events(user_info.get_key(), events, retention_mode)
+        if retention_mode.should_cleanup() {
+            #[cfg(feature = "instrumentation")]
+            let span =
+                sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_cleanup").entered();
+            self.order_manager.clean(events);
+            #[cfg(feature = "instrumentation")]
+            span.exit();
+        }
+
+        Ok(())
     }
 
     pub fn get_order_owner(&self, order_id: &OrderId) -> Option<&H256> {

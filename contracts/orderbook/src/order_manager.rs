@@ -1,6 +1,4 @@
-use crate::model::{
-    Order, OrderId, OrderRetentionMode, OrderSide, OrderType, OrderbookEvent, Pair,
-};
+use crate::model::{Order, OrderId, OrderSide, OrderType, OrderbookEvent, Pair};
 use crate::zk::H256;
 use borsh::{BorshDeserialize, BorshSerialize};
 use serde::Serialize;
@@ -265,138 +263,120 @@ impl OrderManager {
     }
 
     #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn apply_events(
+    pub fn apply_event(
         &mut self,
         user_info_key: H256,
-        events: &[OrderbookEvent],
-        retention_mode: OrderRetentionMode,
+        event: &OrderbookEvent,
     ) -> Result<(), String> {
-        for event in events {
-            match event {
-                OrderbookEvent::OrderCreated { order } => {
-                    #[cfg(feature = "instrumentation")]
-                    let span = sdk::tracing::span!(
-                        sdk::tracing::Level::INFO,
-                        "apply_events_order_created"
-                    )
-                    .entered();
-                    let price = order.price.ok_or_else(|| {
-                        "OrderCreated event missing price for limit order".to_string()
-                    })?;
+        match event {
+            OrderbookEvent::OrderCreated { order } => {
+                #[cfg(feature = "instrumentation")]
+                let span =
+                    sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_order_created")
+                        .entered();
+                let price = order.price.ok_or_else(|| {
+                    "OrderCreated event missing price for limit order".to_string()
+                })?;
 
-                    let level = self
-                        .side_map_mut(&order.order_side)
-                        .entry(order.pair.clone())
-                        .or_default()
-                        .entry(price)
-                        .or_default();
+                let level = self
+                    .side_map_mut(&order.order_side)
+                    .entry(order.pair.clone())
+                    .or_default()
+                    .entry(price)
+                    .or_default();
 
-                    level.push_back(order.order_id.clone());
-                    self.orders.insert(order.order_id.clone(), order.clone());
-                    self.orders_owner
-                        .entry(order.order_id.clone())
-                        .or_insert(user_info_key);
-                    #[cfg(feature = "instrumentation")]
-                    span.exit();
-                }
-                OrderbookEvent::OrderCancelled { order_id, .. } => {
-                    #[cfg(feature = "instrumentation")]
-                    let span = sdk::tracing::span!(
-                        sdk::tracing::Level::INFO,
-                        "apply_events_order_cancelled"
-                    )
-                    .entered();
-                    let order = self
-                        .orders
-                        .get(order_id)
-                        .ok_or_else(|| {
-                            format!("OrderCancelled event missing order {order_id}").to_string()
-                        })?
-                        .clone();
-
-                    // Remove order from price level
-                    if let Some(price) = order.price {
-                        let order_list =
-                            self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
-                        // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
-                        order_list.retain(|id| id != order_id);
-                    }
-
-                    // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
-                    let order_mut = self.orders.get_mut(order_id).unwrap();
-                    order_mut.quantity = 0;
-
-                    self.orders_owner.remove(order_id);
-                    #[cfg(feature = "instrumentation")]
-                    span.exit();
-                }
-                OrderbookEvent::OrderExecuted {
-                    order_id,
-                    taker_order_id,
-                    ..
-                } => {
-                    if order_id == taker_order_id {
-                        continue;
-                    }
-
-                    #[cfg(feature = "instrumentation")]
-                    let span = sdk::tracing::span!(
-                        sdk::tracing::Level::INFO,
-                        "apply_events_order_executed"
-                    )
-                    .entered();
-                    let order = self
-                        .orders
-                        .get(order_id)
-                        .ok_or_else(|| {
-                            format!("OrderExecuted event missing order {order_id}").to_string()
-                        })?
-                        .clone();
-
-                    // Remove order from price level
-                    if let Some(price) = order.price {
-                        let order_list =
-                            self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
-
-                        // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
-                        order_list.retain(|id| id != order_id);
-                    }
-
-                    // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
-                    let order_mut = self.orders.get_mut(order_id).unwrap();
-                    order_mut.quantity = 0;
-
-                    self.orders_owner.remove(order_id);
-                    #[cfg(feature = "instrumentation")]
-                    span.exit();
-                }
-                OrderbookEvent::OrderUpdate {
-                    order_id,
-                    remaining_quantity,
-                    ..
-                } => {
-                    #[cfg(feature = "instrumentation")]
-                    let span =
-                        sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_order_update")
-                            .entered();
-                    let order = self.orders.get_mut(order_id).ok_or_else(|| {
-                        format!("OrderUpdate event missing order {order_id}").to_string()
-                    })?;
-                    order.quantity = *remaining_quantity;
-                    #[cfg(feature = "instrumentation")]
-                    span.exit();
-                }
-                _ => {}
+                level.push_back(order.order_id.clone());
+                self.orders.insert(order.order_id.clone(), order.clone());
+                self.orders_owner
+                    .entry(order.order_id.clone())
+                    .or_insert(user_info_key);
+                #[cfg(feature = "instrumentation")]
+                span.exit();
             }
-        }
+            OrderbookEvent::OrderCancelled { order_id, .. } => {
+                #[cfg(feature = "instrumentation")]
+                let span =
+                    sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_order_cancelled")
+                        .entered();
+                let order = self
+                    .orders
+                    .get(order_id)
+                    .ok_or_else(|| {
+                        format!("OrderCancelled event missing order {order_id}").to_string()
+                    })?
+                    .clone();
 
-        if retention_mode.should_cleanup() {
-            #[cfg(feature = "instrumentation")]
-            let span =
-                sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_cleanup").entered();
-            self.clean(events);
-            #[cfg(feature = "instrumentation")]
-            span.exit();
+                // Remove order from price level
+                if let Some(price) = order.price {
+                    let order_list =
+                        self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+                    // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
+                    order_list.retain(|id| id != order_id);
+                }
+
+                // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
+                let order_mut = self.orders.get_mut(order_id).unwrap();
+                order_mut.quantity = 0;
+
+                self.orders_owner.remove(order_id);
+                #[cfg(feature = "instrumentation")]
+                span.exit();
+            }
+            OrderbookEvent::OrderExecuted {
+                order_id,
+                taker_order_id,
+                ..
+            } => {
+                if order_id == taker_order_id {
+                    return Ok(());
+                }
+
+                #[cfg(feature = "instrumentation")]
+                let span =
+                    sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_order_executed")
+                        .entered();
+                let order = self
+                    .orders
+                    .get(order_id)
+                    .ok_or_else(|| {
+                        format!("OrderExecuted event missing order {order_id}").to_string()
+                    })?
+                    .clone();
+
+                // Remove order from price level
+                if let Some(price) = order.price {
+                    let order_list =
+                        self.get_order_list_mut(&order.order_side, order.pair.clone(), price);
+
+                    // We shall not remove empty price levels from the orderbook here, as it will be needed for computing SMT root later
+                    order_list.retain(|id| id != order_id);
+                }
+
+                // We shall not remove order from the orderbook here, as it will be needed for computing SMT root later
+                let order_mut = self.orders.get_mut(order_id).unwrap();
+                order_mut.quantity = 0;
+
+                self.orders_owner.remove(order_id);
+                #[cfg(feature = "instrumentation")]
+                span.exit();
+            }
+            OrderbookEvent::OrderUpdate {
+                order_id,
+                remaining_quantity,
+                ..
+            } => {
+                #[cfg(feature = "instrumentation")]
+                let span =
+                    sdk::tracing::span!(sdk::tracing::Level::INFO, "apply_events_order_update")
+                        .entered();
+                let order = self.orders.get_mut(order_id).ok_or_else(|| {
+                    format!("OrderUpdate event missing order {order_id}").to_string()
+                })?;
+                order.quantity = *remaining_quantity;
+                #[cfg(feature = "instrumentation")]
+                span.exit();
+            }
+            _ => {}
         }
 
         Ok(())
@@ -553,19 +533,6 @@ impl OrderManager {
         Ok(vec![OrderbookEvent::OrderCreated {
             order: order.clone(),
         }])
-    }
-
-    /// Executes an order and returns generated events
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    pub fn execute_order(
-        &mut self,
-        user_info_key: &H256,
-        order: &Order,
-    ) -> Result<Vec<OrderbookEvent>, String> {
-        let events = self.execute_order_dry_run(order)?;
-        self.apply_events(*user_info_key, &events, OrderRetentionMode::RetainForProof)?;
-
-        Ok(events)
     }
 
     /// Cancels an order and removes it from data structures
