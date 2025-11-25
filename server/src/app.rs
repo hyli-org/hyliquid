@@ -625,7 +625,11 @@ impl From<&orderbook::model::ExecuteState> for ExecuteStateAPI {
 
         ExecuteStateAPI {
             assets_info: state.assets_info.clone(),
-            users_info: state.users_info.clone(),
+            users_info: state
+                .users_info_store
+                .iter()
+                .map(|(user, info)| (user.clone(), info.clone()))
+                .collect(),
             balances,
             order_manager: OrderManagerAPI::from(&state.order_manager),
         }
@@ -849,7 +853,7 @@ async fn add_session_key(
 
             debug!(
                 "Getting user info for user {user}. Orderbook users info: {:?}",
-                orderbook.users_info
+                orderbook.users_info_store
             );
 
             // Get user_info if exists, otherwise create a new one with random salt
@@ -1280,7 +1284,11 @@ async fn withdraw(
                 )
             })?;
 
-            let balance = orderbook.get_balance(&user_info, &request.symbol);
+            let user_key = orderbook
+                .users_info_store
+                .get_key_by_name(&user_info.user)
+                .unwrap();
+            let balance = orderbook.get_balance(user_key, &request.symbol);
             if balance.0 < request.amount {
                 return Err(AppError(
                     StatusCode::BAD_REQUEST,

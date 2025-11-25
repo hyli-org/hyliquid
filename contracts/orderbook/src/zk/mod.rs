@@ -130,7 +130,7 @@ impl FullState {
         let mut users_info_mt = SMT::zero();
 
         users_info_mt
-            .update_all_from_ref(light.users_info.values())
+            .update_all_from_ref(light.users_info_store.values())
             .map_err(|e| format!("Failed to update users info in SMT: {e}"))?;
 
         let mut balances_mt = HashMap::new();

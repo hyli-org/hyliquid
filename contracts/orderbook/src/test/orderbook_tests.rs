@@ -1,7 +1,6 @@
 #![cfg(test)]
 
-use std::collections::{BTreeMap, HashSet};
-
+use crate::zk::smt::GetKey;
 use borsh::BorshDeserialize;
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
@@ -9,6 +8,7 @@ use sdk::{guest, BlockHeight, LaneId, StateCommitment};
 use sdk::{tracing, ContractAction};
 use sdk::{BlobIndex, Calldata, ContractName, Identity, TxContext, TxHash};
 use sha3::{Digest, Sha3_256};
+use std::collections::{BTreeMap, HashSet};
 
 use crate::model::{
     AssetInfo, ExecuteState, Order, OrderSide, OrderType, OrderbookEvent, Pair, PairInfo, UserInfo,
@@ -223,10 +223,13 @@ fn assert_stage<'a>(
         let light_user = light.get_user_info(user).expect("light user info");
         let full_user = full.state.get_user_info(user).expect("full user info");
 
-        let light_base = light.get_balance(&light_user, base_symbol);
-        let full_base = full.state.get_balance(&full_user, base_symbol);
-        let light_quote = light.get_balance(&light_user, quote_symbol);
-        let full_quote = full.state.get_balance(&full_user, quote_symbol);
+        let light_user_key = light_user.get_key();
+        let full_user_key = full_user.get_key();
+
+        let light_base = light.get_balance(&light_user_key, base_symbol);
+        let full_base = full.state.get_balance(&full_user_key, base_symbol);
+        let light_quote = light.get_balance(&light_user_key, quote_symbol);
+        let full_quote = full.state.get_balance(&full_user_key, quote_symbol);
 
         assert_eq!(
                 light_base.0, expected_base,
@@ -615,12 +618,14 @@ fn test_withdraw_reduces_balance_and_increments_nonce() {
         .state
         .get_user_info(users[0])
         .expect("full user info after withdraw");
+    let light_key = light_info.get_key();
+    let full_key = full_info.get_key();
     assert_eq!(
-        light.get_balance(&light_info, &base_symbol).0,
+        light.get_balance(&light_key, &base_symbol).0,
         deposit_amount - withdrawn_amount
     );
     assert_eq!(
-        full.state.get_balance(&full_info, &base_symbol).0,
+        full.state.get_balance(&full_key, &base_symbol).0,
         deposit_amount - withdrawn_amount
     );
     assert_eq!(
@@ -716,12 +721,9 @@ fn test_identify_action_is_noop() {
         .state
         .get_user_info(users[0])
         .expect("user info before identify");
-    let before_balance = light
-        .get_balance(
-            &light.get_user_info(users[0]).expect("light user"),
-            &base_symbol,
-        )
-        .0;
+    let light_user = light.get_user_info(users[0]).expect("light user");
+    let light_user_key = light_user.get_key();
+    let before_balance = light.get_balance(&light_user_key, &base_symbol).0;
 
     let events = run_action(
         &mut light,
@@ -737,12 +739,7 @@ fn test_identify_action_is_noop() {
         .state
         .get_user_info(users[0])
         .expect("user info after identify");
-    let after_balance = light
-        .get_balance(
-            &light.get_user_info(users[0]).expect("light user"),
-            &base_symbol,
-        )
-        .0;
+    let after_balance = light.get_balance(&light_user_key, &base_symbol).0;
 
     assert_eq!(
         before_commit, after_commit,
@@ -777,10 +774,9 @@ fn test_add_session_key_state_commitment() {
     let signer = TestSigner::new(1);
     let base_user = test_user(user);
 
-    light.users_info.insert(user.to_string(), base_user.clone());
-    full.state
-        .users_info
-        .insert(user.to_string(), base_user.clone());
+    light.users_info_store.insert(base_user.clone());
+    full.state.users_info_store.insert(base_user.clone());
+
     full.users_info_mt
         .update_all(std::iter::once(base_user.clone()))
         .expect("prime users info tree");
@@ -1049,20 +1045,22 @@ fn test_cancel_order_restores_balance_and_removes_state() {
         .state
         .get_user_info(user)
         .expect("full user info after deposit");
+    let light_user_key = light_user_info.get_key();
+    let full_user_key = full_user_info.get_key();
     assert_eq!(
-        light.get_balance(&light_user_info, &base_symbol).0,
+        light.get_balance(&light_user_key, &base_symbol).0,
         initial_base_deposit
     );
     assert_eq!(
-        light.get_balance(&light_user_info, &quote_symbol).0,
+        light.get_balance(&light_user_key, &quote_symbol).0,
         initial_quote_deposit
     );
     assert_eq!(
-        full.state.get_balance(&full_user_info, &base_symbol).0,
+        full.state.get_balance(&full_user_key, &base_symbol).0,
         initial_base_deposit
     );
     assert_eq!(
-        full.state.get_balance(&full_user_info, &quote_symbol).0,
+        full.state.get_balance(&full_user_key, &quote_symbol).0,
         initial_quote_deposit
     );
 
@@ -1092,12 +1090,14 @@ fn test_cancel_order_restores_balance_and_removes_state() {
         .state
         .get_user_info(user)
         .expect("full user info after ask");
+    let light_user_key = light_user_info.get_key();
+    let full_user_key = full_user_info.get_key();
     assert_eq!(
-        light.get_balance(&light_user_info, &base_symbol).0,
+        light.get_balance(&light_user_key, &base_symbol).0,
         initial_base_deposit - ask_quantity
     );
     assert_eq!(
-        full.state.get_balance(&full_user_info, &base_symbol).0,
+        full.state.get_balance(&full_user_key, &base_symbol).0,
         initial_base_deposit - ask_quantity
     );
 
@@ -1128,12 +1128,14 @@ fn test_cancel_order_restores_balance_and_removes_state() {
         .state
         .get_user_info(user)
         .expect("full user info after bid");
+    let light_user_key = light_user_info.get_key();
+    let full_user_key = full_user_info.get_key();
     assert_eq!(
-        light.get_balance(&light_user_info, &quote_symbol).0,
+        light.get_balance(&light_user_key, &quote_symbol).0,
         expected_quote_after_bid
     );
     assert_eq!(
-        full.state.get_balance(&full_user_info, &quote_symbol).0,
+        full.state.get_balance(&full_user_key, &quote_symbol).0,
         expected_quote_after_bid
     );
 
@@ -1187,20 +1189,22 @@ fn test_cancel_order_restores_balance_and_removes_state() {
         .state
         .get_user_info(user)
         .expect("full user info after cancellation");
+    let light_user_key = light_user_info.get_key();
+    let full_user_key = full_user_info.get_key();
     assert_eq!(
-        light.get_balance(&light_user_info, &base_symbol).0,
+        light.get_balance(&light_user_key, &base_symbol).0,
         initial_base_deposit
     );
     assert_eq!(
-        full.state.get_balance(&full_user_info, &base_symbol).0,
+        full.state.get_balance(&full_user_key, &base_symbol).0,
         initial_base_deposit
     );
     assert_eq!(
-        light.get_balance(&light_user_info, &quote_symbol).0,
+        light.get_balance(&light_user_key, &quote_symbol).0,
         expected_quote_after_bid
     );
     assert_eq!(
-        full.state.get_balance(&full_user_info, &quote_symbol).0,
+        full.state.get_balance(&full_user_key, &quote_symbol).0,
         expected_quote_after_bid
     );
 
@@ -1817,10 +1821,12 @@ fn test_escape_cancels_orders_and_resets_balances() {
 
     let light_user_info = light.get_user_info(user).expect("light user info");
     let full_user_info = full.state.get_user_info(user).expect("full user info");
+    let light_user_key = light_user_info.get_key();
+    let full_user_key = full_user_info.get_key();
 
     // Get user balances before escape to create proper transfer blobs
-    let light_base_balance = light.get_balance(&light_user_info, &pair.0);
-    let light_quote_balance = light.get_balance(&light_user_info, &pair.1);
+    let light_base_balance = light.get_balance(&light_user_key, &pair.0);
+    let light_quote_balance = light.get_balance(&light_user_key, &pair.1);
 
     // Create transfer blobs for each asset with non-zero balance
     use hyli_smt_token::SmtTokenAction;
@@ -1900,8 +1906,8 @@ fn test_escape_cancels_orders_and_resets_balances() {
     assert!(light.order_manager.orders_owner.is_empty());
     assert!(full.state.order_manager.orders_owner.is_empty());
 
-    assert_eq!(light.get_balance(&light_user_info, &pair.0).0, 0);
-    assert_eq!(light.get_balance(&light_user_info, &pair.1).0, 0);
-    assert_eq!(full.state.get_balance(&full_user_info, &pair.0).0, 0);
-    assert_eq!(full.state.get_balance(&full_user_info, &pair.1).0, 0);
+    assert_eq!(light.get_balance(&light_user_key, &pair.0).0, 0);
+    assert_eq!(light.get_balance(&light_user_key, &pair.1).0, 0);
+    assert_eq!(full.state.get_balance(&full_user_key, &pair.0).0, 0);
+    assert_eq!(full.state.get_balance(&full_user_key, &pair.1).0, 0);
 }

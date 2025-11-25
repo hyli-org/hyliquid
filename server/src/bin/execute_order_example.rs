@@ -61,7 +61,7 @@ fn build_dense_orderbook(
 
     let taker = UserInfo::new("taker".to_string(), b"taker".to_vec());
     let taker_key = taker.get_key();
-    state.users_info.insert(taker.user.clone(), taker.clone());
+    state.users_info_store.insert(taker.clone());
     state
         .update_balances(&pair.0, vec![(taker_key, Balance(50_000_000))])
         .expect("fund taker base");
@@ -74,7 +74,7 @@ fn build_dense_orderbook(
         for idx in 0..orders_per_level {
             let maker = UserInfo::new(format!("maker-{level}-{idx}"), vec![level as u8, idx as u8]);
             let maker_key = maker.get_key();
-            state.users_info.insert(maker.user.clone(), maker.clone());
+            state.users_info_store.insert(maker.clone());
             state
                 .update_balances(&pair.0, vec![(maker_key, Balance(10_000_000))])
                 .expect("fund maker base");

@@ -187,7 +187,7 @@ fn add_session_key_registers_new_key() {
     assert!(err.contains("already exists"));
 }
 
-#[test]
+#[test_log::test]
 fn create_pair_initializes_balances() {
     let mut orderbook = build_orderbook();
     let mut user = test_user("alice");
@@ -301,6 +301,8 @@ fn deposit_updates_balance_and_event() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
     let mut user = test_user("bob");
+    let signer = TestSigner::new(2);
+    let session_key = signer.public_key.clone();
 
     execute_action_ok(
         &mut orderbook,
@@ -310,6 +312,15 @@ fn deposit_updates_balance_and_event() {
             info: make_pair_info(&pair, 3, 2),
         },
         Vec::new(),
+    );
+
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionnedOrderbookAction::AddSessionKey,
+        serialize(&AddSessionKeyPrivateInput {
+            new_public_key: session_key.clone(),
+        }),
     );
 
     let events = execute_action_ok(
@@ -322,7 +333,8 @@ fn deposit_updates_balance_and_event() {
         Vec::new(),
     );
 
-    assert_eq!(orderbook.state.get_balance(&user, &pair.1).0, 500);
+    let user_key = user.get_key();
+    assert_eq!(orderbook.state.get_balance(&user_key, &pair.1).0, 500);
     assert_eq!(events.len(), 1);
     assert!(matches!(
         events[0],
@@ -387,7 +399,8 @@ fn withdraw_deducts_balance() {
         }),
     );
 
-    assert_eq!(orderbook.state.get_balance(&user, &pair.1).0, 600);
+    let user_key = user.get_key();
+    assert_eq!(orderbook.state.get_balance(&user_key, &pair.1).0, 600);
     assert_eq!(withdraw_events.len(), 2);
     assert!(matches!(
         withdraw_events[0],
@@ -439,10 +452,7 @@ fn cancel_order_refunds_and_removes() {
         Vec::new(),
     );
 
-    orderbook
-        .state
-        .users_info
-        .insert(user.user.clone(), user.clone());
+    orderbook.state.users_info_store.insert(user.clone());
     let order = make_limit_order("order-1", OrderSide::Bid, 100, 10);
 
     orderbook
@@ -470,7 +480,8 @@ fn cancel_order_refunds_and_removes() {
     assert!(orderbook.state.order_manager.orders.is_empty());
     assert_eq!(orderbook.state.order_manager.count_buy_orders(&pair), 0);
     assert_eq!(orderbook.state.order_manager.count_sell_orders(&pair), 0);
-    assert_eq!(orderbook.state.get_balance(&user, &pair.1).0, 10);
+    let user_key = user.get_key();
+    assert_eq!(orderbook.state.get_balance(&user_key, &pair.1).0, 10);
 
     assert!(events.iter().any(|event| matches!(
         event,

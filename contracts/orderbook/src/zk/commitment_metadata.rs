@@ -336,7 +336,13 @@ impl FullState {
 
         let mut balances_map = BTreeMap::new();
         for user_info in users_info {
-            let balance = self.state.get_balance(user_info, symbol);
+            let user_key = self
+                .state
+                .users_info_store
+                .get_key_by_name(&user_info.user)
+                .copied()
+                .unwrap_or_else(|| user_info.get_key());
+            let balance = self.state.get_balance(&user_key, symbol);
             balances_map.insert(user_info.clone(), balance);
         }
 

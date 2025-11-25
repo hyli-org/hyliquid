@@ -5,7 +5,7 @@ use sha3::{Digest, Sha3_256};
 use sparse_merkle_tree::traits::Value;
 
 use crate::{
-    model::{Balance, ExecuteState, OrderbookEvent},
+    model::{Balance, ExecuteState, OrderbookEvent, UserInfoStore},
     transaction::{
         EscapePrivateInput, OrderbookAction, PermissionlessOrderbookAction,
         PermissionnedOrderbookAction, PermissionnedPrivateInput,
@@ -184,12 +184,13 @@ impl ZkVmState {
 
         ExecuteState {
             assets_info: std::mem::take(&mut self.assets), // Assets info is not part of zkvm state
-            users_info: self
-                .users_info
-                .values
-                .drain()
-                .map(|u| (u.user.clone(), u))
-                .collect(),
+            users_info_store: UserInfoStore::from_hashmap(
+                self.users_info
+                    .values
+                    .drain()
+                    .map(|u| (u.user.clone(), u))
+                    .collect(),
+            ),
             balances: self
                 .balances
                 .iter_mut()
@@ -232,7 +233,7 @@ impl ZkVmState {
     pub fn take_changes_back(&mut self, state: &mut ExecuteState) -> Result<(), String> {
         self.users_info
             .values
-            .extend(std::mem::take(&mut state.users_info).into_values());
+            .extend(std::mem::take(&mut state.users_info_store).into_values());
 
         for (symbol, witness) in self.balances.iter_mut() {
             if let Some(state_balances) = state.balances.remove(symbol) {
@@ -413,7 +414,7 @@ mod tests {
     }
 
     fn assert_users_match(
-        execution_users: &HashMap<String, UserInfo>,
+        execution_users: &UserInfoStore,
         expected_users: &ZkWitnessSet<UserInfo>,
     ) {
         assert_eq!(
@@ -423,7 +424,7 @@ mod tests {
         );
         for expected in expected_users.values.iter() {
             let actual = execution_users
-                .get(&expected.user)
+                .get_by_name(&expected.user)
                 .unwrap_or_else(|| panic!("missing user {}", expected.user));
             assert_eq!(
                 actual, expected,
@@ -524,7 +525,10 @@ mod tests {
             execution_state.order_manager, expected_order_manager,
             "order manager mismatch after into_orderbook_state"
         );
-        assert_users_match(&execution_state.users_info, &expected_state.users_info);
+        assert_users_match(
+            &execution_state.users_info_store,
+            &expected_state.users_info,
+        );
         assert_balances_match(&execution_state.balances, &expected_state.balances);
 
         zk_state
@@ -561,7 +565,7 @@ mod tests {
         }
 
         assert!(
-            execution_state.users_info.is_empty(),
+            execution_state.users_info_store.is_empty(),
             "execution users map should be empty after take back"
         );
         assert!(
