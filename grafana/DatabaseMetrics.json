@@ -37,7 +37,11 @@
       "targets": [
         {
           "expr": "rate(db_write_events_duration_seconds_count[15s])",
-          "legendFormat": "Requests/sec"
+          "legendFormat": "Write Events/sec"
+        },
+        {
+          "expr": "sum by(endpoint) (rate(http_request_count_total[15s])) > 0",
+          "legendFormat": "{{endpoint}}"
         }
       ],
       "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
@@ -54,7 +58,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(db_event_processing_duration_seconds_sum[15s]) / rate(db_event_processing_duration_seconds_count[15s])",
+          "expr": "rate(db_event_processing_duration_seconds_sum[15s]) / rate(db_event_processing_duration_seconds_count[15s]) > 0",
           "legendFormat": "{{event_type}}"
         }
       ],
@@ -72,7 +76,7 @@
       "type": "timeseries",
       "targets": [
         {
-          "expr": "sum by(event_type) (rate(db_event_processing_duration_seconds_count[15s]))",
+          "expr": "sum by(event_type) (rate(db_event_processing_duration_seconds_count[15s]) > 0)",
           "legendFormat": "{{event_type}}"
         }
       ],
@@ -216,7 +220,7 @@
     },
     {
       "id": 10,
-      "title": "Worker Metrics",
+      "title": "Average Queue Depth per Worker",
       "type": "timeseries",
       "targets": [
         {
@@ -228,10 +232,25 @@
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+          "custom": { 
+            "lineWidth": 2, 
+            "fillOpacity": 10,
+            "thresholdsStyle": {
+              "mode": "dashed+area"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 5, "color": "yellow" },
+              { "value": 10, "color": "orange" },
+              { "value": 20, "color": "red" }
+            ]
+          }
         }
       },
-      "description": "Total number of workers and average queue depth per worker. If average queue depth is consistently high (>10), consider increasing worker count."
+      "description": "Average queue depth per worker. If average queue depth is consistently high (>10), consider increasing worker count."
     },
     {
       "id": 11,

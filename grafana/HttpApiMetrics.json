@@ -123,7 +123,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by(endpoint) (rate(http_request_count_total[15s]))",
+          "expr": "sum by(endpoint) (rate(http_request_count_total[15s])) > 0",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
@@ -220,7 +220,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by(endpoint, le) (rate(http_request_duration_milliseconds_bucket[15s])))",
+          "expr": "histogram_quantile(0.95, sum by(endpoint, le) (rate(http_request_duration_milliseconds_bucket[15s]))) > 0",
           "legendFormat": "{{endpoint}} (p95)",
           "refId": "A"
         }
@@ -730,12 +730,12 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by(endpoint) (increase(http_request_count_total[24h]))",
+          "expr": "sum by(endpoint) (increase(http_request_count_total[1m]))",
           "legendFormat": "{{endpoint}}",
           "refId": "A"
         }
       ],
-      "title": "Request Count by Endpoint (Last 24h)",
+      "title": "Request Count by Endpoint (Last 1m)",
       "type": "bargauge"
     },
     {
@@ -943,7 +943,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.95, sum by(operation, le) (rate(orderbook_operation_duration_microseconds_bucket[15s])))",
+          "expr": "histogram_quantile(0.95, sum by(operation, le) (rate(orderbook_operation_duration_microseconds_bucket[15s]))) > 0",
           "legendFormat": "{{operation}} (p95)",
           "refId": "A"
         },
@@ -952,7 +952,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "histogram_quantile(0.50, sum by(operation, le) (rate(orderbook_operation_duration_microseconds_bucket[15s])))",
+          "expr": "histogram_quantile(0.50, sum by(operation, le) (rate(orderbook_operation_duration_microseconds_bucket[15s]))) > 0",
           "legendFormat": "{{operation}} (p50)",
           "refId": "B"
         }
@@ -1049,7 +1049,7 @@
             "type": "prometheus",
             "uid": "PBFA97CFB590B2093"
           },
-          "expr": "sum by(method) (rate(orderbook_method_duration_microseconds_count[15s]))",
+          "expr": "sum by(method) (rate(orderbook_method_duration_microseconds_count[15s])) > 0",
           "legendFormat": "{{method}}",
           "refId": "A"
         }
@@ -1377,7 +1377,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "expr": "histogram_quantile(0.50, rate(orderbook_lock_duration_microseconds_bucket[15s]))",
-          "legendFormat": "p50",
+          "legendFormat": "p50 {{operation}}",
           "refId": "A"
         },
         {
@@ -1386,7 +1386,7 @@
             "uid": "PBFA97CFB590B2093"
           },
           "expr": "histogram_quantile(0.95, rate(orderbook_lock_duration_microseconds_bucket[15s]))",
-          "legendFormat": "p95",
+          "legendFormat": "p95 {{operation}}",
           "refId": "B"
         },
         {
@@ -1396,7 +1396,7 @@
           },
           "editorMode": "code",
           "expr": "histogram_quantile(0.99, rate(orderbook_lock_duration_microseconds_bucket[15s]))",
-          "legendFormat": "p99",
+          "legendFormat": "p99 {{operation}}",
           "range": true,
           "refId": "C"
         },
@@ -1409,7 +1409,7 @@
           "expr": "histogram_quantile(0.75, rate(orderbook_lock_duration_microseconds_bucket[15s]))",
           "hide": false,
           "instant": false,
-          "legendFormat": "p75",
+          "legendFormat": "p75 {{operation}}",
           "range": true,
           "refId": "D"
         }
