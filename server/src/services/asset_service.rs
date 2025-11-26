@@ -5,7 +5,7 @@ use sdk::{ContractName, TxHash};
 use sqlx::{PgPool, Row};
 use tracing::info;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Asset {
     pub asset_id: i64,
     pub contract_name: String,
@@ -199,16 +199,44 @@ impl AssetService {
             .map(|asset| asset.contract_name.clone().into())
     }
 
-    pub async fn add_asset(&mut self, asset: Asset) -> Result<(), AppError> {
-        sqlx::query("INSERT INTO assets (symbol, scale, step) VALUES ($1, $2, $3)")
-            .bind(asset.symbol.clone())
-            .bind(asset.scale)
-            .bind(asset.step)
-            .execute(&self.pool)
-            .await?;
+    pub async fn add_asset(&mut self, mut asset: Asset) -> Result<(), AppError> {
+        let inserted = sqlx::query(
+            "INSERT INTO assets (contract_name, symbol, scale, step) VALUES ($1, $2, $3, $4) \
+             ON CONFLICT (symbol) DO NOTHING RETURNING asset_id",
+        )
+        .bind(asset.contract_name.clone())
+        .bind(asset.symbol.clone())
+        .bind(asset.scale)
+        .bind(asset.step)
+        .fetch_optional(&self.pool)
+        .await?;
 
-        self.asset_map.insert(asset.symbol.clone(), asset);
+        if let Some(row) = inserted {
+            asset.asset_id = row.get("asset_id");
+            self.asset_map.insert(asset.symbol.clone(), asset);
+        } else if let Some(existing) = self.fetch_asset_by_symbol(&asset.symbol) {
+            self.asset_map.insert(existing.symbol.clone(), existing);
+        }
+
         Ok(())
+    }
+
+    fn fetch_asset_by_symbol(&self, symbol: &str) -> Option<Asset> {
+        futures::executor::block_on(async {
+            sqlx::query("SELECT * FROM assets WHERE symbol = $1")
+                .bind(symbol)
+                .fetch_optional(&self.pool)
+                .await
+                .ok()
+                .flatten()
+                .map(|row| Asset {
+                    asset_id: row.get("asset_id"),
+                    contract_name: row.get("contract_name"),
+                    symbol: row.get("symbol"),
+                    scale: row.get("scale"),
+                    step: row.get("step"),
+                })
+        })
     }
 
     /// Get commit_id from a given tx_hash

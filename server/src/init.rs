@@ -21,7 +21,9 @@ use tokio::{sync::RwLock, time::timeout};
 use tracing::{error, warn};
 
 use crate::services::{
-    asset_service::AssetService, book_service::BookService, user_service::UserService,
+    asset_service::{Asset, AssetService},
+    book_service::BookService,
+    user_service::UserService,
 };
 
 #[derive(Clone, Debug)]
@@ -99,7 +101,11 @@ async fn wait_contract_state(
 }
 
 fn init_empty_orderbook(secret: Vec<u8>, lane_id: LaneId) -> (ExecuteState, FullState) {
-    let light = ExecuteState::default();
+    let mut light = ExecuteState::default();
+    light.assets_info.insert(
+        "RETH".into(),
+        AssetInfo::new(6, ContractName("reth-collateral-orderbook".into())),
+    );
     let full = FullState::from_data(
         &light,
         secret.clone(),
@@ -157,7 +163,14 @@ pub async fn init_orderbook_from_database(
     info!("🔍 Commit id: {}", commit_id);
 
     let instruments = asset_service.get_all_instruments(commit_id).await?;
-    let assets = asset_service.get_all_assets().await;
+    let mut assets = asset_service.get_all_assets().await.clone();
+    assets.entry("RETH".into()).or_insert(Asset {
+        asset_id: 0,
+        contract_name: "reth-collateral-orderbook".into(),
+        symbol: "RETH".into(),
+        scale: 6,
+        step: 1,
+    });
 
     let mut pairs_info: BTreeMap<Pair, PairInfo> = BTreeMap::new();
     for (_, instrument) in instruments.iter() {
@@ -251,6 +264,12 @@ pub async fn init_orderbook_from_database(
 
     let full_orderbook = FullState::from_data(&light_orderbook, secret, lane_id, last_block_height)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+    // Light commitment logging skipped because ExecuteState does not expose commit directly.
+    info!(
+        "🔍 Loaded orderbook from database. Full commitment: {}",
+        hex::encode(full_orderbook.commit().0)
+    );
 
     if !check_commitment {
         info!("🔍 Checking commitment is disabled, skipping");

@@ -17,7 +17,7 @@ use hyli_modules::{
     modules::{BuildApiContextInner, Module},
 };
 use orderbook::{
-    model::{OrderbookEvent, UserInfo},
+    model::{AssetInfo, OrderbookEvent, UserInfo},
     transaction::{OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput},
     zk::FullState,
     ORDERBOOK_ACCOUNT_IDENTITY,
@@ -50,6 +50,10 @@ pub struct OrderbookProverRequest {
     pub nonce: u32,
     pub action_private_input: Vec<u8>,
     pub tx_hash: TxHash,
+    pub blobs: Option<Vec<sdk::Blob>>,
+    pub tx_blob_count: Option<usize>,
+    pub orderbook_blob_index: Option<BlobIndex>,
+    pub asset_info: Option<(String, AssetInfo)>,
 }
 
 module_bus_client! {
@@ -163,6 +167,10 @@ impl OrderbookProverModule {
             orderbook_action,
             tx_hash,
             nonce,
+            blobs,
+            tx_blob_count,
+            orderbook_blob_index,
+            asset_info,
         } = request;
         // The goal is to create commitment metadata that contains the proofs to be able to load the zkvm state into the zkvm
 
@@ -170,6 +178,14 @@ impl OrderbookProverModule {
         // We then execute the action with the complete orderbook to compare the events and update the state
 
         let mut orderbook = self.orderbook.lock().await;
+
+        if let Some((sym, info)) = asset_info {
+            orderbook
+                .state
+                .assets_info
+                .entry(sym)
+                .or_insert(info);
+        }
 
         let commitment_metadata = orderbook
             .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &orderbook_action)
@@ -193,17 +209,25 @@ impl OrderbookProverModule {
 
         let private_input = borsh::to_vec(&permissioned_private_input)?;
 
-        let calldata = Calldata {
-            identity: ORDERBOOK_ACCOUNT_IDENTITY.into(),
-            tx_hash: tx_hash.clone(),
-            blobs: vec![OrderbookAction::PermissionnedOrderbookAction(
+        let (blobs_vec, tx_blob_count, blob_index) = if let (Some(blobs), Some(count), Some(idx)) =
+            (blobs, tx_blob_count, orderbook_blob_index)
+        {
+            (blobs, count, idx)
+        } else {
+            let single = vec![OrderbookAction::PermissionnedOrderbookAction(
                 orderbook_action.clone(),
                 nonce,
             )
-            .as_blob(self.ctx.orderbook_cn.clone())]
-            .into(),
-            tx_blob_count: 1,
-            index: BlobIndex(0),
+            .as_blob(self.ctx.orderbook_cn.clone())];
+            (single, 1, BlobIndex(0))
+        };
+
+        let calldata = Calldata {
+            identity: ORDERBOOK_ACCOUNT_IDENTITY.into(),
+            tx_hash: tx_hash.clone(),
+            blobs: IndexedBlobs::from(blobs_vec),
+            tx_blob_count,
+            index: blob_index,
             private_input,
             tx_ctx: Default::default(), // Will be set when proving
         };

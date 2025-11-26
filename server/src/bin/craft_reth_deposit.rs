@@ -10,12 +10,12 @@ use alloy::{
 };
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
-use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
+use client_sdk::rest_client::NodeApiClient;
 use hex::{self, ToHex};
-use orderbook::transaction::{OrderbookAction, PermissionnedOrderbookAction};
-use sdk::{Blob, BlobData, BlobTransaction, ContractName, Identity, ProgramId, StructuredBlobData};
+use sdk::{ContractName, ProgramId};
 use serde_json;
 use server::{conf::Conf, nonce_store::NonceStore, reth_utils::derive_program_pubkey};
+use reqwest::Client;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -43,9 +43,10 @@ struct Args {
     contract_address: Option<String>,
     #[arg(
         long,
-        help = "Hyli node URL (defaults to config or http://localhost:4321)"
+        default_value = "http://localhost:9002",
+        help = "Hyli server URL (rest) to call /deposit_reth_bridge"
     )]
-    node_url: Option<String>,
+    server_url: String,
     #[arg(
         long,
         help = "Override the collateral contract name used for blobs (defaults to reth-collateral-<orderbook>)"
@@ -85,19 +86,6 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
     let conf = Conf::new(args.config_file.clone()).context("loading config")?;
-    let hyli_url = args
-        .node_url
-        .clone()
-        .filter(|url| !url.is_empty())
-        .or_else(|| {
-            if conf.node_url.is_empty() {
-                None
-            } else {
-                Some(conf.node_url.clone())
-            }
-        })
-        .unwrap_or_else(|| "http://localhost:4321".to_string());
-    let hyli_client = NodeApiHttpClient::new(hyli_url.clone()).context("building Hyli client")?;
     let rpc_url = args
         .rpc_url
         .as_deref()
@@ -129,8 +117,6 @@ async fn main() -> Result<()> {
         .collateral_token_cn
         .clone()
         .unwrap_or_else(|| format!("reth-collateral-{}", args.orderbook_cn));
-    let collateral_contract_name = ContractName(collateral_contract.clone());
-    let orderbook_contract_name: ContractName = args.orderbook_cn.clone().into();
     let identity = args
         .identity
         .clone()
@@ -206,42 +192,24 @@ async fn main() -> Result<()> {
     let raw_hex = format!("0x{}", raw.encode_hex::<String>());
     println!("Signed ERC20 transfer:\n{raw_hex}");
 
-    let collateral_blob = Blob {
-        contract_name: collateral_contract_name.clone(),
-        data: BlobData::from(StructuredBlobData {
-            caller: None,
-            callees: None,
-            parameters: raw.clone(),
-        }),
-    };
-
-    let orderbook_blob = OrderbookAction::PermissionnedOrderbookAction(
-        PermissionnedOrderbookAction::DepositRethBridge {
-            symbol: collateral_contract.clone(),
-            amount: amount_u64,
-        },
-        0,
-    )
-    .as_blob(orderbook_contract_name.clone());
-
-    let blob_tx = BlobTransaction::new(
-        Identity(identity.clone()),
-        vec![collateral_blob, orderbook_blob],
-    );
-
-    let blob_json =
-        serde_json::to_string_pretty(&blob_tx).context("serializing blob transaction")?;
-
-    let hyli_tx = hyli_client
-        .send_tx_blob(blob_tx)
+    let client = Client::new();
+    let response = client
+        .post(format!("{}/deposit_reth_bridge", args.server_url))
+        .json(&serde_json::json!({
+            "signed_tx_hex": raw_hex,
+            "identity": identity,
+        }))
+        .send()
         .await
-        .context("submitting deposit blob to Hyli")?;
+        .context("sending deposit_reth_bridge request")?;
 
-    println!(
-        "Submitted Hyli blob tx {}",
-        hex::encode(hyli_tx.0.as_bytes())
-    );
-    println!("Blob payload (JSON):\n{}", blob_json);
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        anyhow::bail!("deposit_reth_bridge failed with status {status}: {body}");
+    }
+
+    println!("Submitted deposit_reth_bridge request: {body}");
 
     nonce_store.persist().context("saving nonce store")?;
 

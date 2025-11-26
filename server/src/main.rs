@@ -15,6 +15,7 @@ use hyli_modules::{
 use prometheus::Registry;
 use reth_harness::{CollateralContractInit, RethHarness};
 use sdk::{api::NodeInfo, info};
+use server::services::asset_service::Asset;
 use server::{
     api::{ApiModule, ApiModuleCtx},
     app::{OrderbookModule, OrderbookModuleCtx},
@@ -31,6 +32,7 @@ use server::{
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
+use sqlx::Row;
 use std::sync::Arc;
 use tracing::{error, warn};
 
@@ -119,6 +121,8 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         bridge_service,
     } = setup_services(&config, pool.clone()).await?;
 
+    ensure_user_exists(&pool, "user@orderbook").await?;
+
     // TODO: make a proper secret management
     let secret = vec![1, 2, 3];
 
@@ -193,6 +197,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     let orderbook_ctx = Arc::new(OrderbookModuleCtx {
         api: api_ctx.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
+        reth_collateral_cn: args.reth_bridge.then(|| collateral_token_cn.clone().into()),
         lane_id: validator_lane_id.clone(),
         default_state: light_state.clone(),
         asset_service: asset_service.clone(),
@@ -380,5 +385,60 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     // Run until shut down or an error occurs
     handler.exit_process().await?;
 
+    Ok(())
+}
+
+async fn ensure_user_exists(pool: &sqlx::Pool<sqlx::Postgres>, identity: &str) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    let exists = sqlx::query("SELECT 1 FROM users WHERE identity = $1")
+        .bind(identity)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_some();
+    if exists {
+        tx.commit().await?;
+        return Ok(());
+    }
+
+    let commit_row =
+        sqlx::query("INSERT INTO commits (tx_hash, message) VALUES ($1, $2) RETURNING commit_id")
+            .bind(format!("prefill-{identity}"))
+            .bind("prefill test user")
+            .fetch_one(&mut *tx)
+            .await?;
+    let commit_id: i64 = commit_row.get("commit_id");
+
+    sqlx::query("INSERT INTO users (commit_id, identity, salt, nonce) VALUES ($1, $2, $3, $4)")
+        .bind(commit_id)
+        .bind(identity)
+        .bind(vec![0u8; 32])
+        .bind(0_i64)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn ensure_asset_exists(
+    asset_service: &tokio::sync::RwLock<server::services::asset_service::AssetService>,
+    contract_name: &str,
+    symbol: &str,
+    scale: i16,
+    step: i64,
+) -> Result<()> {
+    let mut svc = asset_service.write().await;
+    if svc.get_asset(symbol).is_some() {
+        return Ok(());
+    }
+    svc.add_asset(Asset {
+        asset_id: 0,
+        contract_name: contract_name.to_string(),
+        symbol: symbol.to_string(),
+        scale,
+        step,
+    })
+    .await
+    .map_err(|_e| anyhow!("failed to insert asset {symbol}"))?;
     Ok(())
 }

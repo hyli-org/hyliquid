@@ -7,6 +7,12 @@ use std::{
     vec,
 };
 
+use alloy::{
+    consensus::TxEnvelope,
+    eips::eip2718::Decodable2718,
+    primitives::TxKind,
+    sol_types::{sol, SolCall},
+};
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     extract::{Json, State},
@@ -34,7 +40,10 @@ use orderbook::{
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::StatusCode;
-use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId};
+use sdk::{
+    Blob, BlobData, BlobIndex, BlobTransaction, ContractAction, ContractName, Hashed, Identity,
+    LaneId, StructuredBlobData,
+};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
@@ -54,6 +63,7 @@ pub struct OrderbookModule {
 pub struct OrderbookModuleCtx {
     pub api: Arc<BuildApiContextInner>,
     pub orderbook_cn: ContractName,
+    pub reth_collateral_cn: Option<ContractName>,
     pub lane_id: LaneId,
     pub default_state: orderbook::model::ExecuteState,
     pub client: Arc<NodeApiHttpClient>,
@@ -112,6 +122,7 @@ impl Module for OrderbookModule {
             default_state: ctx.default_state.clone(),
             bus: router_bus.clone(),
             orderbook: orderbook.clone(),
+            reth_collateral_cn: ctx.reth_collateral_cn.clone(),
             lane_id: ctx.lane_id.clone(),
             asset_service: ctx.asset_service.clone(),
             client: ctx.client.clone(),
@@ -127,6 +138,7 @@ impl Module for OrderbookModule {
             .route("/create_pair", post(create_pair))
             .route("/add_session_key", post(add_session_key))
             .route("/deposit", post(deposit))
+            .route("/deposit_reth_bridge", post(deposit_reth_bridge))
             .route("/create_order", post(create_order))
             .route("/cancel_order", post(cancel_order))
             .route("/withdraw", post(withdraw))
@@ -285,6 +297,10 @@ impl OrderbookModule {
                 orderbook_action: orderbook_id_action,
                 tx_hash: tx_hash.clone(),
                 nonce: action_id,
+                blobs: None,
+                tx_blob_count: None,
+                orderbook_blob_index: None,
+                asset_info: None,
             },
         })?;
         Ok(())
@@ -298,6 +314,7 @@ struct RouterCtx {
     pub orderbook_cn: ContractName,
     pub default_state: orderbook::model::ExecuteState,
     pub orderbook: Arc<Mutex<orderbook::model::ExecuteState>>,
+    pub reth_collateral_cn: Option<ContractName>,
     pub lane_id: LaneId,
     pub asset_service: Arc<RwLock<AssetService>>,
     pub client: Arc<NodeApiHttpClient>,
@@ -363,6 +380,12 @@ pub struct DepositRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct DepositRethBridgeRequest {
+    pub signed_tx_hex: String,
+    pub identity: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CancelOrderRequest {
     pub order_id: String,
 }
@@ -372,6 +395,11 @@ pub struct WithdrawRequest {
     pub symbol: String,
     pub amount: u64,
     pub destination: WithdrawDestination,
+}
+
+sol! {
+    #[allow(non_camel_case_types)]
+    function transfer(address to, uint256 amount) returns (bool);
 }
 
 // API-friendly representation of OrderManager for JSON serialization
@@ -722,6 +750,176 @@ async fn deposit(
 }
 
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+async fn deposit_reth_bridge(
+    State(ctx): State<RouterCtx>,
+    Json(request): Json<DepositRethBridgeRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let Some(collateral_cn) = ctx.reth_collateral_cn.clone() else {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("reth collateral token not configured on server"),
+        ));
+    };
+
+    let raw_tx = hex::decode(request.signed_tx_hex.trim_start_matches("0x")).map_err(|err| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("invalid signed_tx_hex: {err}"),
+        )
+    })?;
+
+    let mut cursor = raw_tx.as_slice();
+    let envelope = TxEnvelope::decode_2718(&mut cursor).map_err(|err| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("failed to decode signed tx: {err}"),
+        )
+    })?;
+
+    let (input, to) = match envelope {
+        TxEnvelope::Eip1559(tx) => (tx.tx().input.clone(), tx.tx().to),
+        TxEnvelope::Eip4844(tx) => (tx.tx().tx().input.clone(), TxKind::Call(tx.tx().tx().to)),
+        _ => {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow!("unsupported tx type for reth bridge deposit"),
+            ))
+        }
+    };
+
+    if !matches!(to, TxKind::Call(_)) {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("signed tx must target a contract call"),
+        ));
+    }
+
+    let transfer = transferCall::abi_decode(input.as_ref()).map_err(|err| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("signed tx is not an erc20 transfer: {err}"),
+        )
+    })?;
+
+    let amount: u64 = transfer.amount.try_into().map_err(|_| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("transfer amount does not fit into u64"),
+        )
+    })?;
+
+    let symbol = {
+        let asset_service = ctx.asset_service.read().await;
+        if let Some(sym) = asset_service
+            .get_symbol_from_contract_name(&collateral_cn.0)
+            .await
+        {
+            sym
+        } else {
+            collateral_cn.0.clone()
+        }
+    };
+    let (asset_scale, asset_contract) = {
+        let asset_service = ctx.asset_service.read().await;
+        if let Some(asset) = asset_service
+            .get_asset_from_contract_name(&collateral_cn.0)
+            .await
+        {
+            (
+                asset.scale as u64,
+                ContractName(asset.contract_name.clone()),
+            )
+        } else {
+            (18_u64, collateral_cn.clone())
+        }
+    };
+
+    let user = request.identity;
+
+    let (user_info, events) =
+        {
+            let mut orderbook = ctx.orderbook.lock().await;
+
+            orderbook.assets_info.entry(symbol.clone()).or_insert(
+                orderbook::model::AssetInfo::new(asset_scale, asset_contract.clone()),
+            );
+
+            let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
+                let mut salt = [0u8; 32];
+                rand::rng().fill_bytes(&mut salt);
+                UserInfo::new(user.clone(), salt.to_vec())
+            });
+
+            let events = orderbook
+                .deposit(&symbol, amount, &user_info)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+            (user_info, events)
+        };
+
+    let action_private_input = Vec::<u8>::new();
+    let orderbook_action = PermissionnedOrderbookAction::DepositRethBridge {
+        symbol: symbol.clone(),
+        amount,
+    };
+    let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+
+    let collateral_blob = Blob {
+        contract_name: collateral_cn.clone(),
+        data: BlobData::from(StructuredBlobData {
+            caller: None,
+            callees: None,
+            parameters: raw_tx.clone(),
+        }),
+    };
+
+    let orderbook_blob =
+        OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone(), action_id);
+    let orderbook_blob = orderbook_blob.as_blob(ctx.orderbook_cn.clone());
+
+    let blobs = vec![collateral_blob.clone(), orderbook_blob.clone()];
+    let blob_tx = BlobTransaction::new(ORDERBOOK_ACCOUNT_IDENTITY, blobs.clone());
+    let tx_hash = blob_tx.hashed();
+
+    let action_private_input = borsh::to_vec(&action_private_input).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            anyhow::anyhow!("Failed to serialize action private input: {e}"),
+        )
+    })?;
+
+    let prover_request = OrderbookProverRequest {
+        events,
+        user_info: user_info.clone(),
+        action_private_input,
+        orderbook_action,
+        tx_hash: tx_hash.clone(),
+        nonce: action_id,
+        blobs: Some(blobs),
+        tx_blob_count: Some(2),
+        orderbook_blob_index: Some(BlobIndex(1)),
+        asset_info: Some((
+            symbol.clone(),
+            orderbook::model::AssetInfo::new(asset_scale, asset_contract.clone()),
+        )),
+    };
+
+    let mut bus = ctx.bus.clone();
+    bus.send(DatabaseRequest::WriteEvents {
+        user: user_info,
+        tx_hash: tx_hash.clone(),
+        blob_tx,
+        prover_request,
+    })?;
+
+    Ok(Json(tx_hash))
+}
+
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -1003,6 +1201,10 @@ async fn process_orderbook_action<T: BorshSerialize>(
         orderbook_action,
         tx_hash: tx_hash.clone(),
         nonce: action_id,
+        blobs: None,
+        tx_blob_count: None,
+        orderbook_blob_index: None,
+        asset_info: None,
     };
 
     // Send write events request to database module
