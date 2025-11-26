@@ -179,6 +179,208 @@
           "custom": { "lineWidth": 1, "fillOpacity": 0 }
         }
       }
+    },
+    {
+      "id": 9,
+      "title": "Worker Queue Depth",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "db_worker_queue_depth",
+          "legendFormat": "Pending Requests"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { 
+            "lineWidth": 2, 
+            "fillOpacity": 20,
+            "thresholdsStyle": {
+              "mode": "dashed+area"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 100, "color": "yellow" },
+              { "value": 500, "color": "orange" },
+              { "value": 1000, "color": "red" }
+            ]
+          }
+        }
+      },
+      "description": "Number of pending requests in worker queues. High values indicate we may need more workers."
+    },
+    {
+      "id": 10,
+      "title": "Worker Metrics",
+      "type": "timeseries",
+      "targets": [
+        {
+          "expr": "db_worker_queue_depth / clamp_min(db_worker_count, 1)",
+          "legendFormat": "Avg Queue Depth per Worker"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 32 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 }
+        }
+      },
+      "description": "Total number of workers and average queue depth per worker. If average queue depth is consistently high (>10), consider increasing worker count."
+    },
+    {
+      "id": 11,
+      "title": "Current Worker Queue Depth",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "db_worker_queue_depth",
+          "legendFormat": "Pending Requests"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 2000,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 100, "color": "yellow" },
+              { "value": 500, "color": "orange" },
+              { "value": 1000, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "description": "Current number of pending requests in worker queues"
+    },
+    {
+      "id": 12,
+      "title": "Active Workers",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "db_worker_count",
+          "legendFormat": "Workers"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 50,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "blue" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": false
+      },
+      "description": "Current number of active database workers"
+    },
+    {
+      "id": 13,
+      "title": "Avg Queue Depth per Worker",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "db_worker_queue_depth / clamp_min(db_worker_count, 1)",
+          "legendFormat": "Requests per Worker"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 50,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "green" },
+              { "value": 5, "color": "yellow" },
+              { "value": 10, "color": "orange" },
+              { "value": 20, "color": "red" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "description": "Current average queue depth per worker. Values >10 indicate need for more workers."
+    },
+    {
+      "id": 14,
+      "title": "Current Write Events Rate",
+      "type": "gauge",
+      "targets": [
+        {
+          "expr": "rate(db_write_events_duration_seconds_count[15s])",
+          "legendFormat": "Events/sec"
+        }
+      ],
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 40 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "value": null, "color": "blue" }
+            ]
+          }
+        }
+      },
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "values": false,
+          "calcs": ["lastNotNull"],
+          "fields": ""
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": false
+      },
+      "description": "Current rate of write events being processed"
     }
   ],
   "refresh": "10s",

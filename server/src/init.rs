@@ -123,6 +123,7 @@ pub async fn init_orderbook_from_database(
     indexer: &IndexerApiHttpClient,
     contract_name: &ContractName,
     check_commitment: bool,
+    offline: bool,
 ) -> Result<(ExecuteState, FullState), AppError> {
     let asset_service = asset_service.read().await;
     let user_service = user_service.read().await;
@@ -130,15 +131,27 @@ pub async fn init_orderbook_from_database(
 
     info!("🔍 Initializing orderbook from database");
 
-    let last_settled_tx = indexer
-        .get_last_settled_txid_by_contract(contract_name, Some(vec![TransactionStatusDb::Success]))
-        .await?;
+    let last_settled_tx = if offline {
+        None
+    } else {
+        indexer
+            .get_last_settled_txid_by_contract(
+                contract_name,
+                Some(vec![TransactionStatusDb::Success]),
+            )
+            .await?
+    };
 
     if last_settled_tx.is_none() {
         info!("🔍 No last settled success tx found, initializing orderbook with empty state");
         let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
-        return check(node, light_orderbook, full_orderbook).await;
+        if check_commitment && !offline {
+            return check(node, light_orderbook, full_orderbook).await;
+        } else {
+            return Ok((light_orderbook, full_orderbook));
+        }
     }
+
     let last_settled_tx = last_settled_tx.unwrap();
 
     info!("🔍 Last settled tx found: {}", last_settled_tx);
@@ -151,7 +164,7 @@ pub async fn init_orderbook_from_database(
         warn!("🔍 No commit id found for tx hash: {}", last_settled_tx.1);
         warn!("🔍 Initializing orderbook with empty state");
         let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
-        if check_commitment {
+        if check_commitment && !offline {
             return check(node, light_orderbook, full_orderbook).await;
         } else {
             return Ok((light_orderbook, full_orderbook));
@@ -258,7 +271,7 @@ pub async fn init_orderbook_from_database(
     let full_orderbook = FullState::from_data(&light_orderbook, secret, lane_id, last_block_height)
         .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
 
-    if !check_commitment {
+    if !check_commitment || offline {
         info!("🔍 Checking commitment is disabled, skipping");
         return Ok((light_orderbook, full_orderbook));
     }

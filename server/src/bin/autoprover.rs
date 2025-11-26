@@ -72,7 +72,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         node_client,
         indexer_client,
         validator_lane_id,
-    } = setup_services(&config, pool.clone()).await?;
+    } = setup_services(&config, pool.clone(), false).await?;
 
     let secret = vec![1, 2, 3];
 
@@ -86,6 +86,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         &indexer_client,
         &args.orderbook_cn.clone().into(),
         !args.no_check,
+        false,
     )
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;

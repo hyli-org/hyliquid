@@ -145,7 +145,7 @@ pub struct ServiceContext {
     pub validator_lane_id: LaneId,
 }
 
-pub async fn setup_services(config: &Conf, pool: PgPool) -> Result<ServiceContext> {
+pub async fn setup_services(config: &Conf, pool: PgPool, offline: bool) -> Result<ServiceContext> {
     // Initialize services
     let user_service = Arc::new(RwLock::new(
         crate::services::user_service::UserService::new(pool.clone()).await,
@@ -172,15 +172,19 @@ pub async fn setup_services(config: &Conf, pool: PgPool) -> Result<ServiceContex
     );
 
     // Get validator lane ID
-    let validator_lane_id = node_client
-        .get_node_info()
-        .await?
-        .pubkey
-        .map(LaneId)
-        .ok_or_else(|| {
-            error!("Validator lane id not found");
-            anyhow::anyhow!("Validator lane id not found")
-        })?;
+    let validator_lane_id = if offline {
+        LaneId::default()
+    } else {
+        node_client
+            .get_node_info()
+            .await?
+            .pubkey
+            .map(LaneId)
+            .ok_or_else(|| {
+                error!("Validator lane id not found");
+                anyhow::anyhow!("Validator lane id not found")
+            })?
+    };
 
     Ok(ServiceContext {
         user_service,

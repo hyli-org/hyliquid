@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -6,15 +6,15 @@ use std::time::Instant;
 use anyhow::Result;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_modules::{
-    bus::{command_response::Query, BusMessage, SharedMessageBus},
+    bus::{BusMessage, SharedMessageBus},
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
 use opentelemetry::{
-    metrics::{Histogram, Meter},
+    metrics::{Histogram, Meter, UpDownCounter},
     KeyValue,
 };
-use orderbook::model::{OrderbookEvent, UserInfo};
+use orderbook::model::{OrderId, OrderbookEvent, UserInfo};
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
@@ -57,6 +57,10 @@ pub struct DatabaseMetrics {
     pub transaction_commit_duration: Histogram<f64>,
     /// Duration of blob transaction sending
     pub blob_send_duration: Histogram<f64>,
+    /// Number of pending requests in worker queues
+    pub worker_queue_depth: UpDownCounter<i64>,
+    /// Total number of active workers
+    pub worker_count: UpDownCounter<i64>,
 }
 
 impl DatabaseMetrics {
@@ -167,6 +171,16 @@ impl DatabaseMetrics {
                 .with_unit("s")
                 .with_boundaries(latency_buckets.clone())
                 .build(),
+            worker_queue_depth: meter
+                .i64_up_down_counter("db.worker.queue.depth")
+                .with_description("Number of pending requests in worker queues")
+                .with_unit("requests")
+                .build(),
+            worker_count: meter
+                .i64_up_down_counter("db.worker.count")
+                .with_description("Total number of active database workers")
+                .with_unit("workers")
+                .build(),
         }
     }
 
@@ -201,7 +215,7 @@ impl BusMessage for DatabaseRequest {
 module_bus_client! {
     #[derive(Debug)]
     struct DatabaseModuleBusClient {
-        receiver(Query<DatabaseRequest, bool>),
+        receiver(DatabaseRequest),
     }
 }
 
@@ -264,10 +278,7 @@ impl DatabaseService {
         debug!("Writing events for user {user} with tx hash {tx_hash:#}");
         use crate::services::asset_service::MarketStatus;
 
-        let mut symbol_book_updated = HashSet::<String>::new();
         let mut reload_instrument_map = false;
-        // let mut trigger_notify_trades = false;
-        // let mut trigger_notify_orders = false;
 
         let tx_begin_start = Instant::now();
         let mut tx = log_error!(
@@ -400,7 +411,6 @@ impl DatabaseService {
                     );
                 }
                 OrderbookEvent::OrderCreated { order } => {
-                    // trigger_notify_orders = true;
                     let order_create_start = Instant::now();
 
                     let symbol = format!("{}/{}", order.pair.0, order.pair.1);
@@ -413,8 +423,6 @@ impl DatabaseService {
                         "Creating order for user {} with instrument {:?} and order {:?}",
                         user, instrument, order
                     );
-
-                    symbol_book_updated.insert(symbol);
 
                     log_error!(
                         sqlx::query("INSERT INTO orders (order_id, instrument_id, identity, side, type, price, qty)
@@ -466,23 +474,7 @@ impl DatabaseService {
                         "Cancelling order for user {} with order id {:?} and pair {:?}",
                         user, order_id, pair
                     );
-                    // trigger_notify_orders = true;
                     let order_cancel_start = Instant::now();
-
-                    symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
-
-                    log_error!(
-                        sqlx::query(
-                            "
-                        UPDATE orders SET status = 'cancelled' WHERE order_id = $1
-                        ",
-                        )
-                        .bind(order_id.clone())
-                        .execute(&mut *tx)
-                        .instrument(tracing::info_span!("update_order_as_cancelled"))
-                        .await,
-                        "Failed to update order as cancelled"
-                    )?;
 
                     log_error!(
                         sqlx::query(
@@ -517,8 +509,6 @@ impl DatabaseService {
                         "Executing order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
-                    // trigger_notify_orders = true;
-                    // trigger_notify_trades = true;
                     let order_execute_start = Instant::now();
 
                     let asset_service = self.ctx.asset_service.read().await;
@@ -527,21 +517,6 @@ impl DatabaseService {
                         .ok_or_else(|| {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
-
-                    symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
-
-                    log_error!(
-                        sqlx::query(
-                            "
-                        UPDATE orders SET status = 'filled', qty_filled = qty WHERE order_id = $1
-                        ",
-                        )
-                        .bind(order_id.clone())
-                        .execute(&mut *tx)
-                        .instrument(tracing::info_span!("update_order_as_filled"))
-                        .await,
-                        "Failed to update order as filled"
-                    )?;
 
                     // TODO:have more data in the event to avoid the SELECT here
                     log_error!(
@@ -595,7 +570,7 @@ impl DatabaseService {
                 OrderbookEvent::OrderUpdate {
                     order_id,
                     taker_order_id,
-                    remaining_quantity,
+                    remaining_quantity: _remaining_quantity,
                     executed_quantity,
                     pair,
                 } => {
@@ -603,8 +578,6 @@ impl DatabaseService {
                         "Updating order for user {} with order id {:?} and taker order id {:?} on pair {:?}",
                         user, order_id, taker_order_id, pair
                     );
-                    // trigger_notify_trades = true;
-                    // trigger_notify_orders = true;
                     let order_update_start = Instant::now();
 
                     let asset_service = self.ctx.asset_service.read().await;
@@ -613,22 +586,6 @@ impl DatabaseService {
                         .ok_or_else(|| {
                             anyhow::anyhow!("Instrument not found: {}/{}", pair.0, pair.1)
                         })?;
-
-                    symbol_book_updated.insert(format!("{}/{}", pair.0, pair.1));
-
-                    log_error!(
-                        sqlx::query(
-                            "
-                        UPDATE orders SET status = 'partially_filled', qty_filled = qty - $1 WHERE order_id = $2
-                        ",
-                        )
-                        .bind(remaining_quantity as i64)
-                        .bind(order_id.clone())
-                        .execute(&mut *tx)
-                        .instrument(tracing::info_span!("update_order_as_partially_filled"))
-                        .await,
-                        "Failed to update order as partially filled"
-                    )?;
 
                     log_error!(
                         sqlx::query(
@@ -820,58 +777,6 @@ impl DatabaseService {
             &[],
         );
 
-        // if trigger_notify_trades {
-        //     debug!("Notifying trades");
-        //     let notify_start = Instant::now();
-        //     log_error!(
-        //         sqlx::query("select pg_notify('trades', 'trades')")
-        //             .execute(&mut *tx)
-        //             .instrument(tracing::info_span!("notify_trades"))
-        //             .await,
-        //         "Failed to notify 'trades'"
-        //     )?;
-        //     self.ctx.metrics.record(
-        //         &self.ctx.metrics.notification_duration,
-        //         notify_start,
-        //         &[KeyValue::new("channel", "trades")],
-        //     );
-        // }
-
-        // if trigger_notify_orders {
-        //     debug!("Notifying orders");
-        //     let notify_start = Instant::now();
-        //     log_error!(
-        //         sqlx::query("select pg_notify('orders', 'orders')")
-        //             .execute(&mut *tx)
-        //             .instrument(tracing::info_span!("notify_orders"))
-        //             .await,
-        //         "Failed to notify 'orders'"
-        //     )?;
-        //     self.ctx.metrics.record(
-        //         &self.ctx.metrics.notification_duration,
-        //         notify_start,
-        //         &[KeyValue::new("channel", "orders")],
-        //     );
-        // }
-
-        // for symbol in symbol_book_updated {
-        //     debug!("Notifying book for symbol {}", symbol);
-        //     let notify_start = Instant::now();
-        //     log_error!(
-        //         sqlx::query("select pg_notify('book', $1)")
-        //             .bind(symbol)
-        //             .execute(&mut *tx)
-        //             .instrument(tracing::info_span!("notify_book"))
-        //             .await,
-        //         "Failed to notify 'book'"
-        //     )?;
-        //     self.ctx.metrics.record(
-        //         &self.ctx.metrics.notification_duration,
-        //         notify_start,
-        //         &[KeyValue::new("channel", "book")],
-        //     );
-        // }
-
         let commit_start = Instant::now();
         log_error!(
             tx.commit()
@@ -919,11 +824,162 @@ impl DatabaseService {
     }
 }
 
+#[derive(Default)]
+pub struct DatabaseAggregator {
+    executed_orders: HashSet<OrderId>,
+    cancelled_orders: HashSet<OrderId>,
+    updated_orders: HashMap<OrderId, u64>,
+    trigger_notify_trades: bool,
+    trigger_notify_orders: bool,
+    symbol_book_updated: HashSet<String>,
+}
+
+impl DatabaseAggregator {
+    pub fn create_order(&mut self, symbol: String) {
+        self.trigger_notify_orders = true;
+        self.symbol_book_updated.insert(symbol);
+    }
+
+    pub fn cancel_order(&mut self, order_id: OrderId, symbol: String) {
+        self.cancelled_orders.insert(order_id);
+        self.trigger_notify_orders = true;
+        self.symbol_book_updated.insert(symbol);
+    }
+
+    pub fn execute_order(&mut self, order_id: OrderId, symbol: String) {
+        self.updated_orders.remove(&order_id);
+        self.executed_orders.insert(order_id);
+        self.trigger_notify_trades = true;
+        self.trigger_notify_orders = true;
+        self.symbol_book_updated.insert(symbol);
+    }
+    pub fn update_order(&mut self, order_id: OrderId, remaining_quantity: u64, symbol: String) {
+        self.updated_orders.insert(order_id, remaining_quantity);
+        self.trigger_notify_trades = true;
+        self.trigger_notify_orders = true;
+        self.symbol_book_updated.insert(symbol);
+    }
+
+    pub async fn dump_to_db(&mut self, pool: &PgPool, metrics: &DatabaseMetrics) -> Result<()> {
+        if self.symbol_book_updated.is_empty()
+            && self.updated_orders.is_empty()
+            && self.executed_orders.is_empty()
+            && self.cancelled_orders.is_empty()
+        {
+            return Ok(());
+        }
+
+        info!("Dumping database aggregator to db with {} orders, {} trades, {} cancelled orders, {} symbol book updated", self.updated_orders.len(), self.executed_orders.len(), self.cancelled_orders.len(), self.symbol_book_updated.len());
+        let mut tx = pool.begin().await?;
+        for order_id in self.executed_orders.drain() {
+            log_error!(
+                sqlx::query(
+                    "UPDATE orders SET status = 'filled', qty_filled = qty WHERE order_id = $1"
+                )
+                .bind(order_id.clone())
+                .execute(&mut *tx)
+                .instrument(tracing::info_span!("update_order_as_filled"))
+                .await,
+                "Failed to update order as filled"
+            )?;
+        }
+
+        for order_id in self.cancelled_orders.drain() {
+            log_error!(
+                sqlx::query("UPDATE orders SET status = 'cancelled' WHERE order_id = $1")
+                    .bind(order_id.clone())
+                    .execute(&mut *tx)
+                    .instrument(tracing::info_span!("update_order_as_cancelled"))
+                    .await,
+                "Failed to update order as cancelled"
+            )?;
+        }
+
+        for (order_id, remaining_quantity) in self.updated_orders.drain() {
+            log_error!(
+                sqlx::query(
+                    "
+                UPDATE orders SET status = 'partially_filled', qty_filled = qty - $1 WHERE order_id = $2
+                ",
+                )
+                .bind(remaining_quantity as i64)
+                .bind(order_id.clone())
+                .execute(&mut *tx)
+                .instrument(tracing::info_span!("update_order_as_partially_filled"))
+                .await,
+                "Failed to update order as partially filled"
+            )?;
+        }
+
+        tx.commit().await?;
+
+        // Send notifications after committing the transaction
+        if self.trigger_notify_trades {
+            debug!("Notifying trades");
+            let notify_start = Instant::now();
+            log_error!(
+                sqlx::query("select pg_notify('trades', 'trades')")
+                    .execute(pool)
+                    .instrument(tracing::info_span!("notify_trades"))
+                    .await,
+                "Failed to notify 'trades'"
+            )?;
+            metrics.record(
+                &metrics.notification_duration,
+                notify_start,
+                &[KeyValue::new("channel", "trades")],
+            );
+        }
+
+        if self.trigger_notify_orders {
+            debug!("Notifying orders");
+            let notify_start = Instant::now();
+            log_error!(
+                sqlx::query("select pg_notify('orders', 'orders')")
+                    .execute(pool)
+                    .instrument(tracing::info_span!("notify_orders"))
+                    .await,
+                "Failed to notify 'orders'"
+            )?;
+            metrics.record(
+                &metrics.notification_duration,
+                notify_start,
+                &[KeyValue::new("channel", "orders")],
+            );
+        }
+
+        for symbol in self.symbol_book_updated.drain() {
+            debug!("Notifying book for symbol {}", symbol);
+            let notify_start = Instant::now();
+            log_error!(
+                sqlx::query("select pg_notify('book', $1)")
+                    .bind(symbol)
+                    .execute(pool)
+                    .instrument(tracing::info_span!("notify_book"))
+                    .await,
+                "Failed to notify 'book'"
+            )?;
+            metrics.record(
+                &metrics.notification_duration,
+                notify_start,
+                &[KeyValue::new("channel", "book")],
+            );
+        }
+
+        // Reset flags after sending notifications
+        self.trigger_notify_trades = false;
+        self.trigger_notify_orders = false;
+
+        Ok(())
+    }
+}
+
 pub struct DatabaseModule {
-    _ctx: Arc<DatabaseModuleCtx>,
+    ctx: Arc<DatabaseModuleCtx>,
     bus: DatabaseModuleBusClient,
     worker_txs: Vec<mpsc::UnboundedSender<DatabaseRequest>>,
     next_worker: std::sync::atomic::AtomicUsize,
+    aggregator: DatabaseAggregator,
 }
 
 impl Module for DatabaseModule {
@@ -935,17 +991,24 @@ impl Module for DatabaseModule {
         let mut worker_rxs = Vec::new();
 
         // Create 15 worker channels
-        for _ in 0..15 {
+        let worker_count = 35;
+        for _ in 0..worker_count {
             let (tx, rx) = mpsc::unbounded_channel();
             worker_txs.push(tx);
             worker_rxs.push(rx);
         }
+
+        // Set the worker count metric
+        ctx.metrics.worker_count.add(worker_count as i64, &[]);
 
         // Spawn worker tasks
         for (worker_id, mut rx) in worker_rxs.into_iter().enumerate() {
             let ctx = ctx.clone();
             tokio::spawn(async move {
                 while let Some(request) = rx.recv().await {
+                    // Decrement queue depth when worker starts processing
+                    ctx.metrics.worker_queue_depth.add(-1, &[]);
+
                     let service = DatabaseService::new(ctx.clone());
                     let result = match request {
                         DatabaseRequest::WriteEvents {
@@ -976,10 +1039,11 @@ impl Module for DatabaseModule {
         }
 
         Ok(DatabaseModule {
-            _ctx: ctx,
+            ctx,
             bus,
             worker_txs,
             next_worker: AtomicUsize::new(0),
+            aggregator: DatabaseAggregator::default(),
         })
     }
 
@@ -992,11 +1056,18 @@ impl Module for DatabaseModule {
 impl DatabaseModule {
     pub async fn start(&mut self) -> Result<()> {
         // Handle incoming messages and dispatch to workers
+
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         module_handle_messages! {
             on_self self,
-            command_response<DatabaseRequest, bool> cmd => {
-                        log_error!(self.dispatch_database_request(cmd).await, "dispatch database request")?;
-                    Ok(true)
+            listen<DatabaseRequest> cmd => {
+                _ = log_error!(self.dispatch_database_request(&cmd).await, "dispatch database request");
+                _ = log_error!(self.handle_database_request(cmd).await, "handle database request")?;
+            }
+             _ = interval.tick() => {
+                _ = log_error!(self.aggregator.dump_to_db(&self.ctx.pool, &self.ctx.metrics).await, "dump database aggregator to db");
             }
         };
         Ok(())
@@ -1010,29 +1081,44 @@ impl DatabaseModule {
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
             % self.worker_txs.len();
         self.worker_txs[worker_index].send(request.clone())?;
+        // Increment queue depth when dispatching a request
+        self.ctx.metrics.worker_queue_depth.add(1, &[]);
         Ok(())
     }
 
-    // #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
-    // async fn handle_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
-    //     let service = DatabaseService::new(self.ctx.clone());
-    //     match request {
-    //         DatabaseRequest::WriteEvents {
-    //             user,
-    //             tx_hash,
-    //             blob_tx,
-    //             prover_request,
-    //         } => {
-    //             service
-    //                 .write_events(
-    //                     user.clone(),
-    //                     tx_hash.clone(),
-    //                     blob_tx.clone(),
-    //                     prover_request.clone(),
-    //                 )
-    //                 .await?;
-    //         }
-    //     }
-    //     Ok(())
-    // }
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
+    async fn handle_database_request(&mut self, request: DatabaseRequest) -> Result<()> {
+        match request {
+            DatabaseRequest::WriteEvents { prover_request, .. } => {
+                for event in prover_request.events {
+                    match event {
+                        OrderbookEvent::OrderCreated { order } => {
+                            let symbol = format!("{}/{}", order.pair.0, order.pair.1);
+                            self.aggregator.create_order(symbol);
+                        }
+                        OrderbookEvent::OrderCancelled { order_id, pair, .. } => {
+                            let symbol = format!("{}/{}", pair.0, pair.1);
+                            self.aggregator.cancel_order(order_id, symbol);
+                        }
+                        OrderbookEvent::OrderExecuted { order_id, pair, .. } => {
+                            let symbol = format!("{}/{}", pair.0, pair.1);
+                            self.aggregator.execute_order(order_id, symbol);
+                        }
+                        OrderbookEvent::OrderUpdate {
+                            order_id,
+                            remaining_quantity,
+                            pair,
+                            ..
+                        } => {
+                            let symbol = format!("{}/{}", pair.0, pair.1);
+                            self.aggregator
+                                .update_order(order_id, remaining_quantity, symbol);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }

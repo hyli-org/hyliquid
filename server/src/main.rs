@@ -52,7 +52,7 @@ pub struct Args {
     pub no_bridge: bool,
 
     #[arg(long, default_value = "false")]
-    pub no_blobs: bool,
+    pub offline: bool,
 
     #[arg(long, default_value = "false")]
     pub tracing: bool,
@@ -112,7 +112,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         indexer_client,
         validator_lane_id,
         bridge_service,
-    } = setup_services(&config, pool.clone()).await?;
+    } = setup_services(&config, pool.clone(), args.offline).await?;
 
     // TODO: make a proper secret management
     let secret = vec![1, 2, 3];
@@ -127,21 +127,24 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         &indexer_client,
         &args.orderbook_cn.clone().into(),
         !args.no_check,
+        args.offline,
     )
     .await
     .map_err(|e| anyhow::Error::msg(e.1))?;
 
-    let contracts = vec![server::init::ContractInit {
-        name: args.orderbook_cn.clone().into(),
-        program_id: ORDERBOOK_VK.into(),
-        initial_state: full_state.commit(),
-    }];
+    if !args.offline {
+        let contracts = vec![server::init::ContractInit {
+            name: args.orderbook_cn.clone().into(),
+            program_id: ORDERBOOK_VK.into(),
+            initial_state: full_state.commit(),
+        }];
 
-    match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {
-        Ok(_) => {}
-        Err(e) => {
-            error!("Error initializing node: {:?}", e);
-            return Ok(());
+        match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Error initializing node: {:?}", e);
+                return Ok(());
+            }
         }
     }
     let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
@@ -173,7 +176,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         user_service: user_service.clone(),
         asset_service: asset_service.clone(),
         client: node_client.clone(),
-        no_blobs: args.no_blobs,
+        no_blobs: args.offline,
         metrics: server::database::DatabaseMetrics::new(),
     });
 
@@ -195,20 +198,22 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         contract1_cn: args.orderbook_cn.clone().into(),
     });
 
-    handler
-        .build_module::<DAListener>(DAListenerConf {
-            start_block: None,
-            data_directory: config.data_directory.clone(),
-            da_read_from: config.da_read_from.clone(),
-            timeout_client_secs: 10,
-        })
-        .await?;
+    if !args.offline {
+        handler
+            .build_module::<DAListener>(DAListenerConf {
+                start_block: None,
+                data_directory: config.data_directory.clone(),
+                da_read_from: config.da_read_from.clone(),
+                timeout_client_secs: 10,
+            })
+            .await?;
+    }
 
     handler
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
         .await?;
 
-    if !args.no_prover {
+    if !args.no_prover && !args.offline {
         info!("Setup sp1 prover client");
         let local_client = ProverClient::builder().cpu().build();
         let (pk, _) = local_client.setup(ORDERBOOK_ELF);
@@ -239,7 +244,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         .build_module::<ApiModule>(api_module_ctx.clone())
         .await?;
 
-    if !args.no_bridge {
+    if !args.no_bridge && !args.offline {
         handler
             .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
                 api: api_ctx.clone(),

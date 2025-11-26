@@ -20,10 +20,7 @@ use borsh::BorshSerialize;
 use client_sdk::{contract_indexer::AppError, rest_client::NodeApiHttpClient};
 use hex;
 use hyli_modules::{
-    bus::{
-        command_response::{CmdRespClient, Query},
-        BusClientSender, BusMessage, SharedMessageBus,
-    },
+    bus::{BusClientSender, BusMessage, SharedMessageBus},
     log_error, log_warn, module_bus_client, module_handle_messages,
     modules::{BuildApiContextInner, Module},
 };
@@ -73,8 +70,6 @@ pub struct AppMetrics {
     pub events_applied_count: Histogram<u64>,
     /// Event processing duration
     pub event_apply_duration: Histogram<f64>,
-    /// Duration of database service lock acquisition
-    pub database_service_lock_duration: Histogram<f64>,
 }
 
 impl AppMetrics {
@@ -129,11 +124,6 @@ impl AppMetrics {
                 .with_description("Duration of applying events to orderbook in seconds")
                 .with_unit("us")
                 .with_boundaries(extended_buckets.clone())
-                .build(),
-            database_service_lock_duration: meter
-                .f64_histogram("database.service.lock.duration")
-                .with_description("Duration of database service lock acquisition in seconds")
-                .with_unit("us")
                 .build(),
         }
     }
@@ -196,12 +186,6 @@ impl AppMetrics {
             &[KeyValue::new("operation", operation.to_string())],
         );
     }
-
-    #[inline]
-    fn record_database_service_lock(&self, duration: Duration) {
-        self.database_service_lock_duration
-            .record(duration.as_micros() as f64, &[]);
-    }
 }
 
 impl Default for AppMetrics {
@@ -259,7 +243,7 @@ pub struct OrderbookModuleBusClient {
 module_bus_client! {
 #[derive(Debug)]
 struct RouterBusClient {
-    sender(Query<DatabaseRequest, bool>),
+    sender(DatabaseRequest),
     // No receiver here ! Because RouterBus is cloned
 }
 }
@@ -1383,42 +1367,11 @@ async fn process_orderbook_action<T: BorshSerialize>(
     // Write events directly using database service
     debug!("Writing events to database for tx {tx_hash:#}");
     let mut bus = ctx.bus.clone();
-    let lock_start = Instant::now();
-    match bus
-        .shutdown_aware_request::<()>(DatabaseRequest::WriteEvents {
-            user: user_info.clone(),
-            tx_hash: tx_hash.clone(),
-            blob_tx,
-            prover_request,
-        })
-        .await
-    {
-        Ok(_) => {
-            ctx.metrics
-                .record_database_service_lock(lock_start.elapsed());
-            Ok(Json(tx_hash))
-        }
-        Err(e) => {
-            ctx.metrics
-                .record_database_service_lock(lock_start.elapsed());
-            Err(AppError(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                anyhow::anyhow!("Failed to write events: {e}"),
-            ))
-        }
-    }
-    // let lock_start = Instant::now();
-    // let database_service = ctx.database_service.read().await;
-    // ctx.metrics
-    //     .record_database_service_lock(lock_start.elapsed());
-    // match database_service
-    //     .write_events(user_info, tx_hash.clone(), blob_tx, prover_request)
-    //     .await
-    // {
-    //     Ok(_) => Ok(Json(tx_hash)),
-    //     Err(e) => Err(AppError(
-    //         StatusCode::INTERNAL_SERVER_ERROR,
-    //         anyhow::anyhow!("Failed to write events: {e}"),
-    //     )),
-    // }
+    bus.send(DatabaseRequest::WriteEvents {
+        user: user_info.clone(),
+        tx_hash: tx_hash.clone(),
+        blob_tx,
+        prover_request,
+    })?;
+    Ok(Json(tx_hash))
 }
