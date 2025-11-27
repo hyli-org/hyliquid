@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{error, info, level_filters::LevelFilter};
 use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/migrations");
 
@@ -125,9 +125,8 @@ pub fn init_tracing() -> opentelemetry_sdk::trace::SdkTracerProvider {
 
     // Initialize the tracing subscriber with both console output and OTLP
     tracing_subscriber::registry()
-        .with(env_filter)
-        .with(tracing_subscriber::fmt::layer())
-        .with(OpenTelemetryLayer::new(tracer))
+        .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
+        .with(OpenTelemetryLayer::new(tracer).with_filter(LevelFilter::INFO))
         .init();
 
     tracing::info!("Tracing initialized with OTLP exporter to http://localhost:4317");
