@@ -619,6 +619,7 @@ impl From<&orderbook::model::ExecuteState> for ExecuteStateAPI {
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let request_start = Instant::now();
     let endpoint = "get_state";
@@ -642,6 +643,7 @@ async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
     result
 }
 
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn get_nonce(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -678,7 +680,7 @@ async fn get_nonce(
 }
 
 #[axum::debug_handler]
-// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_pair(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -805,7 +807,7 @@ async fn create_pair(
     result
 }
 
-// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -902,7 +904,7 @@ async fn add_session_key(
     result
 }
 
-// #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn deposit(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,

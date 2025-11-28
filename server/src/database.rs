@@ -1073,7 +1073,6 @@ impl DatabaseModule {
         Ok(())
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn dispatch_database_request(&mut self, request: &DatabaseRequest) -> Result<()> {
         // Round-robin distribution to workers
         let worker_index = self
@@ -1086,7 +1085,6 @@ impl DatabaseModule {
         Ok(())
     }
 
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     async fn handle_database_request(&mut self, request: DatabaseRequest) -> Result<()> {
         match request {
             DatabaseRequest::WriteEvents { prover_request, .. } => {
