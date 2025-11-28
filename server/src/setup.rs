@@ -93,9 +93,11 @@ pub fn init_tracing() -> opentelemetry_sdk::trace::SdkTracerProvider {
         .build();
 
     // Build OTLP exporter using tonic (grpc)
+    let endpoint =
+        std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
     let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
         .with_tonic()
-        .with_endpoint("http://localhost:4317")
+        .with_endpoint(endpoint.clone())
         .build()
         .expect("Failed to create OTLP exporter");
 
@@ -129,7 +131,7 @@ pub fn init_tracing() -> opentelemetry_sdk::trace::SdkTracerProvider {
         .with(OpenTelemetryLayer::new(tracer).with_filter(LevelFilter::INFO))
         .init();
 
-    tracing::info!("Tracing initialized with OTLP exporter to http://localhost:4317");
+    tracing::info!("Tracing initialized with OTLP exporter to {}", endpoint);
 
     tracer_provider
 }
