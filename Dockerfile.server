@@ -30,7 +30,7 @@ COPY --from=planner /app/recipe.json recipe.json
 # Build dependencies - this layer is cached until recipe.json changes
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo chef cook --release --recipe-path recipe.json --features nonreproducible,nobuild
+    cargo chef cook --release --recipe-path recipe.json --features nonreproducible,nobuild,instrumentation
 
 # Now copy source code and build the actual binaries
 COPY .cargo .cargo
@@ -42,7 +42,7 @@ COPY Cargo.toml Cargo.lock ./
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo build --release -F nonreproducible -F nobuild --bin server --bin autoprover --bin tx_sender
+    cargo build --release -F nonreproducible -F nobuild -F instrumentation --bin server --bin autoprover --bin tx_sender
 
 # Stage 4: Runtime
 FROM rust:latest@sha256:c0601cfa53ef38705af64f72b6b1f2b8afcd8f76de9aa621a8b45b4fa124694c
