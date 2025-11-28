@@ -1064,7 +1064,7 @@ impl DatabaseModule {
             on_self self,
             listen<DatabaseRequest> cmd => {
                 _ = log_error!(self.dispatch_database_request(&cmd).await, "dispatch database request");
-                log_error!(self.handle_database_request(cmd).await, "handle database request")?;;
+                log_error!(self.handle_database_request(cmd).await, "handle database request")?;
             }
              _ = interval.tick() => {
                 _ = log_error!(self.aggregator.dump_to_db(&self.ctx.pool, &self.ctx.metrics).await, "dump database aggregator to db");
