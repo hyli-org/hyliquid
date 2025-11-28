@@ -81,6 +81,11 @@ pub enum PermissionnedOrderbookAction {
         symbol: String,
         amount: u64,
     },
+    WithdrawRethBridge {
+        symbol: String,
+        amount: u64,
+        destination: WithdrawDestination,
+    },
     CreateOrder(Order),
     Cancel {
         order_id: String,
@@ -99,10 +104,15 @@ pub enum PermissionlessOrderbookAction {
 
 impl OrderbookAction {
     pub fn as_blob(&self, contract_name: sdk::ContractName) -> sdk::Blob {
-        sdk::Blob {
+        sdk::StructuredBlob {
             contract_name,
-            data: sdk::BlobData(borsh::to_vec(self).expect("Failed to encode OrderbookAction")),
+            data: sdk::StructuredBlobData {
+                parameters: self.clone(),
+                caller: None,
+                callees: None,
+            },
         }
+        .into()
     }
 }
 
@@ -155,6 +165,11 @@ impl ExecuteState {
             PermissionnedOrderbookAction::DepositRethBridge { symbol, amount } => {
                 self.deposit(&symbol, amount, user_info)
             }
+            PermissionnedOrderbookAction::WithdrawRethBridge {
+                symbol,
+                amount,
+                destination: _,
+            } => self.withdraw(&symbol, &amount, user_info),
             PermissionnedOrderbookAction::CreateOrder(Order {
                 order_id,
                 order_side,

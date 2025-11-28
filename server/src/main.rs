@@ -12,6 +12,7 @@ use hyli_modules::{
     },
     utils::logger::setup_tracing,
 };
+use hex;
 use prometheus::Registry;
 use reth_harness::{CollateralContractInit, RethHarness};
 use sdk::{api::NodeInfo, info};
@@ -31,6 +32,7 @@ use server::{
     },
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
+use server::reth_utils::derive_signing_key_from_contract_name;
 use sp1_sdk::{Prover, ProverClient};
 use sqlx::Row;
 use std::sync::Arc;
@@ -244,6 +246,13 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
             if let Ok(address) =
                 derive_address_from_private_key(&config.bridge.eth_signer_private_key)
             {
+                prefunded.push(address);
+            }
+            // Also prefund the derived program signer used for withdraw_reth_bridge calls.
+            let program_sk =
+                derive_signing_key_from_contract_name(&args.orderbook_cn.clone().into());
+            let program_sk_hex = format!("0x{}", hex::encode(program_sk.to_bytes()));
+            if let Ok(address) = derive_address_from_private_key(&program_sk_hex) {
                 prefunded.push(address);
             }
             let collateral_init = CollateralContractInit::test_erc20(

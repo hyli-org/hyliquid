@@ -27,6 +27,10 @@ name = "craft_reth_deposit"
 path = "src/bin/craft_reth_deposit.rs"
 
 [[bin]]
+name = "craft_reth_withdraw"
+path = "src/bin/craft_reth_withdraw.rs"
+
+[[bin]]
 name = "seed_reth_collateral"
 path = "src/bin/seed_reth_collateral.rs"
 

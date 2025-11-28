@@ -8,9 +8,10 @@ use std::{
 };
 
 use alloy::{
-    consensus::TxEnvelope,
-    eips::eip2718::Decodable2718,
-    primitives::TxKind,
+    consensus::{SignableTransaction, TxEip1559, TxEnvelope},
+    eips::eip2718::{Decodable2718, Encodable2718},
+    primitives::{Address, Bytes, TxKind, U256},
+    signers::{local::PrivateKeySigner, SignerSync},
     sol_types::{sol, SolCall},
 };
 use anyhow::{anyhow, bail, Context, Result};
@@ -47,13 +48,17 @@ use sdk::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::cors::{Any, CorsLayer};
-use tracing::debug;
+use tracing::{debug, info};
 
+use crate::reth_utils::{
+    derive_program_pubkey, derive_signing_key_from_contract_name, program_address_from_program_id,
+};
 use crate::{
     database::DatabaseRequest, prover::OrderbookProverRequest,
     services::asset_service::AssetService,
 };
 use rand::RngCore;
+use std::str::FromStr;
 
 pub struct OrderbookModule {
     bus: OrderbookModuleBusClient,
@@ -142,6 +147,7 @@ impl Module for OrderbookModule {
             .route("/create_order", post(create_order))
             .route("/cancel_order", post(cancel_order))
             .route("/withdraw", post(withdraw))
+            .route("/withdraw_reth_bridge", post(withdraw_reth_bridge))
             .route("/nonce", get(get_nonce))
             // FIXME: to be removed. Only here for debugging purposes
             .route("/state", get(get_state))
@@ -386,6 +392,14 @@ pub struct DepositRethBridgeRequest {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+pub struct WithdrawRethBridgeRequest {
+    pub identity: String,
+    pub eth_address: String,
+    pub amount: u64,
+    pub nonce: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CancelOrderRequest {
     pub order_id: String,
 }
@@ -627,6 +641,187 @@ async fn create_pair(
 }
 
 #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+async fn withdraw_reth_bridge(
+    State(ctx): State<RouterCtx>,
+    Json(request): Json<WithdrawRethBridgeRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let Some(collateral_cn) = ctx.reth_collateral_cn.clone() else {
+        return Err(AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("reth collateral token not configured on server"),
+        ));
+    };
+
+    let destination = Address::from_str(request.eth_address.as_str()).map_err(|err| {
+        AppError(
+            StatusCode::BAD_REQUEST,
+            anyhow!("invalid eth_address: {err}"),
+        )
+    })?;
+
+    let amount: u64 = request.amount;
+    let symbol = {
+        let asset_service = ctx.asset_service.read().await;
+        asset_service
+            .get_symbol_from_contract_name(&collateral_cn.0)
+            .await
+            .unwrap_or(collateral_cn.0.clone())
+    };
+    let (asset_scale, asset_contract) = {
+        let asset_service = ctx.asset_service.read().await;
+        if let Some(asset) = asset_service
+            .get_asset_from_contract_name(&collateral_cn.0)
+            .await
+        {
+            (
+                asset.scale as u64,
+                ContractName(asset.contract_name.clone()),
+            )
+        } else {
+            (6_u64, collateral_cn.clone())
+        }
+    };
+
+    let user = request.identity;
+    info!(
+        identity = %user,
+        symbol = %symbol,
+        amount,
+        destination = %request.eth_address,
+        asset_scale,
+        asset_contract = %asset_contract.0,
+        "handling withdraw_reth_bridge request"
+    );
+
+    let (user_info, events) =
+        {
+            let mut orderbook = ctx.orderbook.lock().await;
+
+            orderbook.assets_info.entry(symbol.clone()).or_insert(
+                orderbook::model::AssetInfo::new(asset_scale, asset_contract.clone()),
+            );
+
+            let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
+                let mut salt = [0u8; 32];
+                rand::rng().fill_bytes(&mut salt);
+                UserInfo::new(user.clone(), salt.to_vec())
+            });
+
+            let current_balance = orderbook.get_balance(&user_info, &symbol).0;
+            info!(
+                identity = %user_info.user,
+                current_balance,
+                symbol = %symbol,
+                "orderbook balance before withdraw_reth_bridge"
+            );
+
+            let events = orderbook
+                .withdraw(&symbol, &amount, &user_info)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+            orderbook
+                .apply_events(&user_info, &events)
+                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+            (user_info, events)
+        };
+
+    let action_private_input = Vec::<u8>::new();
+    let orderbook_action = PermissionnedOrderbookAction::WithdrawRethBridge {
+        symbol: symbol.clone(),
+        amount,
+        destination: WithdrawDestination {
+            network: "reth".to_string(),
+            address: request.eth_address.clone(),
+        },
+    };
+    let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+
+    // Build and sign ERC20 transfer from the derived program address to the destination.
+    let program_id = derive_program_pubkey(&ctx.orderbook_cn);
+    let vault = program_address_from_program_id(&program_id);
+
+    let calldata = transferCall {
+        to: destination,
+        amount: U256::from(amount),
+    }
+    .abi_encode();
+
+    let tx = TxEip1559 {
+        chain_id: 11155111u64, // default to sepolia chain
+        nonce: request.nonce,
+        gas_limit: 200_000u64.into(),
+        max_fee_per_gas: 2_000_000_000u64.into(),
+        max_priority_fee_per_gas: 1_500_000_000u64.into(),
+        to: TxKind::Call(vault),
+        value: U256::ZERO,
+        access_list: Default::default(),
+        input: Bytes::from(calldata),
+    };
+
+    // Derive the signing key from contract name (same seed as derive_program_pubkey).
+    let signing_key = derive_signing_key_from_contract_name(&ctx.orderbook_cn);
+    let secret_hex = hex::encode(signing_key.to_bytes());
+    let signer = PrivateKeySigner::from_str(secret_hex.as_str())
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow!(e)))?;
+    let signature = signer
+        .sign_hash_sync(&tx.signature_hash())
+        .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow!(e)))?;
+    let envelope: TxEnvelope = tx.into_signed(signature).into();
+    let raw_tx = envelope.encoded_2718();
+
+    let collateral_blob = Blob {
+        contract_name: collateral_cn.clone(),
+        data: BlobData::from(StructuredBlobData {
+            caller: None,
+            callees: None,
+            parameters: raw_tx.clone(),
+        }),
+    };
+
+    let orderbook_blob =
+        OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone(), action_id);
+    let orderbook_blob = orderbook_blob.as_blob(ctx.orderbook_cn.clone());
+
+    let blobs = vec![collateral_blob.clone(), orderbook_blob.clone()];
+    let blob_tx = BlobTransaction::new(ORDERBOOK_ACCOUNT_IDENTITY, blobs.clone());
+    let tx_hash = blob_tx.hashed();
+
+    let action_private_input = borsh::to_vec(&action_private_input).map_err(|e| {
+        AppError(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            anyhow::anyhow!("Failed to serialize action private input: {e}"),
+        )
+    })?;
+
+    let prover_request = OrderbookProverRequest {
+        events,
+        user_info: user_info.clone(),
+        action_private_input,
+        orderbook_action,
+        tx_hash: tx_hash.clone(),
+        nonce: action_id,
+        blobs: Some(blobs),
+        tx_blob_count: Some(2),
+        orderbook_blob_index: Some(BlobIndex(1)),
+        asset_info: Some((
+            symbol.clone(),
+            orderbook::model::AssetInfo::new(asset_scale, asset_contract.clone()),
+        )),
+    };
+
+    let mut bus = ctx.bus.clone();
+    bus.send(DatabaseRequest::WriteEvents {
+        user: user_info,
+        tx_hash: tx_hash.clone(),
+        blob_tx,
+        prover_request,
+    })?;
+
+    Ok(Json(tx_hash))
+}
+
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -761,12 +956,22 @@ async fn deposit_reth_bridge(
         ));
     };
 
+    info!(
+        identity = %request.identity,
+        collateral = %collateral_cn.0,
+        "handling deposit_reth_bridge request"
+    );
+
     let raw_tx = hex::decode(request.signed_tx_hex.trim_start_matches("0x")).map_err(|err| {
         AppError(
             StatusCode::BAD_REQUEST,
             anyhow!("invalid signed_tx_hex: {err}"),
         )
     })?;
+    debug!(
+        raw_tx_len = raw_tx.len(),
+        "decoded signed_tx_hex for deposit_reth_bridge"
+    );
 
     let mut cursor = raw_tx.as_slice();
     let envelope = TxEnvelope::decode_2718(&mut cursor).map_err(|err| {
@@ -800,6 +1005,15 @@ async fn deposit_reth_bridge(
             anyhow!("signed tx is not an erc20 transfer: {err}"),
         )
     })?;
+    let dest = match to {
+        TxKind::Call(addr) => Some(addr),
+        _ => None,
+    };
+    info!(
+        to = ?dest,
+        amount = %transfer.amount,
+        "parsed ERC20 transfer for deposit_reth_bridge"
+    );
 
     let amount: u64 = transfer.amount.try_into().map_err(|_| {
         AppError(
@@ -833,6 +1047,12 @@ async fn deposit_reth_bridge(
             (18_u64, collateral_cn.clone())
         }
     };
+    info!(
+        symbol = %symbol,
+        asset_scale,
+        asset_contract = %asset_contract.0,
+        "resolved collateral asset for deposit_reth_bridge"
+    );
 
     let user = request.identity;
 
@@ -849,14 +1069,33 @@ async fn deposit_reth_bridge(
                 rand::rng().fill_bytes(&mut salt);
                 UserInfo::new(user.clone(), salt.to_vec())
             });
+            // Ensure the user is persisted so later operations see the same key/salt.
+            orderbook
+                .users_info
+                .entry(user.clone())
+                .or_insert_with(|| user_info.clone());
 
             let events = orderbook
                 .deposit(&symbol, amount, &user_info)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+            info!(
+                identity = %user_info.user,
+                amount,
+                symbol = %symbol,
+                "orderbook deposit_reth_bridge applied to in-memory state"
+            );
 
             orderbook
                 .apply_events(&user_info, &events)
                 .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, anyhow::anyhow!(e)))?;
+
+            let new_balance = orderbook.get_balance(&user_info, &symbol).0;
+            info!(
+                identity = %user_info.user,
+                new_balance,
+                symbol = %symbol,
+                "balance after deposit_reth_bridge"
+            );
 
             (user_info, events)
         };
@@ -915,6 +1154,11 @@ async fn deposit_reth_bridge(
         blob_tx,
         prover_request,
     })?;
+    info!(
+        ?tx_hash,
+        user = %user,
+        "queued deposit_reth_bridge blob transaction"
+    );
 
     Ok(Json(tx_hash))
 }

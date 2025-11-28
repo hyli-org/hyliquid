@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use sdk::{ContractName, RunResult, StateCommitment};
+use sdk::{ContractName, RunResult, StateCommitment, StructuredBlobData};
 use sha2::Sha256;
 use sha3::Digest;
 use sparse_merkle_tree::traits::Value;
@@ -24,7 +24,7 @@ impl sdk::ZkContract for ZkVmState {
     /// Entry point of the contract's logic
     fn execute(&mut self, calldata: &sdk::Calldata) -> RunResult {
         // Parse contract inputs
-        let (action, execution_ctx) = sdk::utils::parse_raw_calldata::<OrderbookAction>(calldata)?;
+        let (action, execution_ctx) = sdk::utils::parse_calldata::<OrderbookAction>(calldata)?;
 
         let Some(tx_ctx) = &calldata.tx_ctx else {
             panic!("tx_ctx is missing");

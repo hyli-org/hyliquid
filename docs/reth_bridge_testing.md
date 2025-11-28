@@ -87,3 +87,10 @@ CLI helpers
     --amount 500000000 \
     --identity user@test
   ```
+- Craft a withdraw payload for `/withdraw_reth_bridge` (handles the derived vault nonce and destination formatting):
+  ```
+  cargo run -p server --bin craft_reth_withdraw -- \
+    --eth-address 0xabc123... \
+    --amount 500000000 \
+    --identity user@test
+  ```

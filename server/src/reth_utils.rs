@@ -121,6 +121,25 @@ pub fn derive_address_from_private_key(key_hex: &str) -> anyhow::Result<Address>
     Ok(signer.address())
 }
 
+/// Derives a signing key deterministically from the contract name (same seed as derive_program_pubkey).
+pub fn derive_signing_key_from_contract_name(contract_name: &ContractName) -> SigningKey {
+    let mut seed: [u8; 32] = keccak256(contract_name.0.as_bytes()).into();
+    loop {
+        match SigningKey::from_slice(&seed) {
+            Ok(key) => return key,
+            Err(_) => {
+                seed = keccak256(seed).into();
+            }
+        }
+    }
+}
+
+/// Derive the EOA address from a program id (same as craft_reth_deposit).
+pub fn program_address_from_program_id(program_id: &ProgramId) -> Address {
+    let hash = keccak256(program_id.0.as_slice());
+    Address::from_slice(&hash[12..])
+}
+
 fn encode_contract_name(contract_name: &ContractName) -> ContractName {
     ContractName(contract_name.0.replace('/', "%2F"))
 }

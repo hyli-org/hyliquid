@@ -19,7 +19,7 @@ use hyli_modules::{
 use orderbook::{
     model::{AssetInfo, OrderbookEvent, UserInfo},
     transaction::{OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput},
-    zk::FullState,
+    zk::{FullState, SMT},
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::Method;
@@ -183,9 +183,17 @@ impl OrderbookProverModule {
             orderbook
                 .state
                 .assets_info
-                .entry(sym)
+                .entry(sym.clone())
                 .or_insert(info);
+            orderbook.state.balances.entry(sym.clone()).or_default();
+            orderbook.balances_mt.entry(sym).or_insert_with(SMT::zero);
         }
+        // Ensure user is present so balance proofs can resolve correctly.
+        orderbook
+            .state
+            .users_info
+            .entry(user_info.user.clone())
+            .or_insert(user_info.clone());
 
         let commitment_metadata = orderbook
             .derive_zkvm_commitment_metadata_from_events(&user_info, &events, &orderbook_action)
