@@ -24,7 +24,8 @@ on:
 
 env:
   IMAGE_NAME: "hyliquid"
-  AR_URL: "europe-west1-docker.pkg.dev/hyli-shared-all/apps"
+  AR_REPO_LOCATION: "europe-west1-docker.pkg.dev"
+  AR_URL: "hyli-shared-all/apps"
 
 jobs:
   build_and_push:
@@ -68,7 +69,7 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-            ${{ env.AR_URL }}/${{ env.IMAGE_NAME }}-${{ matrix.suffix }}
+            ${{ env.AR_REPO_LOCATION }}/${{ env.AR_URL }}/${{ env.IMAGE_NAME }}-${{ matrix.suffix }}
             ghcr.io/${{ github.repository }}/${{ env.IMAGE_NAME }}-${{ matrix.suffix }}
           tags: |
             type=sha
