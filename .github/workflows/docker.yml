@@ -24,8 +24,7 @@ on:
 
 env:
   IMAGE_NAME: "hyliquid"
-  AR_REPO_LOCATION: "europe-west1-docker.pkg.dev"
-  AR_URL: "hyli-shared-all/apps"
+  AR_URL: "europe-west1-docker.pkg.dev/hyli-shared-all/apps"
 
 jobs:
   build_and_push:
