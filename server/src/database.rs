@@ -370,24 +370,6 @@ impl DatabaseService {
                         user, asset, amount
                     );
 
-                    // log_error!(
-                    //     sqlx::query(
-                    //         "
-                    //     INSERT INTO balances (identity, asset_id, total)
-                    //     VALUES ($1, $2, $3)
-                    //     ON CONFLICT (identity, asset_id) DO UPDATE SET
-                    //         total = $3
-                    //     ",
-                    //     )
-                    //     .bind(user.clone())
-                    //     .bind(asset.asset_id)
-                    //     .bind(amount as i64)
-                    //     .execute(&mut *tx)
-                    //     .instrument(tracing::info_span!("update_balance"))
-                    //     .await,
-                    //     "Failed to update balance"
-                    // )?;
-
                     log_error!(
                         sqlx::query("INSERT INTO balance_events (commit_id, identity, asset_id, total, kind) VALUES ($1, $2, $3, $4, 'transfer')")
                         .bind(commit_id)
@@ -832,6 +814,7 @@ pub struct DatabaseAggregator {
     trigger_notify_trades: bool,
     trigger_notify_orders: bool,
     symbol_book_updated: HashSet<String>,
+    pub updated_balances: HashMap<(String, i64), u64>,
 }
 
 impl DatabaseAggregator {
@@ -858,6 +841,9 @@ impl DatabaseAggregator {
         self.trigger_notify_trades = true;
         self.trigger_notify_orders = true;
         self.symbol_book_updated.insert(symbol);
+    }
+    pub fn update_balance(&mut self, user: String, asset_id: i64, amount: u64) {
+        self.updated_balances.insert((user, asset_id), amount);
     }
 
     pub async fn dump_to_db(&mut self, pool: &PgPool, metrics: &DatabaseMetrics) -> Result<()> {
@@ -908,6 +894,20 @@ impl DatabaseAggregator {
                 .instrument(tracing::info_span!("update_order_as_partially_filled"))
                 .await,
                 "Failed to update order as partially filled"
+            )?;
+        }
+        for ((user, asset_id), amount) in self.updated_balances.drain() {
+            log_error!(
+                sqlx::query(
+                    "INSERT INTO balances (identity, asset_id, total) VALUES ($1, $2, $3) ON CONFLICT (identity, asset_id) DO UPDATE SET total = $3"
+                )
+                .bind(amount as i64)
+                .bind(user)
+                .bind(asset_id)
+                .execute(&mut *tx)
+                .instrument(tracing::info_span!("update_balance"))
+                .await,
+                "Failed to update balance"
             )?;
         }
 
@@ -1111,6 +1111,17 @@ impl DatabaseModule {
                             let symbol = format!("{}/{}", pair.0, pair.1);
                             self.aggregator
                                 .update_order(order_id, remaining_quantity, symbol);
+                        }
+                        OrderbookEvent::BalanceUpdated {
+                            user,
+                            symbol,
+                            amount,
+                        } => {
+                            let asset_service = self.ctx.asset_service.read().await;
+                            let asset = asset_service
+                                .get_asset(&symbol)
+                                .ok_or_else(|| anyhow::anyhow!("Asset not found: {symbol}"))?;
+                            self.aggregator.update_balance(user, asset.asset_id, amount);
                         }
                         _ => {}
                     }
