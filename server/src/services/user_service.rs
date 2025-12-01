@@ -30,6 +30,7 @@ impl UserService {
         UserService { pool }
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self)))]
     pub async fn get_user_info(&self, user: &str) -> Result<UserInfo, AppError> {
         let row = sqlx::query(
             "
