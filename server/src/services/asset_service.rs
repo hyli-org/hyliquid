@@ -220,4 +220,14 @@ impl AssetService {
             .ok()?;
         Some(row.get::<i64, _>("commit_id"))
     }
+
+    /// Get last tx_hash in commits table
+    /// Used for offline mode to get the last tx_hash from the commit table
+    pub async fn get_last_tx_hash_in_commit_table(&self) -> Option<TxHash> {
+        let row = sqlx::query("SELECT tx_hash FROM commits ORDER BY commit_id DESC LIMIT 1")
+            .fetch_one(&self.pool)
+            .await
+            .ok()?;
+        Some(TxHash(row.get::<String, _>("tx_hash")))
+    }
 }

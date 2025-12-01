@@ -14,7 +14,7 @@ use orderbook::{
 use reqwest::StatusCode;
 use sdk::{
     api::{APIRegisterContract, TransactionStatusDb},
-    info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment,
+    info, BlockHeight, ContractName, LaneId, ProgramId, StateCommitment, TxHash,
 };
 use std::{
     collections::{BTreeMap, HashMap},
@@ -131,8 +131,8 @@ pub async fn init_orderbook_from_database(
 
     info!("🔍 Initializing orderbook from database");
 
-    let last_settled_tx = if offline {
-        None
+    let last_settled_tx: Option<TxHash> = if offline {
+        asset_service.get_last_tx_hash_in_commit_table().await
     } else {
         indexer
             .get_last_settled_txid_by_contract(
@@ -140,6 +140,7 @@ pub async fn init_orderbook_from_database(
                 Some(vec![TransactionStatusDb::Success]),
             )
             .await?
+            .map(|tx| tx.1)
     };
 
     if last_settled_tx.is_none() {
@@ -157,11 +158,11 @@ pub async fn init_orderbook_from_database(
     info!("🔍 Last settled tx found: {}", last_settled_tx);
 
     let commit_id = asset_service
-        .get_commit_id_from_tx_hash(&last_settled_tx.1)
+        .get_commit_id_from_tx_hash(&last_settled_tx)
         .await;
 
     if commit_id.is_none() {
-        warn!("🔍 No commit id found for tx hash: {}", last_settled_tx.1);
+        warn!("🔍 No commit id found for tx hash: {}", last_settled_tx);
         warn!("🔍 Initializing orderbook with empty state");
         let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
         if check_commitment && !offline {

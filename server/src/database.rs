@@ -903,7 +903,7 @@ impl DatabaseAggregator {
                     "INSERT INTO balances (identity, asset_id, total) VALUES ($1, $2, $3) ON CONFLICT (identity, asset_id) DO UPDATE SET total = $3"
                 )
                 .bind(user)
-                .bind(asset_id as i64)
+                .bind(asset_id)
                 .bind(amount as i64)
                 .execute(&mut *tx)
                 .instrument(tracing::info_span!("update_balance"))
