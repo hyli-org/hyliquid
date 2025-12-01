@@ -851,11 +851,12 @@ impl DatabaseAggregator {
             && self.updated_orders.is_empty()
             && self.executed_orders.is_empty()
             && self.cancelled_orders.is_empty()
+            && self.updated_balances.is_empty()
         {
             return Ok(());
         }
 
-        info!("Dumping database aggregator to db with {} orders, {} trades, {} cancelled orders, {} symbol book updated", self.updated_orders.len(), self.executed_orders.len(), self.cancelled_orders.len(), self.symbol_book_updated.len());
+        info!("Dumping database aggregator to db with {} orders, {} trades, {} cancelled orders, {} symbol book updated, {} balances updated", self.updated_orders.len(), self.executed_orders.len(), self.cancelled_orders.len(), self.symbol_book_updated.len(), self.updated_balances.len());
         let mut tx = pool.begin().await?;
         for order_id in self.executed_orders.drain() {
             log_error!(
