@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use std::convert::TryInto;
 
-use crate::conf;
+use crate::{bridge::eth::EthListener, conf};
 
 /// Incoming Ethereum transaction (to the bridge)
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -54,8 +54,21 @@ pub struct BridgeService {
 impl BridgeService {
     pub async fn new(pool: PgPool, bridge_conf: &conf::BridgeConfig) -> Result<Self> {
         let bridge_service = BridgeService { pool };
+        let eth_contract_deploy_block = match bridge_conf.eth_contract_deploy_block {
+            Some(block) => block,
+            None => {
+                let eth_listener =
+                    EthListener::connect(&bridge_conf.eth_rpc_ws_url, Default::default()).await?;
+
+                // If not provided, start from the latest Sepolia block to avoid replaying history.
+                eth_listener
+                    .latest_block_number()
+                    .await
+                    .context("getting Ethereum contract deploy block")?
+            }
+        };
         bridge_service
-            .ensure_initialized(bridge_conf.eth_contract_deploy_block)
+            .ensure_initialized(eth_contract_deploy_block)
             .await?;
         Ok(bridge_service)
     }
