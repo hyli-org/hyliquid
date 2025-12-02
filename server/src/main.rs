@@ -49,7 +49,7 @@ pub struct Args {
     pub no_prover: bool,
 
     #[arg(long, default_value = "false")]
-    pub no_bridge: bool,
+    pub bridge: bool,
 
     #[arg(long, default_value = "false")]
     pub offline: bool,
@@ -112,7 +112,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         indexer_client,
         validator_lane_id,
         bridge_service,
-    } = setup_services(&config, pool.clone(), args.offline).await?;
+    } = setup_services(&config, pool.clone(), args.offline, args.bridge).await?;
 
     // TODO: make a proper secret management
     let secret = vec![1, 2, 3];
@@ -244,7 +244,9 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         .build_module::<ApiModule>(api_module_ctx.clone())
         .await?;
 
-    if !args.no_bridge && !args.offline {
+    if args.bridge && !args.offline {
+        let bridge_service = bridge_service
+            .expect("Bridge service should be initialized when the bridge flag is set");
         handler
             .build_module::<BridgeModule>(Arc::new(BridgeModuleCtx {
                 api: api_ctx.clone(),

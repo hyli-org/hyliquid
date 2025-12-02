@@ -72,7 +72,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         node_client,
         indexer_client,
         validator_lane_id,
-    } = setup_services(&config, pool.clone(), false).await?;
+    } = setup_services(&config, pool.clone(), false, false).await?;
 
     let secret = vec![1, 2, 3];
 

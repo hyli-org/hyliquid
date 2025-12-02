@@ -1,7 +1,6 @@
 # Hyliquid: private proof-powered orderbook on Hyli
 
 <div align="center">
-
   <a href="https://hyli.org/">
     <img src="https://github.com/hyli-org/hyli-assets/blob/main/Logos/Logo/HYLI_WORDMARK_ORANGE.png?raw=true" width="320" alt="Hyli">
   </a>
@@ -31,7 +30,7 @@ Hyliquid follows the same high-level pattern as [Lighter](https://assets.lighter
 
 - Hyli natively verifies proofs, including the SP1 proofs used for Hyliquid.
 - The Hylix toolsuite and SDKs reduce boilerplate on the prover side.
-- 
+-
 
 - **zkVM-native from day one** – Hyli bakes proof-friendly concepts (lanes, contract identities, blob transactions) directly into its node APIs. We never had to fight the runtime to integrate SP1 proofs.
 - **Purpose-built tooling** – The `hy` CLI, module system, and SDKs handle key management, block subscriptions, and proof submission out of the box, reducing boilerplate on the prover side.
@@ -40,7 +39,7 @@ Hyliquid follows the same high-level pattern as [Lighter](https://assets.lighter
 
 ## Architecture at a Glance
 
-```
+```bash
 Users ──> Frontend ──> server/ (fast path)
                          │
                          │ writes deltas + prover jobs
@@ -153,7 +152,7 @@ cd hyliquid
 cargo build -p contracts --release
 
 # 3. Start the fast-path server & prover
-hy run --no-bridge
+hy run --bridge
 
 # 4. Launch the read-only API and frontend
 (cd server-api && bun install && bun dev)
