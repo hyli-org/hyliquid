@@ -72,7 +72,7 @@ async fn init_contract(
                 program_id: contract.program_id,
                 state_commitment: contract.initial_state,
                 contract_name: contract.name.clone(),
-                timeout_window: Some(0),
+                timeout_window: Some((0, 0)),
                 ..Default::default()
             })
             .await?;
