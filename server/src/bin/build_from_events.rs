@@ -26,6 +26,8 @@ async fn main() {
         .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/orderbook".to_string());
 
     info!("Connecting to database at {}", database_url);
+    let config =
+        server::conf::Conf::new(vec!["config.toml".to_string()]).expect("failed to load config");
 
     let pool = sqlx::PgPool::connect(&database_url)
         .await
@@ -34,7 +36,7 @@ async fn main() {
         std::env::var("HYLI_NODE_URL").unwrap_or_else(|_| "http://localhost:4321".to_string());
     let node_client = NodeApiHttpClient::new(node_url).unwrap();
 
-    let secret = vec![1, 2, 3];
+    let secret = config.secret.clone();
     let validator_lane_id = node_client
         .get_node_info()
         .await

@@ -25,6 +25,9 @@ pub struct Conf {
     pub max_txs_per_proof: usize,
     pub tx_working_window_size: usize,
 
+    /// Secret used to derive commitments (configured per deployment)
+    pub secret: Vec<u8>,
+
     // Bridge configuration
     pub bridge: BridgeConfig,
 

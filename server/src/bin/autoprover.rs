@@ -74,7 +74,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         validator_lane_id,
     } = setup_services(&config, pool.clone(), false, false).await?;
 
-    let secret = vec![1, 2, 3];
+    let secret = config.secret.clone();
 
     let (_, full_state) = server::init::init_orderbook_from_database(
         validator_lane_id.clone(),

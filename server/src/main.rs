@@ -114,8 +114,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         bridge_service,
     } = setup_services(&config, pool.clone(), args.offline, args.bridge).await?;
 
-    // TODO: make a proper secret management
-    let secret = vec![1, 2, 3];
+    let secret = config.secret.clone();
 
     let (light_state, full_state) = server::init::init_orderbook_from_database(
         validator_lane_id.clone(),

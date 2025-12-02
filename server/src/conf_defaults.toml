@@ -15,6 +15,7 @@ database_name = "orderbook"
 buffer_blocks = 0
 max_txs_per_proof = 30
 tx_working_window_size = 150
+secret = [1, 2, 3]
 
 trigger_url = "http://localhost:3000/api/websocket/trigger"
 
