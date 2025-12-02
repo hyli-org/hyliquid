@@ -7,8 +7,8 @@ use sparse_merkle_tree::traits::Value;
 use crate::{
     model::{Balance, ExecuteState, OrderbookEvent},
     transaction::{
-        EscapePrivateInput, OrderbookAction, PermissionlessOrderbookAction,
-        PermissionnedOrderbookAction, PermissionnedPrivateInput,
+        EscapePrivateInput, OrderbookAction, PermissionedOrderbookAction, PermissionedPrivateInput,
+        PermissionlessOrderbookAction,
     },
     zk::{
         order_merkle::collect_price_levels,
@@ -52,7 +52,7 @@ impl sdk::ZkContract for ZkVmState {
             .unwrap_or_else(|e| panic!("Failed to verify orders owners: {e}"));
 
         let mut events = match action {
-            OrderbookAction::PermissionnedOrderbookAction(action, _) => {
+            OrderbookAction::PermissionedOrderbookAction(action, _) => {
                 if tx_ctx.lane_id != self.lane_id {
                     panic!(
                         "Invalid lane id: expected {:?}, got {:?}",
@@ -60,24 +60,24 @@ impl sdk::ZkContract for ZkVmState {
                     );
                 }
 
-                let permissionned_private_input: PermissionnedPrivateInput =
+                let permissioned_private_input: PermissionedPrivateInput =
                     borsh::from_slice(&calldata.private_input).unwrap_or_else(|e| {
-                        panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
+                        panic!("Failed to deserialize PermissionedPrivateInput: {e}")
                     });
 
                 let hashed_secret: [u8; 32] =
-                    Sha3_256::digest(&permissionned_private_input.secret).into();
+                    Sha3_256::digest(&permissioned_private_input.secret).into();
                 if hashed_secret != self.hashed_secret {
                     panic!("Invalid secret in private input");
                 }
 
-                if let PermissionnedOrderbookAction::Identify = action {
+                if let PermissionedOrderbookAction::Identify = action {
                     // Identify action does not change the state
                     self.take_changes_back(&mut state)?;
                     return Ok((vec![], ctx, vec![]));
                 }
 
-                let user_info = permissionned_private_input.user_info.clone();
+                let user_info = permissioned_private_input.user_info.clone();
 
                 // Assert that used user_info is correct
                 assert!(state
@@ -85,10 +85,10 @@ impl sdk::ZkContract for ZkVmState {
                     .unwrap_or_else(|e| panic!("User info provided by server is incorrect: {e}")));
 
                 // Execute the given action
-                state.execute_permissionned_action(
+                state.execute_permissioned_action(
                     user_info,
                     action,
-                    &permissionned_private_input.private_input,
+                    &permissioned_private_input.private_input,
                 )?
             }
             OrderbookAction::PermissionlessOrderbookAction(action, _) => {
@@ -97,7 +97,7 @@ impl sdk::ZkContract for ZkVmState {
                     PermissionlessOrderbookAction::Escape { user_key } => {
                         let escape_private_input: EscapePrivateInput =
                             borsh::from_slice(&calldata.private_input).unwrap_or_else(|e| {
-                                panic!("Failed to deserialize PermissionnedPrivateInput: {e}")
+                                panic!("Failed to deserialize PermissionedPrivateInput: {e}")
                             });
 
                         let user_info = escape_private_input.user_info.clone();

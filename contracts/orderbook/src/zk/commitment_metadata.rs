@@ -5,7 +5,7 @@ use crate::{
     model::{
         Balance, Order, OrderCollectionMode, OrderSide, OrderType, OrderbookEvent, Symbol, UserInfo,
     },
-    transaction::PermissionnedOrderbookAction,
+    transaction::PermissionedOrderbookAction,
     zk::{
         order_merkle::OrderPriceLevel,
         smt::{GetKey, UserBalance},
@@ -358,7 +358,7 @@ impl FullState {
         &self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
-        action: &PermissionnedOrderbookAction,
+        action: &PermissionedOrderbookAction,
     ) -> Result<ZkvmComputedInputs, String> {
         // We populate orders owners based on events with only needed values
         let mut orders_owner = HashMap::new();
@@ -371,7 +371,7 @@ impl FullState {
                 | OrderbookEvent::OrderCancelled { order_id, .. } => {
                     if let Some(order_owner) = self.state.order_manager.orders_owner.get(order_id) {
                         orders_owner.insert(order_id.clone(), *order_owner);
-                    } else if let PermissionnedOrderbookAction::CreateOrder(Order {
+                    } else if let PermissionedOrderbookAction::CreateOrder(Order {
                         order_id: create_order_id,
                         ..
                     }) = action
@@ -447,7 +447,7 @@ impl FullState {
         &self,
         user_info: &UserInfo,
         events: &[OrderbookEvent],
-        action: &PermissionnedOrderbookAction,
+        action: &PermissionedOrderbookAction,
     ) -> Result<Vec<u8>, String> {
         let (users_info, balances, order_manager) = self.for_zkvm(user_info, events, action)?;
 

@@ -12,7 +12,7 @@ use hyli_modules::{
 };
 use orderbook::{
     model::{OrderbookEvent, UserInfo},
-    transaction::{OrderbookAction, PermissionnedOrderbookAction, PermissionnedPrivateInput},
+    transaction::{OrderbookAction, PermissionedOrderbookAction, PermissionedPrivateInput},
     zk::FullState,
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
@@ -39,7 +39,7 @@ pub struct PendingTx {
 pub struct OrderbookProverRequest {
     pub user_info: UserInfo,
     pub events: Vec<OrderbookEvent>,
-    pub orderbook_action: PermissionnedOrderbookAction,
+    pub orderbook_action: PermissionedOrderbookAction,
     pub nonce: u32,
     pub action_private_input: Vec<u8>,
     pub tx_hash: TxHash,
@@ -175,7 +175,7 @@ impl OrderbookProverModule {
             .apply_events_and_update_roots(&user_info, events)
             .map_err(|e| anyhow!("failed to execute orderbook tx: {e}"))?;
 
-        let permissioned_private_input = PermissionnedPrivateInput {
+        let permissioned_private_input = PermissionedPrivateInput {
             secret: vec![1, 2, 3],
             user_info: user_info.clone(),
             private_input: action_private_input.clone(),
@@ -186,7 +186,7 @@ impl OrderbookProverModule {
         let calldata = Calldata {
             identity: ORDERBOOK_ACCOUNT_IDENTITY.into(),
             tx_hash: tx_hash.clone(),
-            blobs: vec![OrderbookAction::PermissionnedOrderbookAction(
+            blobs: vec![OrderbookAction::PermissionedOrderbookAction(
                 orderbook_action.clone(),
                 nonce,
             )

@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     order_manager::OrderManager,
-    transaction::{OrderbookAction, PermissionnedOrderbookAction},
+    transaction::{OrderbookAction, PermissionedOrderbookAction},
     zk::smt::GetKey,
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
@@ -678,8 +678,8 @@ impl ExecuteState {
                 // If the action is creating this order, it's expected to not find it in orders
                 && !matches!(
                     action,
-                    OrderbookAction::PermissionnedOrderbookAction(
-                        PermissionnedOrderbookAction::CreateOrder(Order {
+                    OrderbookAction::PermissionedOrderbookAction(
+                        PermissionedOrderbookAction::CreateOrder(Order {
                             order_id: create_order_id,
                             ..
                         }), _

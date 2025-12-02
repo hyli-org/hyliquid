@@ -15,7 +15,7 @@ use crate::{
         PairInfo, UserInfo,
     },
     transaction::{
-        AddSessionKeyPrivateInput, CreateOrderPrivateInput, PermissionnedOrderbookAction,
+        AddSessionKeyPrivateInput, CreateOrderPrivateInput, PermissionedOrderbookAction,
         WithdrawPrivateInput,
     },
     zk::FullState,
@@ -133,12 +133,12 @@ fn apply_user_updates(user: &mut UserInfo, events: &[OrderbookEvent]) {
 fn execute_action_ok(
     orderbook: &mut FullState,
     user: &mut UserInfo,
-    action: PermissionnedOrderbookAction,
+    action: PermissionedOrderbookAction,
     private_input: Vec<u8>,
 ) -> Vec<OrderbookEvent> {
     let events = orderbook
         .state
-        .generate_permissionned_execution_events(user, action, &private_input)
+        .generate_permissioned_execution_events(user, action, &private_input)
         .expect("failed to generate execution events");
 
     orderbook
@@ -151,12 +151,12 @@ fn execute_action_ok(
 fn execute_action_err(
     orderbook: &mut FullState,
     user: &UserInfo,
-    action: PermissionnedOrderbookAction,
+    action: PermissionedOrderbookAction,
     private_input: Vec<u8>,
 ) -> String {
     orderbook
         .state
-        .generate_permissionned_execution_events(user, action, &private_input)
+        .generate_permissioned_execution_events(user, action, &private_input)
         .expect_err("action should fail")
 }
 
@@ -173,7 +173,7 @@ fn add_session_key_registers_new_key() {
     let events = execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::AddSessionKey,
+        PermissionedOrderbookAction::AddSessionKey,
         private_input,
     );
 
@@ -190,9 +190,9 @@ fn add_session_key_registers_new_key() {
     ));
     let err = orderbook
         .state
-        .generate_permissionned_execution_events(
+        .generate_permissioned_execution_events(
             &user,
-            PermissionnedOrderbookAction::AddSessionKey,
+            PermissionedOrderbookAction::AddSessionKey,
             &serialize(&AddSessionKeyPrivateInput {
                 new_public_key: key,
             }),
@@ -211,7 +211,7 @@ fn create_pair_initializes_balances() {
     let events = execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: info.clone(),
         },
@@ -257,7 +257,7 @@ fn create_pair_rejects_conflicting_symbol_registration() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: info.clone(),
         },
@@ -270,7 +270,7 @@ fn create_pair_rejects_conflicting_symbol_registration() {
     let err = execute_action_err(
         &mut orderbook,
         &user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair,
             info: conflicting_info,
         },
@@ -290,7 +290,7 @@ fn create_pair_merges_metadata_without_overrides() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: first_info.clone(),
         },
@@ -302,7 +302,7 @@ fn create_pair_merges_metadata_without_overrides() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair,
             info: second_info,
         },
@@ -319,7 +319,7 @@ fn deposit_updates_balance_and_event() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: make_pair_info(&pair, 3, 2),
         },
@@ -329,7 +329,7 @@ fn deposit_updates_balance_and_event() {
     let events = execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::Deposit {
+        PermissionedOrderbookAction::Deposit {
             symbol: pair.1.clone(),
             amount: 500,
         },
@@ -356,7 +356,7 @@ fn withdraw_deducts_balance() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::AddSessionKey,
+        PermissionedOrderbookAction::AddSessionKey,
         serialize(&AddSessionKeyPrivateInput {
             new_public_key: session_key.clone(),
         }),
@@ -365,7 +365,7 @@ fn withdraw_deducts_balance() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: make_pair_info(&pair, 3, 2),
         },
@@ -375,7 +375,7 @@ fn withdraw_deducts_balance() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::Deposit {
+        PermissionedOrderbookAction::Deposit {
             symbol: pair.1.clone(),
             amount: 1_000,
         },
@@ -390,7 +390,7 @@ fn withdraw_deducts_balance() {
     let withdraw_events = execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::Withdraw {
+        PermissionedOrderbookAction::Withdraw {
             symbol: pair.1.clone(),
             amount: 400,
             destination: destination.clone(),
@@ -413,7 +413,7 @@ fn withdraw_deducts_balance() {
     let err = execute_action_err(
         &mut orderbook,
         &user,
-        PermissionnedOrderbookAction::Withdraw {
+        PermissionedOrderbookAction::Withdraw {
             symbol: pair.1.clone(),
             amount: 700,
             destination,
@@ -437,7 +437,7 @@ fn cancel_order_refunds_and_removes() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::AddSessionKey,
+        PermissionedOrderbookAction::AddSessionKey,
         serialize(&AddSessionKeyPrivateInput {
             new_public_key: session_key.clone(),
         }),
@@ -446,7 +446,7 @@ fn cancel_order_refunds_and_removes() {
     execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: make_pair_info(&pair, 3, 2),
         },
@@ -472,7 +472,7 @@ fn cancel_order_refunds_and_removes() {
     let events = execute_action_ok(
         &mut orderbook,
         &mut user,
-        PermissionnedOrderbookAction::Cancel {
+        PermissionedOrderbookAction::Cancel {
             order_id: order.order_id.clone(),
         },
         serialize(&CreateOrderPrivateInput {

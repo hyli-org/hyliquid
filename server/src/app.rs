@@ -33,7 +33,7 @@ use orderbook::{
     model::{AssetInfo, Order, OrderbookEvent, PairInfo, UserInfo, WithdrawDestination},
     transaction::{
         AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput,
-        OrderbookAction, PermissionnedOrderbookAction, WithdrawPrivateInput,
+        OrderbookAction, PermissionedOrderbookAction, WithdrawPrivateInput,
     },
     zk::smt::GetKey,
     ORDERBOOK_ACCOUNT_IDENTITY,
@@ -364,7 +364,7 @@ impl OrderbookModule {
 
         let action_private_input = Vec::<u8>::new();
 
-        let orderbook_action = PermissionnedOrderbookAction::Deposit {
+        let orderbook_action = PermissionedOrderbookAction::Deposit {
             symbol,
             amount: amount_u64,
         };
@@ -400,7 +400,7 @@ impl OrderbookModule {
             return Ok(());
         }
 
-        let orderbook_id_action = PermissionnedOrderbookAction::Identify;
+        let orderbook_id_action = PermissionedOrderbookAction::Identify;
 
         let transfer_blob = SmtTokenAction::Transfer {
             sender: Identity(ORDERBOOK_ACCOUNT_IDENTITY.to_string()),
@@ -416,7 +416,7 @@ impl OrderbookModule {
         let blob_tx = BlobTransaction::new(
             ORDERBOOK_ACCOUNT_IDENTITY,
             vec![
-                OrderbookAction::PermissionnedOrderbookAction(
+                OrderbookAction::PermissionedOrderbookAction(
                     orderbook_id_action.clone(),
                     action_id,
                 )
@@ -785,7 +785,7 @@ async fn create_pair(
             .record_operation(operation_start.elapsed(), "create_pair");
 
         let action_private_input = Vec::<u8>::new();
-        let orderbook_action = PermissionnedOrderbookAction::CreatePair { pair, info };
+        let orderbook_action = PermissionedOrderbookAction::CreatePair { pair, info };
 
         process_orderbook_action(
             user_info,
@@ -882,7 +882,7 @@ async fn add_session_key(
             new_public_key: public_key,
         };
 
-        let orderbook_action = PermissionnedOrderbookAction::AddSessionKey;
+        let orderbook_action = PermissionedOrderbookAction::AddSessionKey;
 
         process_orderbook_action(
             user_info,
@@ -956,7 +956,7 @@ async fn deposit(
 
         let action_private_input = Vec::<u8>::new();
 
-        let orderbook_action = PermissionnedOrderbookAction::Deposit {
+        let orderbook_action = PermissionedOrderbookAction::Deposit {
             symbol: request.symbol,
             amount: request.amount,
         };
@@ -1084,7 +1084,7 @@ async fn create_order(
                 signature,
             };
 
-            let orderbook_action = PermissionnedOrderbookAction::CreateOrder(request);
+            let orderbook_action = PermissionedOrderbookAction::CreateOrder(request);
 
             process_orderbook_action(
                 user_info,
@@ -1193,7 +1193,7 @@ async fn cancel_order(
             signature,
         };
 
-        let orderbook_action = PermissionnedOrderbookAction::Cancel {
+        let orderbook_action = PermissionedOrderbookAction::Cancel {
             order_id: request.order_id.clone(),
         };
 
@@ -1303,7 +1303,7 @@ async fn withdraw(
             signature,
         };
 
-        let orderbook_action = PermissionnedOrderbookAction::Withdraw {
+        let orderbook_action = PermissionedOrderbookAction::Withdraw {
             symbol: request.symbol,
             amount: request.amount,
             destination: request.destination,
@@ -1336,7 +1336,7 @@ async fn withdraw(
 async fn process_orderbook_action<T: BorshSerialize>(
     user_info: UserInfo,
     events: Vec<OrderbookEvent>,
-    orderbook_action: PermissionnedOrderbookAction,
+    orderbook_action: PermissionedOrderbookAction,
     action_private_input: &T,
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
@@ -1344,7 +1344,7 @@ async fn process_orderbook_action<T: BorshSerialize>(
     let blob_tx = BlobTransaction::new(
         ORDERBOOK_ACCOUNT_IDENTITY,
         vec![
-            OrderbookAction::PermissionnedOrderbookAction(orderbook_action.clone(), action_id)
+            OrderbookAction::PermissionedOrderbookAction(orderbook_action.clone(), action_id)
                 .as_blob(ctx.orderbook_cn.clone()),
         ],
     );

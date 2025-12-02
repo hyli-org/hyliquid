@@ -17,7 +17,7 @@ use hyli_modules::{
 };
 use hyli_smt_token::SmtTokenAction;
 use orderbook::{
-    transaction::{OrderbookAction, PermissionnedOrderbookAction},
+    transaction::{OrderbookAction, PermissionedOrderbookAction},
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use reqwest::Method;
@@ -307,8 +307,8 @@ impl BridgeModule {
                 continue;
             };
 
-            if let OrderbookAction::PermissionnedOrderbookAction(
-                PermissionnedOrderbookAction::Withdraw {
+            if let OrderbookAction::PermissionedOrderbookAction(
+                PermissionedOrderbookAction::Withdraw {
                     symbol,
                     amount,
                     destination,

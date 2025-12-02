@@ -10,9 +10,9 @@ use crate::{
     utils,
 };
 
-/// Structure to deserialize permissionned private data
+/// Structure to deserialize permissioned private data
 #[derive(BorshSerialize, BorshDeserialize, Debug, Clone)]
-pub struct PermissionnedPrivateInput {
+pub struct PermissionedPrivateInput {
     pub secret: Vec<u8>,
 
     // Used to assert and increment user's nonce
@@ -61,12 +61,12 @@ pub struct EscapePrivateInput {
 /// Enum representing possible calls to the contract functions.
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
 pub enum OrderbookAction {
-    PermissionnedOrderbookAction(PermissionnedOrderbookAction, u32),
+    PermissionedOrderbookAction(PermissionedOrderbookAction, u32),
     PermissionlessOrderbookAction(PermissionlessOrderbookAction, u32),
 }
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
-pub enum PermissionnedOrderbookAction {
+pub enum PermissionedOrderbookAction {
     Identify, // TODO: This is a temporary solution for withdraws. This should be replaced by a proxy contract
     AddSessionKey,
     CreatePair {
@@ -104,14 +104,14 @@ impl OrderbookAction {
 
 impl ExecuteState {
     /// Entry point for execution
-    pub fn execute_permissionned_action(
+    pub fn execute_permissioned_action(
         &mut self,
         user_info: UserInfo,
-        action: PermissionnedOrderbookAction,
+        action: PermissionedOrderbookAction,
         private_input: &[u8],
     ) -> Result<Vec<OrderbookEvent>, String> {
         let events = self
-            .generate_permissionned_execution_events(&user_info, action, private_input)
+            .generate_permissioned_execution_events(&user_info, action, private_input)
             .map_err(|e| format!("Could not generate events: {e}"))?;
         self.apply_events_preserving_zeroed_orders(&user_info, &events)
             .map_err(|e| format!("Could not apply events to state: {e}"))?;
@@ -119,20 +119,20 @@ impl ExecuteState {
         Ok(events)
     }
 
-    pub fn generate_permissionned_execution_events(
+    pub fn generate_permissioned_execution_events(
         &self,
         user_info: &UserInfo,
-        action: PermissionnedOrderbookAction,
+        action: PermissionedOrderbookAction,
         private_input: &[u8],
     ) -> Result<Vec<OrderbookEvent>, String> {
         match action {
-            PermissionnedOrderbookAction::Identify => {
+            PermissionedOrderbookAction::Identify => {
                 Ok(vec![]) // Identify action does not change the state
             }
-            PermissionnedOrderbookAction::CreatePair { pair, info } => {
+            PermissionedOrderbookAction::CreatePair { pair, info } => {
                 self.create_pair(&pair, &info)
             }
-            PermissionnedOrderbookAction::AddSessionKey => {
+            PermissionedOrderbookAction::AddSessionKey => {
                 // On this step, the public key is provided in private_input and hence is never public.
                 // The orderbook server knows the public key as user informed it offchain.
                 let add_session_key_private_input =
@@ -145,10 +145,10 @@ impl ExecuteState {
                     &add_session_key_private_input.new_public_key,
                 )
             }
-            PermissionnedOrderbookAction::Deposit { symbol, amount } => {
+            PermissionedOrderbookAction::Deposit { symbol, amount } => {
                 self.deposit(&symbol, amount, user_info)
             }
-            PermissionnedOrderbookAction::CreateOrder(Order {
+            PermissionedOrderbookAction::CreateOrder(Order {
                 order_id,
                 order_side,
                 order_type,
@@ -195,7 +195,7 @@ impl ExecuteState {
 
                 self.execute_order(user_info, order)
             }
-            PermissionnedOrderbookAction::Cancel { order_id } => {
+            PermissionedOrderbookAction::Cancel { order_id } => {
                 let cancel_order_private_data =
                     borsh::from_slice::<CreateOrderPrivateInput>(private_input).map_err(|e| {
                         format!("Failed to deserialize CancelOrderPrivateInput: {e}")
@@ -211,7 +211,7 @@ impl ExecuteState {
 
                 self.cancel_order(order_id, user_info)
             }
-            PermissionnedOrderbookAction::Withdraw { symbol, amount, .. } => {
+            PermissionedOrderbookAction::Withdraw { symbol, amount, .. } => {
                 // TODO: assert there is a transfer blob for that symbol
 
                 let withdraw_private_data =

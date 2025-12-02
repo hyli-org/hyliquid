@@ -16,7 +16,7 @@ use crate::model::{
 };
 use crate::transaction::{
     AddSessionKeyPrivateInput, CancelOrderPrivateInput, CreateOrderPrivateInput, OrderbookAction,
-    PermissionnedOrderbookAction, PermissionnedPrivateInput, WithdrawPrivateInput,
+    PermissionedOrderbookAction, PermissionedPrivateInput, WithdrawPrivateInput,
 };
 use crate::zk::OrderManagerRoots;
 use crate::zk::{FullState, ZkVmState, H256};
@@ -82,7 +82,7 @@ fn run_action(
     light: &mut ExecuteState,
     full: &mut FullState,
     user: &str,
-    action: PermissionnedOrderbookAction,
+    action: PermissionedOrderbookAction,
     private_payload: Vec<u8>,
 ) -> Vec<OrderbookEvent> {
     let action_repr = format!("{action:?}");
@@ -93,7 +93,7 @@ fn run_action(
         .unwrap_or_else(|_| test_user(user));
 
     let events = light
-        .execute_permissionned_action(user_info.clone(), action.clone(), &private_payload)
+        .execute_permissioned_action(user_info.clone(), action.clone(), &private_payload)
         .expect("light execution");
     light.order_manager.clean(&events);
 
@@ -108,7 +108,7 @@ fn run_action(
     full.apply_events_and_update_roots(&user_info, events.clone())
         .expect("full execution deposit");
 
-    let permissioned_private_input = PermissionnedPrivateInput {
+    let permissioned_private_input = PermissionedPrivateInput {
         secret: secret.to_vec(),
         user_info: user_info.clone(),
         private_input: private_payload,
@@ -116,7 +116,7 @@ fn run_action(
 
     let calldata = Calldata {
         identity: id.clone(),
-        blobs: vec![OrderbookAction::PermissionnedOrderbookAction(action, 0).as_blob(cn.clone())]
+        blobs: vec![OrderbookAction::PermissionedOrderbookAction(action, 0).as_blob(cn.clone())]
             .into(),
         tx_blob_count: 1,
         index: BlobIndex(0),
@@ -281,7 +281,7 @@ fn submit_signed_order<'a>(
         light,
         full,
         user,
-        PermissionnedOrderbookAction::CreateOrder(order),
+        PermissionedOrderbookAction::CreateOrder(order),
         private_payload,
     );
 }
@@ -311,7 +311,7 @@ fn cancel_signed_order<'a>(
         light,
         full,
         user,
-        PermissionnedOrderbookAction::Cancel {
+        PermissionedOrderbookAction::Cancel {
             order_id: order_id.to_string(),
         },
         private_payload,
@@ -335,7 +335,7 @@ fn add_session_key<'a>(
         light,
         full,
         user,
-        PermissionnedOrderbookAction::AddSessionKey,
+        PermissionedOrderbookAction::AddSessionKey,
         payload,
     );
 }
@@ -351,7 +351,7 @@ fn deposit(
         light,
         full,
         user,
-        PermissionnedOrderbookAction::Deposit {
+        PermissionedOrderbookAction::Deposit {
             symbol: symbol.to_string(),
             amount,
         },
@@ -393,7 +393,7 @@ fn withdraw_with_signature<'a>(
         light,
         full,
         user,
-        PermissionnedOrderbookAction::Withdraw {
+        PermissionedOrderbookAction::Withdraw {
             symbol: symbol.to_string(),
             amount,
             destination,
@@ -436,7 +436,7 @@ fn test_deposit_state_commitment() {
         &mut light,
         &mut full,
         users[0],
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info,
         },
@@ -498,7 +498,7 @@ fn test_multiple_deposits_state_commitment() {
         &mut light,
         &mut full,
         users[0],
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info,
         },
@@ -577,7 +577,7 @@ fn test_withdraw_reduces_balance_and_increments_nonce() {
         &mut light,
         &mut full,
         users[0],
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info,
         },
@@ -643,9 +643,9 @@ fn test_limit_order_without_price_fails() {
         quantity: 10,
     };
     let err = light
-        .generate_permissionned_execution_events(
+        .generate_permissioned_execution_events(
             &user_info,
-            PermissionnedOrderbookAction::CreateOrder(order),
+            PermissionedOrderbookAction::CreateOrder(order),
             &[],
         )
         .expect_err("limit order without price should fail");
@@ -665,9 +665,9 @@ fn test_market_order_with_price_fails() {
         quantity: 10,
     };
     let err = light
-        .generate_permissionned_execution_events(
+        .generate_permissioned_execution_events(
             &user_info,
-            PermissionnedOrderbookAction::CreateOrder(order),
+            PermissionedOrderbookAction::CreateOrder(order),
             &[],
         )
         .expect_err("market order with price should fail");
@@ -702,7 +702,7 @@ fn test_identify_action_is_noop() {
         &mut light,
         &mut full,
         users[0],
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: (base_symbol.clone(), quote_symbol.clone()),
             info: pair_info,
         },
@@ -727,7 +727,7 @@ fn test_identify_action_is_noop() {
         &mut light,
         &mut full,
         users[0],
-        PermissionnedOrderbookAction::Identify,
+        PermissionedOrderbookAction::Identify,
         Vec::new(),
     );
     assert!(events.is_empty(), "identify should emit no events");
@@ -794,7 +794,7 @@ fn test_add_session_key_state_commitment() {
         &mut light,
         &mut full,
         user,
-        PermissionnedOrderbookAction::AddSessionKey,
+        PermissionedOrderbookAction::AddSessionKey,
         private_payload,
     );
 
@@ -856,7 +856,7 @@ fn test_equal_price_limit_orders_fill_in_fifo_order() {
         &mut light,
         &mut full,
         users[0],
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info,
         },
@@ -1018,7 +1018,7 @@ fn test_cancel_order_restores_balance_and_removes_state() {
         &mut light,
         &mut full,
         user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info,
         },
@@ -1298,7 +1298,7 @@ fn test_complex_multi_user_orderbook() {
         &mut light,
         &mut full,
         alice,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info.clone(),
         },
@@ -1778,7 +1778,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
         &mut light,
         &mut full,
         user,
-        PermissionnedOrderbookAction::CreatePair {
+        PermissionedOrderbookAction::CreatePair {
             pair: pair.clone(),
             info: pair_info,
         },
