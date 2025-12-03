@@ -548,6 +548,7 @@ async fn main() -> Result<()> {
 
             while order_count < max_orders {
                 let current_nonce = get_nonce(&client, &args.server_url, &args.identity).await?;
+                tracing::info!("Current nonce: {}", current_nonce);
                 // Calculate price progression based on trend
 
                 match trend.as_str() {

@@ -253,16 +253,6 @@ impl DatabaseService {
                 .await,
             "Failed to write events"
         )?;
-        if !self.ctx.no_blobs {
-            let blob_send_start = Instant::now();
-            log_error!(
-                self.ctx.client.send_tx_blob(blob_tx).await,
-                "Failed to send blob tx"
-            )?;
-            self.ctx
-                .metrics
-                .record(&self.ctx.metrics.blob_send_duration, blob_send_start, &[]);
-        }
         Ok(())
     }
 
@@ -1088,7 +1078,11 @@ impl DatabaseModule {
 
     async fn handle_database_request(&mut self, request: DatabaseRequest) -> Result<()> {
         match request {
-            DatabaseRequest::WriteEvents { prover_request, .. } => {
+            DatabaseRequest::WriteEvents {
+                prover_request,
+                blob_tx,
+                ..
+            } => {
                 for event in prover_request.events {
                     match event {
                         OrderbookEvent::OrderCreated { order } => {
@@ -1126,6 +1120,27 @@ impl DatabaseModule {
                         }
                         _ => {}
                     }
+                }
+
+                // TODO: sending blob tx should be done only if the write_events succeeded
+                // and blob tx must be sent in the same order as the DatabaseRequest::WriteEvents
+                // arrived.
+                // But a broader question exists: how do we handle a failure in write_events ?
+                // If we don't send the blob tx, we might write blob txs that refer to non-existing
+                // orders or do balance updates that should not happen...
+                // By sending the blob tx here, we guarantee the order, but we might send blob txs
+                // that can't be proved if the database write fails.
+                if !self.ctx.no_blobs {
+                    let blob_send_start = Instant::now();
+                    log_error!(
+                        self.ctx.client.send_tx_blob(blob_tx).await,
+                        "Failed to send blob tx"
+                    )?;
+                    self.ctx.metrics.record(
+                        &self.ctx.metrics.blob_send_duration,
+                        blob_send_start,
+                        &[],
+                    );
                 }
             }
         }
