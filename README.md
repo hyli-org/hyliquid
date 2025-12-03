@@ -134,7 +134,7 @@ If you wanted to experiment with Lighter-like ideas but were constrained by clos
 
 - **Metrics** – We are collecting detailed latency breakdowns (request → fast path, fast path → proof submission, proof submission → settlement) and will publish them soon.
 - **Bridging flows** – Tightening the integration between `server`’s bridge module and external networks for seamless deposits/withdrawals.
-- **Community contributions** – Issues are tagged for contracts, prover, front, and tooling. We welcome audits, UX polish, additional load tests, and alternative proving strategies (e.g., multi-proof batching).
+- **User authentication** – Add/enhance authentication checks on the server-api to ensure only verified users can access endpoints.
 
 ## Getting Started
 
