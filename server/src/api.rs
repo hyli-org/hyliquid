@@ -1,13 +1,11 @@
-#![allow(dead_code)]
 use anyhow::Result;
 use axum::{
-    extract::{Json, Path, Query, State},
-    http::{HeaderMap, Method, StatusCode},
+    extract::{Json, State},
+    http::Method,
     response::IntoResponse,
     routing::get,
     Router,
 };
-use client_sdk::contract_indexer::AppError;
 use hyli_modules::{
     bus::SharedMessageBus,
     module_bus_client, module_handle_messages,
@@ -15,11 +13,8 @@ use hyli_modules::{
 };
 use sdk::ContractName;
 use serde::Serialize;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::RwLock;
+use std::sync::Arc;
 use tower_http::cors::{Any, CorsLayer};
-
-use crate::services::{book_service::BookService, user_service::UserService};
 
 pub struct ApiModule {
     bus: AppModuleBusClient,
@@ -27,8 +22,6 @@ pub struct ApiModule {
 
 pub struct ApiModuleCtx {
     pub api: Arc<BuildApiContextInner>,
-    pub book_service: Arc<RwLock<BookService>>,
-    pub user_service: Arc<RwLock<UserService>>,
     pub contract1_cn: ContractName,
 }
 
@@ -44,8 +37,6 @@ impl Module for ApiModule {
     async fn build(bus: SharedMessageBus, ctx: Self::Context) -> Result<Self> {
         let state = RouterCtx {
             contract1_cn: ctx.contract1_cn.clone(),
-            book_service: ctx.book_service.clone(),
-            user_service: ctx.user_service.clone(),
         };
 
         // Créer un middleware CORS
@@ -58,12 +49,6 @@ impl Module for ApiModule {
             .route("/_health", get(health))
             .route("/api/config", get(get_config))
             // .route("/api/info", get(get_info))
-            // .route(
-            //     "/api/book/{base_asset_symbol}/{quote_asset_symbol}",
-            //     get(get_book),
-            // )
-            // .route("/api/balances", get(get_balance))
-            // .route("/api/nonce", get(get_nonce))
             .with_state(state)
             .layer(cors); // Appliquer le middleware CORS
 
@@ -88,8 +73,6 @@ impl Module for ApiModule {
 
 #[derive(Clone)]
 struct RouterCtx {
-    pub book_service: Arc<RwLock<BookService>>,
-    pub user_service: Arc<RwLock<UserService>>,
     pub contract1_cn: ContractName,
 }
 
@@ -100,31 +83,6 @@ async fn health() -> impl IntoResponse {
 // --------------------------------------------------------
 //     Headers
 // --------------------------------------------------------
-
-const USER_HEADER: &str = "x-identity";
-
-#[derive(Debug)]
-struct AuthHeaders {
-    user: String,
-}
-
-impl AuthHeaders {
-    fn from_headers(headers: &HeaderMap) -> Result<Self, AppError> {
-        let user = headers
-            .get(USER_HEADER)
-            .and_then(|v| v.to_str().ok())
-            .ok_or_else(|| {
-                AppError(
-                    StatusCode::UNAUTHORIZED,
-                    anyhow::anyhow!("Missing signature"),
-                )
-            })?;
-
-        Ok(AuthHeaders {
-            user: user.to_string(),
-        })
-    }
-}
 
 #[derive(Serialize)]
 struct ConfigResponse {
@@ -139,58 +97,4 @@ async fn get_config(State(ctx): State<RouterCtx>) -> impl IntoResponse {
     Json(ConfigResponse {
         contract_name: ctx.contract1_cn.0,
     })
-}
-
-async fn get_info(State(_ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
-    let book_service = _ctx.book_service.read().await;
-
-    let info = book_service.get_info().await?;
-
-    Ok(Json(info))
-}
-
-async fn get_book(
-    State(ctx): State<RouterCtx>,
-    Path((base_asset_symbol, quote_asset_symbol)): Path<(String, String)>,
-    Query(query): Query<HashMap<String, String>>,
-) -> Result<impl IntoResponse, AppError> {
-    let book_service = ctx.book_service.read().await;
-
-    let levels = query
-        .get("levels")
-        .map(|v| v.parse::<u32>().unwrap_or(20))
-        .unwrap_or(20);
-    let group_ticks = query
-        .get("group_ticks")
-        .map(|v| v.parse::<u32>().unwrap_or(10))
-        .unwrap_or(10);
-    let book = book_service
-        .get_order_book(&base_asset_symbol, &quote_asset_symbol, levels, group_ticks)
-        .await?;
-
-    Ok(Json(book))
-}
-
-async fn get_balance(
-    State(ctx): State<RouterCtx>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, AppError> {
-    let auth_headers = AuthHeaders::from_headers(&headers)?;
-    let user_service = ctx.user_service.read().await;
-
-    let balance = user_service.get_balances(&auth_headers.user).await?;
-
-    Ok(Json(balance))
-}
-
-async fn get_nonce(
-    State(ctx): State<RouterCtx>,
-    headers: HeaderMap,
-) -> Result<impl IntoResponse, AppError> {
-    let auth_headers = AuthHeaders::from_headers(&headers)?;
-    let user_service = ctx.user_service.read().await;
-
-    let nonce = user_service.get_nonce(&auth_headers.user).await?;
-
-    Ok(Json(nonce))
 }

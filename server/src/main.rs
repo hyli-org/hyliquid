@@ -192,8 +192,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     let api_module_ctx = Arc::new(ApiModuleCtx {
         api: api_ctx.clone(),
-        book_service,
-        user_service,
         contract1_cn: args.orderbook_cn.clone().into(),
     });
 
