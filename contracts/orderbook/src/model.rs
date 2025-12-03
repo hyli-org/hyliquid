@@ -302,6 +302,7 @@ impl ExecuteState {
         user_info: &UserInfo,
     ) -> Result<Vec<OrderbookEvent>, String> {
         // Compute the new balance
+        let _ = self.get_user_info(&user_info.user)?; // Ensure user exists
         let balance = self.get_balance(user_info, symbol);
         let new_balance = Balance(balance.0.checked_add(amount).ok_or("Balance overflow")?);
 
