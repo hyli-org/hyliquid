@@ -107,7 +107,7 @@ dependencies = [
  "auto_impl",
  "borsh",
  "c-kzg",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "either",
  "k256",
  "once_cell",
@@ -239,7 +239,7 @@ dependencies = [
  "auto_impl",
  "borsh",
  "c-kzg",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "either",
  "serde",
  "serde_with",
@@ -308,7 +308,7 @@ dependencies = [
  "alloy-sol-types",
  "async-trait",
  "auto_impl",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "futures-utils-wasm",
  "serde",
  "serde_json",
@@ -338,7 +338,7 @@ dependencies = [
  "bytes",
  "cfg-if 1.0.4",
  "const-hex",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "foldhash 0.2.0",
  "hashbrown 0.16.1",
  "indexmap 2.12.1",
@@ -518,7 +518,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b2ca3a434a6d49910a7e8e51797eb25db42ef8a5578c52d877fcb26d0afe7bc"
 dependencies = [
  "alloy-primitives",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "serde",
  "serde_with",
 ]
@@ -534,7 +534,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "alloy-serde",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "rand 0.8.5",
  "serde",
  "strum 0.27.2",
@@ -730,7 +730,7 @@ dependencies = [
  "alloy-json-rpc",
  "auto_impl",
  "base64 0.22.1",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "futures",
  "futures-utils-wasm",
  "parking_lot",
@@ -806,7 +806,7 @@ dependencies = [
  "alloy-primitives",
  "alloy-rlp",
  "arrayvec",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "nybbles",
  "serde",
  "smallvec",
@@ -2335,6 +2335,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "convert_case"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "633458d4ef8c78b72454de2d54fd6ab2e60f9e02be22f3c6104cdc8a4e0fceb9"
+dependencies = [
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "cookie"
 version = "0.18.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2729,11 +2738,11 @@ dependencies = [
 
 [[package]]
 name = "derive_more"
-version = "2.0.1"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "093242cf7570c207c83073cf82f79706fe7b8317e98620a47d5be7c3d8497678"
+checksum = "10b768e943bed7bf2cab53df09f4bc34bfd217cdb57d971e769874c9a6710618"
 dependencies = [
- "derive_more-impl 2.0.1",
+ "derive_more-impl 2.1.0",
 ]
 
 [[package]]
@@ -2749,12 +2758,14 @@ dependencies = [
 
 [[package]]
 name = "derive_more-impl"
-version = "2.0.1"
+version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bda628edc44c4bb645fbe0f758797143e4e07926f7ebf4e9bdfbd3d2ce621df3"
+checksum = "6d286bfdaf75e988b4a78e013ecd79c581e06399ab53fbacd2d916c2f904f30b"
 dependencies = [
+ "convert_case",
  "proc-macro2",
  "quote",
+ "rustc_version 0.4.1",
  "syn 2.0.111",
  "unicode-xid",
 ]
@@ -3904,8 +3915,8 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hyli-client-sdk"
-version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ab38453638398bc5cd300d82dfdec5144bdcd87c"
+version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
 dependencies = [
  "anyhow",
  "axum 0.8.7",
@@ -3925,8 +3936,8 @@ dependencies = [
 
 [[package]]
 name = "hyli-contract-sdk"
-version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ab38453638398bc5cd300d82dfdec5144bdcd87c"
+version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
 dependencies = [
  "borsh",
  "hyli-model",
@@ -3939,8 +3950,8 @@ dependencies = [
 
 [[package]]
 name = "hyli-crypto"
-version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ab38453638398bc5cd300d82dfdec5144bdcd87c"
+version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
 dependencies = [
  "anyhow",
  "blst",
@@ -3952,14 +3963,14 @@ dependencies = [
 
 [[package]]
 name = "hyli-model"
-version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ab38453638398bc5cd300d82dfdec5144bdcd87c"
+version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
  "blst",
  "borsh",
- "derive_more 2.0.1",
+ "derive_more 2.1.0",
  "hex",
  "readonly",
  "secp256k1 0.31.1",
@@ -3975,8 +3986,8 @@ dependencies = [
 
 [[package]]
 name = "hyli-modules"
-version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ab38453638398bc5cd300d82dfdec5144bdcd87c"
+version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
 dependencies = [
  "anyhow",
  "anymap",
@@ -4015,8 +4026,8 @@ dependencies = [
 
 [[package]]
 name = "hyli-net"
-version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ab38453638398bc5cd300d82dfdec5144bdcd87c"
+version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
 dependencies = [
  "anyhow",
  "axum 0.8.7",
@@ -4041,8 +4052,8 @@ dependencies = [
 
 [[package]]
 name = "hyli-smt-token"
-version = "0.14.0-rc3"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ab38453638398bc5cd300d82dfdec5144bdcd87c"
+version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
 dependencies = [
  "anyhow",
  "borsh",
@@ -4165,9 +4176,9 @@ dependencies = [
 
 [[package]]
 name = "hyper-util"
-version = "0.1.18"
+version = "0.1.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52e9a2a24dc5c6821e71a7030e1e14b7b632acac55c40e9d2e082c621261bb56"
+checksum = "727805d60e7938b76b826a6ef209eb70eaa1812794f9424d4a4e2d740662df5f"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -4575,9 +4586,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.177"
+version = "0.2.178"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2874a2af47a2325c2001a6e6fad9b16a53b802102b528163885171cf92b15976"
+checksum = "37c93d8daa9d8a012fd8ab92f088405fb202ea0b6ab73ee2482ae66af4f42091"
 
 [[package]]
 name = "libloading"
@@ -4618,9 +4629,9 @@ dependencies = [
 
 [[package]]
 name = "libz-rs-sys"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "840db8cf39d9ec4dd794376f38acc40d0fc65eec2a8f484f7fd375b84602becd"
+checksum = "8b484ba8d4f775eeca644c452a56650e544bf7e617f1d170fe7298122ead5222"
 dependencies = [
  "zlib-rs",
 ]
@@ -4684,9 +4695,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.28"
+version = "0.4.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34080505efa8e45a4b816c349525ebe327ceaa8559756f0356cba97ef3bf7432"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lru"
@@ -8966,6 +8977,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7df058c713841ad818f1dc5d3fd88063241cc61f49f5fbea4b951e8cf5a8d71d"
 
 [[package]]
+name = "unicode-segmentation"
+version = "1.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6ccf251212114b54433ec949fd6a7841275f9ada20dddd2f29e9ceea4501493"
+
+[[package]]
 name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9915,9 +9932,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f06ae92f42f5e5c42443fd094f245eb656abf56dd7cce9b8b263236565e00f2"
+checksum = "36134c44663532e6519d7a6dfdbbe06f6f8192bde8ae9ed076e9b213f0e31df7"
 
 [[package]]
 name = "zopfli"
