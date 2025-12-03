@@ -157,6 +157,7 @@ cargo build -p contracts --release
 
 # 3. Start the devenet & fast-path server + prover
 hy devnet up
+hy config set build.release true
 hy run
 
 # 4. Launch the read-only API and frontend
