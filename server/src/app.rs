@@ -997,28 +997,28 @@ async fn create_order(
             let public_key = auth.public_key.expect("Missing public key in headers");
             let signature = auth.signature.expect("Missing signature in headers");
 
-            debug!("Creating order for user {user}. Order: {:?}", request);
-
             let user_info = {
                 let user_service = ctx.user_service.read().await;
                 user_service.get_user_info(&user).await?
             };
 
-            // orderbook::utils::verify_user_signature_authorization(
-            //     &user_info,
-            //     &public_key,
-            //     &format!(
-            //         "{}:{}:create_order:{}",
-            //         user_info.user, user_info.nonce, request.order_id
-            //     ),
-            //     &signature,
-            // )
-            // .map_err(|e| {
-            //     AppError(
-            //         StatusCode::BAD_REQUEST,
-            //         anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-            //     )
-            // })?;
+            orderbook::utils::verify_user_signature_authorization(
+                &user_info,
+                &public_key,
+                &format!(
+                    "{}:{}:create_order:{}",
+                    user_info.user, user_info.nonce, request.order_id
+                ),
+                &signature,
+            )
+            .map_err(|e| {
+                AppError(
+                    StatusCode::BAD_REQUEST,
+                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+                )
+            })?;
+
+            debug!("Creating order for user {user}. Order: {:?}", request);
 
             let (
                 user_info,
@@ -1032,13 +1032,6 @@ async fn create_order(
                 let mut orderbook = ctx.orderbook.lock().await;
                 let lock_duration = lock_start.elapsed();
                 let operation_start = Instant::now();
-
-                // let user_info = orderbook.get_user_info(&user).map_err(|e| {
-                //     AppError(
-                //         StatusCode::BAD_REQUEST,
-                //         anyhow::anyhow!("Could not find user {user}: {e}"),
-                //     )
-                // })?;
 
                 let method_start = Instant::now();
                 let events = log_warn!(
@@ -1121,6 +1114,27 @@ async fn cancel_order(
         let public_key = auth.public_key.expect("Missing public key in headers");
         let signature = auth.signature.expect("Missing signature in headers");
 
+        let user_info = {
+            let user_service = ctx.user_service.read().await;
+            user_service.get_user_info(&user).await?
+        };
+
+        orderbook::utils::verify_user_signature_authorization(
+            &user_info,
+            &public_key,
+            &format!(
+                "{}:{}:cancel:{}",
+                user_info.user, user_info.nonce, request.order_id
+            ),
+            &signature,
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+            )
+        })?;
+
         debug!(
             "Cancelling order for user {user}. Order ID: {}",
             request.order_id
@@ -1132,29 +1146,6 @@ async fn cancel_order(
             let mut orderbook = ctx.orderbook.lock().await;
             ctx.metrics
                 .record_lock(lock_start.elapsed(), "cancel_order");
-
-            let user_info = orderbook.get_user_info(&user).map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not find user {user}: {e}"),
-                )
-            })?;
-
-            orderbook::utils::verify_user_signature_authorization(
-                &user_info,
-                &public_key,
-                &format!(
-                    "{}:{}:cancel:{}",
-                    user_info.user, user_info.nonce, request.order_id
-                ),
-                &signature,
-            )
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-                )
-            })?;
 
             let Some(order_owner) = orderbook.get_order_owner(&request.order_id) else {
                 return Err(AppError(
@@ -1232,6 +1223,27 @@ async fn withdraw(
         let public_key = auth.public_key.expect("Missing public key in headers");
         let signature = auth.signature.expect("Missing signature in headers");
 
+        let user_info = {
+            let user_service = ctx.user_service.read().await;
+            user_service.get_user_info(&user).await?
+        };
+
+        orderbook::utils::verify_user_signature_authorization(
+            &user_info,
+            &public_key,
+            &format!(
+                "{}:{}:withdraw:{}:{}",
+                user_info.user, user_info.nonce, request.symbol, request.amount
+            ),
+            &signature,
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
+            )
+        })?;
+
         debug!(
             "Withdrawing {} {} for user {user}",
             request.amount, request.symbol
@@ -1242,29 +1254,6 @@ async fn withdraw(
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
             ctx.metrics.record_lock(lock_start.elapsed(), "withdraw");
-
-            let user_info = orderbook.get_user_info(&user).map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Could not find user {user}: {e}"),
-                )
-            })?;
-
-            orderbook::utils::verify_user_signature_authorization(
-                &user_info,
-                &public_key,
-                &format!(
-                    "{}:{}:withdraw:{}:{}",
-                    user_info.user, user_info.nonce, request.symbol, request.amount
-                ),
-                &signature,
-            )
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-                )
-            })?;
 
             let balance = orderbook.get_balance(&user_info, &request.symbol);
             if balance.0 < request.amount {
@@ -1370,7 +1359,7 @@ async fn process_orderbook_action<T: BorshSerialize>(
     debug!("Writing events to database for tx {tx_hash:#}");
     let mut bus = ctx.bus.clone();
     bus.send(DatabaseRequest::WriteEvents {
-        user: user_info.clone(),
+        user: user_info,
         tx_hash: tx_hash.clone(),
         blob_tx,
         prover_request,
