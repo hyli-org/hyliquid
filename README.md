@@ -7,21 +7,20 @@
 
 _**Hyliquid is a private, performance, non-custodial trading system built on [Hyli](https://hyli.org)**._
 
-_**[Use Hyliquid now!](https://hyliquid.testnet.hyli.org/)**_
-
 [![Telegram Chat][tg-badge]][tg-url]
 [![Twitter][twitter-badge]][twitter-url]
+
 </div>
 
 **Hyliquid** uses Hyli's purpose-built stack to ship a private, performant, non-custodial trading system.
 
 The project is fully open source and auditable for a perfect mix of privacy and compliance.
 
-Hyliquid follows the same high-level pattern as [Lighter](https://assets.lighter.xyz/whitepaper.pdf) but removes the black boxes: every component is auditable and reproducible.
+Hyliquid follows the same high-level pattern as [Lighter](https://assets.lighter.xyz/whitepaper.pdf) or dYdX on [StarkEx](https://docs.starkware.co/starkex/index.html) but removes the black boxes: every component is auditable and reproducible.
 
 ## Key features
 
-- 🕶️ Orders, balances, and fills stay offchain and private
+- 🕶️ Users, balances, and fills stay offchain and private
 - ⚡ Sub-second UX: instant interactions while proofs run asynchronously
 - 🔐 Non-custodial by design
 - 🧱 All components are auditable, open-source, without black boxes
@@ -29,11 +28,9 @@ Hyliquid follows the same high-level pattern as [Lighter](https://assets.lighter
 ## Why Hyli?
 
 - Hyli natively verifies proofs, including the SP1 proofs used for Hyliquid.
-- The Hylix toolsuite and SDKs reduce boilerplate on the prover side.
--
-
+- The [Hylix](https://crates.io/crates/hylix) toolsuite and SDKs makes it easy to deploy & test on a devnet.
 - **zkVM-native from day one** – Hyli bakes proof-friendly concepts (lanes, contract identities, blob transactions) directly into its node APIs. We never had to fight the runtime to integrate SP1 proofs.
-- **Purpose-built tooling** – The `hy` CLI, module system, and SDKs handle key management, block subscriptions, and proof submission out of the box, reducing boilerplate on the prover side.
+- **Purpose-built tooling** – The `hy` CLI, module system, and SDKs handle key management, block subscriptions, and proof submission out of the box, reducing boilerplate on the server side.
 - **RISC-V everywhere** – Contracts compile to SP1’s RISC-V target, and the same artifacts are consumed by both the fast path and the prover. Developer environments stay portable.
 - **No trade-offs** – Hyliquid stays private (no private data published onchain), performant (fast-path execution in Rust), and non-custodial (proofs anchor state on-chain). We never had to pick only two of the three.
 
@@ -80,7 +77,7 @@ Key ideas:
 - For every new block, it filters transactions that belong to the orderbook’s lane, reloads the corresponding `OrderbookProverRequest` from Postgres, and reconstructs the zkVM context.
 - `handle_prover_request` recreates the commitment metadata and calldata (including `ORDERBOOK_ACCOUNT_IDENTITY` blobs) before dispatching `ClientSdkProver::prove`.
 - Proof generation happens in detached `tokio::spawn` tasks, ensuring the module keeps up with the block feed. Successful proofs are wrapped into `ProofTransaction`s and submitted via `node_client.send_tx_proof`.
-- Settled transactions are deleted from `prover_requests`, keeping the queue lean and idempotent.
+- Settled transactions are deleted from `prover_requests`, keeping the queue lean.
 
 ### `server-api/` – Read-Only Surface
 
@@ -95,7 +92,6 @@ Key ideas:
 ### `loadtest/` – Reality Checks
 
 - Goose-based scenarios (`maker.rs`, `taker.rs`, etc.) validate throughput on real HTTP flows.
-- Recent improvements add better error propagation (`?` instead of `unwrap()`) and production endpoints, so the same suite can benchmark devnet and staging clusters alike.
 
 ## Privacy + Performance + Non-Custodial (All at Once)
 
@@ -125,7 +121,7 @@ This trifecta is typically a compromise on other stacks. Hyli’s architecture l
 
 ## Fully Open and RISC-V First
 
-We openly credit Lighter for popularizing the split between fast execution and asynchronous proving. Hyliquid applies the same pattern but keeps the entire stack transparent:
+We openly credit Lighter and Starkex for popularizing the design. Hyliquid applies the same pattern but keeps the entire stack transparent:
 
 - **Contracts, backend, prover, and UI** live in this repo with permissive licenses.
 - **RISC-V artifacts** are published (`elf/orderbook`, `elf/orderbook_vk`), so anyone can verify the binaries we run.
@@ -137,11 +133,19 @@ If you wanted to experiment with Lighter-like ideas but were constrained by clos
 ## What’s Next
 
 - **Metrics** – We are collecting detailed latency breakdowns (request → fast path, fast path → proof submission, proof submission → settlement) and will publish them soon.
-- **More markets** – Expanding beyond the initial `ORANJ/HYLLAR` pair to stress-test the state model with multiple orderbooks.
 - **Bridging flows** – Tightening the integration between `server`’s bridge module and external networks for seamless deposits/withdrawals.
 - **Community contributions** – Issues are tagged for contracts, prover, front, and tooling. We welcome audits, UX polish, additional load tests, and alternative proving strategies (e.g., multi-proof batching).
 
 ## Getting Started
+
+### Requirements:
+
+- Bun
+- Hylix: `cargo install hylix`
+- Cargo
+- SP1 toolkit
+
+### Run
 
 ```bash
 # 1. Clone the repo and install rustup + bun
@@ -151,8 +155,9 @@ cd hyliquid
 # 2. Build the contracts (SP1 RISC-V artifacts)
 cargo build -p contracts --release
 
-# 3. Start the fast-path server & prover
-hy run --bridge
+# 3. Start the devenet & fast-path server + prover
+hy devnet up
+hy run
 
 # 4. Launch the read-only API and frontend
 (cd server-api && bun install && bun dev)

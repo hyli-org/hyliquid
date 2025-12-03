@@ -1,7 +1,6 @@
 # Configuration for Goose load testing
 
 [server]
-#base_url = "https://hyliquid.camelot.hyli.dev"
 base_url = "http://localhost:3000"
 
 [instrument]

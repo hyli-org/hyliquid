@@ -79,5 +79,6 @@ tracing-opentelemetry = "0.29.0"
 uuid = { version = "1.18.1", features = ["v4"] }
 
 [features]
+default = ["instrumentation]
 nonreproducible = ["contracts/nonreproducible"]
 instrumentation = []
