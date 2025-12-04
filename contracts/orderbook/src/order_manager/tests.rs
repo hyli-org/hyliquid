@@ -315,6 +315,8 @@ fn deposit_updates_balance_and_event() {
     let mut orderbook = build_orderbook();
     let pair = sample_pair();
     let mut user = test_user("bob");
+    let signer = TestSigner::new(2);
+    let session_key = signer.public_key.clone();
 
     execute_action_ok(
         &mut orderbook,
@@ -324,6 +326,15 @@ fn deposit_updates_balance_and_event() {
             info: make_pair_info(&pair, 3, 2),
         },
         Vec::new(),
+    );
+
+    execute_action_ok(
+        &mut orderbook,
+        &mut user,
+        PermissionedOrderbookAction::AddSessionKey {},
+        serialize(&AddSessionKeyPrivateInput {
+            new_public_key: session_key.clone(),
+        }),
     );
 
     let events = execute_action_ok(
