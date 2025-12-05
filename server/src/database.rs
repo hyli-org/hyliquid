@@ -10,6 +10,7 @@ use hyli_modules::{
     log_error, module_bus_client, module_handle_messages,
     modules::Module,
 };
+use opentelemetry::Context;
 use opentelemetry::{
     metrics::{Histogram, Meter, UpDownCounter},
     KeyValue,
@@ -20,6 +21,7 @@ use sdk::{BlobTransaction, TxHash};
 use sqlx::{PgPool, Row};
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, Instrument};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::services::user_service::UserService;
 use crate::{prover::OrderbookProverRequest, services::asset_service::AssetService};
@@ -205,6 +207,7 @@ pub enum DatabaseRequest {
         tx_hash: TxHash,
         blob_tx: BlobTransaction,
         prover_request: OrderbookProverRequest,
+        context: Context,
     },
 }
 
@@ -247,7 +250,9 @@ impl DatabaseService {
         tx_hash: TxHash,
         blob_tx: BlobTransaction,
         prover_request: OrderbookProverRequest,
+        context: Context,
     ) -> Result<()> {
+        tracing::Span::current().set_parent(context);
         log_error!(
             self.write_events_internal(&user, tx_hash.clone(), &prover_request)
                 .await,
@@ -1011,6 +1016,7 @@ impl Module for DatabaseModule {
                             tx_hash,
                             blob_tx,
                             prover_request,
+                            context,
                         } => {
                             service
                                 .write_events(
@@ -1018,6 +1024,7 @@ impl Module for DatabaseModule {
                                     tx_hash.clone(),
                                     blob_tx.clone(),
                                     prover_request.clone(),
+                                    context,
                                 )
                                 .await
                         }
@@ -1080,13 +1087,16 @@ impl DatabaseModule {
         Ok(())
     }
 
+    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self, request)))]
     async fn handle_database_request(&mut self, request: DatabaseRequest) -> Result<()> {
         match request {
             DatabaseRequest::WriteEvents {
                 prover_request,
                 blob_tx,
+                context,
                 ..
             } => {
+                tracing::Span::current().set_parent(context);
                 for event in prover_request.events {
                     match event {
                         OrderbookEvent::OrderCreated { order } => {

@@ -10,9 +10,8 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
-    body::Body,
     extract::{Json, State},
-    http::{request, HeaderMap, Method, Request},
+    http::{HeaderMap, Method},
     response::IntoResponse,
     routing::{get, post},
     Router,
@@ -43,11 +42,9 @@ use reqwest::StatusCode;
 use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
-use tracing::{debug, field, info_span, Span};
+use tower_http::cors::{Any, CorsLayer};
+use tracing::{debug, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
     database::{DatabaseModuleCtx, DatabaseRequest, DatabaseService},
@@ -432,6 +429,7 @@ impl OrderbookModule {
         let tx_hash = blob_tx.hashed();
 
         let mut bus = self.bus.clone();
+        let context = Span::current().context();
         bus.send(DatabaseRequest::WriteEvents {
             user: UserInfo::new(ORDERBOOK_ACCOUNT_IDENTITY.to_string(), Vec::new()),
             tx_hash: tx_hash.clone(),
@@ -444,6 +442,7 @@ impl OrderbookModule {
                 tx_hash: tx_hash.clone(),
                 nonce: action_id,
             },
+            context,
         })?;
         Ok(())
     }
@@ -1365,11 +1364,13 @@ async fn process_orderbook_action<T: BorshSerialize>(
     // Write events directly using database service
     debug!("Writing events to database for tx {tx_hash:#}");
     let mut bus = ctx.bus.clone();
+    let context = Span::current().context();
     bus.send(DatabaseRequest::WriteEvents {
         user: user_info,
         tx_hash: tx_hash.clone(),
         blob_tx,
         prover_request,
+        context,
     })?;
     Ok(Json(tx_hash))
 }
