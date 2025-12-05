@@ -11,7 +11,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     extract::{Json, State},
-    http::{HeaderMap, Method},
+    http::{HeaderMap, Method, Request, Response},
     response::IntoResponse,
     routing::{get, post},
     Router,
@@ -42,8 +42,12 @@ use reqwest::StatusCode;
 use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
-use tower_http::cors::{Any, CorsLayer};
-use tracing::{debug, Span};
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
+    LatencyUnit,
+};
+use tracing::{debug, field, info_span, Level, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
@@ -289,7 +293,37 @@ impl Module for OrderbookModule {
             // FIXME: to be removed. Only here for debugging purposes
             .route("/state", get(get_state))
             .with_state(router_ctx.clone())
+            .layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(make_span)
+                    .on_response(close_span),
+            )
             .layer(cors);
+
+        fn make_span<B>(request: &Request<B>) -> Span {
+            let headers = request.headers();
+            let name = format!("{} {}", request.method(), request.uri());
+            tracing::span!(
+                target:module_path!(),
+                tracing::Level::INFO,
+                "http-request",
+                name,
+                ?headers,
+                trace_id = field::Empty,
+                http.status = field::Empty,
+                http.method =  %request.method(),
+                http.uri =  %request.uri(),
+                http.duration = field::Empty
+            )
+        }
+
+        fn close_span<B>(response: &Response<B>, latency: Duration, span: &Span) {
+            span.record("http.status", tracing::field::display(response.status()));
+            span.record(
+                "http.duration",
+                tracing::field::display(latency.as_micros()),
+            );
+        }
 
         if let Ok(mut guard) = ctx.api.router.lock() {
             if let Some(router) = guard.take() {
@@ -622,7 +656,7 @@ impl From<&orderbook::model::ExecuteState> for ExecuteStateAPI {
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="GET /state", fields(http.uri = "/state", http.method = "GET")))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let request_start = Instant::now();
     let endpoint = "get_state";
@@ -683,7 +717,7 @@ async fn get_nonce(
 }
 
 #[axum::debug_handler]
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /create_pair", fields(http.uri = "/create_pair", http.method = "POST")))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_pair(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -810,7 +844,7 @@ async fn create_pair(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /add_session_key", fields(http.uri = "/add_session_key", http.method = "POST")))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -907,7 +941,7 @@ async fn add_session_key(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /deposit", fields(http.uri = "/deposit", http.method = "POST")))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn deposit(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -984,10 +1018,7 @@ async fn deposit(
     result
 }
 
-#[cfg_attr(
-    feature = "instrumentation",
-    tracing::instrument(skip(ctx), name="POST /create_order", fields(http.uri = "/create_order", http.method = "POST"))
-)]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -1105,7 +1136,7 @@ async fn create_order(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /cancel_order", fields(http.uri = "/cancel_order", http.method = "POST")))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn cancel_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -1214,7 +1245,7 @@ async fn cancel_order(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /withdraw", fields(http.uri = "/withdraw", http.method = "POST")))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
 async fn withdraw(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,

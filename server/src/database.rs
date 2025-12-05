@@ -243,7 +243,10 @@ impl DatabaseService {
     }
 
     /// Write events to the database and optionally send blob transaction
-    #[cfg_attr(feature = "instrumentation", tracing::instrument(skip(self,)))]
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, user, tx_hash, blob_tx, prover_request, context))
+    )]
     pub async fn write_events(
         &self,
         user: UserInfo,
