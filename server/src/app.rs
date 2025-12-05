@@ -10,8 +10,9 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
+    body::Body,
     extract::{Json, State},
-    http::{HeaderMap, Method},
+    http::{request, HeaderMap, Method, Request},
     response::IntoResponse,
     routing::{get, post},
     Router,
@@ -42,8 +43,11 @@ use reqwest::StatusCode;
 use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
-use tower_http::cors::{Any, CorsLayer};
-use tracing::debug;
+use tower_http::{
+    cors::{Any, CorsLayer},
+    trace::TraceLayer,
+};
+use tracing::{debug, field, info_span, Span};
 
 use crate::{
     database::{DatabaseModuleCtx, DatabaseRequest, DatabaseService},
@@ -619,7 +623,7 @@ impl From<&orderbook::model::ExecuteState> for ExecuteStateAPI {
 // --------------------------------------------------------
 //     Routes
 // --------------------------------------------------------
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="GET /state", fields(http.uri = "/state", http.method = "GET")))]
 async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, AppError> {
     let request_start = Instant::now();
     let endpoint = "get_state";
@@ -643,7 +647,7 @@ async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="GET /nonce", fields(http.uri = "/nonce", http.method = "GET")))]
 async fn get_nonce(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -680,7 +684,7 @@ async fn get_nonce(
 }
 
 #[axum::debug_handler]
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /create_pair", fields(http.uri = "/create_pair", http.method = "POST")))]
 async fn create_pair(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -807,7 +811,7 @@ async fn create_pair(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /add_session_key", fields(http.uri = "/add_session_key", http.method = "POST")))]
 async fn add_session_key(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -904,7 +908,7 @@ async fn add_session_key(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /deposit", fields(http.uri = "/deposit", http.method = "POST")))]
 async fn deposit(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -981,7 +985,10 @@ async fn deposit(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(
+    feature = "instrumentation",
+    tracing::instrument(skip(ctx), name="POST /create_order", fields(http.uri = "/create_order", http.method = "POST"))
+)]
 async fn create_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -1099,7 +1106,7 @@ async fn create_order(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /cancel_order", fields(http.uri = "/cancel_order", http.method = "POST")))]
 async fn cancel_order(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,
@@ -1208,7 +1215,7 @@ async fn cancel_order(
     result
 }
 
-#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx)))]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx), name="POST /withdraw", fields(http.uri = "/withdraw", http.method = "POST")))]
 async fn withdraw(
     State(ctx): State<RouterCtx>,
     headers: HeaderMap,

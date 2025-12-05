@@ -836,6 +836,10 @@ impl DatabaseAggregator {
         self.updated_balances.insert((user, asset_id), amount);
     }
 
+    #[cfg_attr(
+        feature = "instrumentation",
+        tracing::instrument(skip(self, pool, metrics))
+    )]
     pub async fn dump_to_db(&mut self, pool: &PgPool, metrics: &DatabaseMetrics) -> Result<()> {
         if self.symbol_book_updated.is_empty()
             && self.updated_orders.is_empty()
