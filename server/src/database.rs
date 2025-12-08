@@ -18,7 +18,7 @@ use opentelemetry::{
 use orderbook::model::{OrderId, OrderbookEvent, UserInfo};
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
-use sqlx::{PgPool, Row};
+use sqlx::PgPool;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, Instrument};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
@@ -291,10 +291,14 @@ impl DatabaseService {
         );
 
         let commit_insert_start = Instant::now();
-        let row = log_error!(
-            sqlx::query("INSERT INTO commits (tx_hash) VALUES ($1) RETURNING commit_id")
+        // Use the global nonce provided by the request as the commit identifier to preserve ordering across workers.
+        let commit_id: i64 = prover_request.nonce as i64;
+
+        log_error!(
+            sqlx::query("INSERT INTO commits (commit_id, tx_hash) VALUES ($1, $2)")
+                .bind(commit_id)
                 .bind(tx_hash.0.clone())
-                .fetch_one(&mut *tx)
+                .execute(&mut *tx)
                 .instrument(tracing::info_span!("create_commit"))
                 .await,
             "Failed to create commit"
@@ -305,7 +309,6 @@ impl DatabaseService {
             &[],
         );
 
-        let commit_id: i64 = row.get("commit_id");
         debug!("Created commit with id {}", commit_id);
 
         for event in prover_request.events.clone() {
