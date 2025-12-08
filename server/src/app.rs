@@ -377,7 +377,6 @@ impl OrderbookModule {
             &action_private_input,
             &self.router_ctx,
         )
-        .await
         .map_err(|AppError(_, inner)| anyhow!("Failed to submit deposit action: {inner}"))?;
 
         Ok(())
@@ -797,7 +796,6 @@ async fn create_pair(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -894,7 +892,6 @@ async fn add_session_key(
             action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -971,7 +968,6 @@ async fn deposit(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -1092,7 +1088,6 @@ async fn create_order(
                 action_private_input,
                 &ctx,
             )
-            .await
         }
         .await;
 
@@ -1201,7 +1196,6 @@ async fn cancel_order(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -1311,7 +1305,6 @@ async fn withdraw(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -1328,7 +1321,7 @@ async fn withdraw(
     feature = "instrumentation",
     tracing::instrument(skip(ctx, action_private_input))
 )]
-async fn process_orderbook_action<T: BorshSerialize>(
+fn process_orderbook_action<T: BorshSerialize>(
     user_info: UserInfo,
     events: Vec<OrderbookEvent>,
     orderbook_action: PermissionedOrderbookAction,
