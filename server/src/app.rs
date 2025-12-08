@@ -268,11 +268,11 @@ impl Module for OrderbookModule {
         let initial_action_id = match u32::try_from(next_action_id) {
             Ok(id) => id,
             Err(_) => {
-                warn!(
-                    "Max commit_id {} exceeds u32::MAX, capping action_id_counter",
-                    last_commit_id
+                bail!(
+                    "Cannot start server: max commit_id {} exceeds u32::MAX ({}). Please migrate to a larger ID type or reset the database.",
+                    last_commit_id,
+                    u32::MAX
                 );
-                u32::MAX
             }
         };
         debug!(

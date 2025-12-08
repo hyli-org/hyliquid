@@ -4,7 +4,7 @@
 -- Commits
 --------------------
 CREATE TABLE commits (
-  commit_id      bigserial PRIMARY KEY,
+  commit_id      bigint PRIMARY KEY,
   tx_hash        text NOT NULL,
   authored_at    timestamptz NOT NULL DEFAULT now(),
   message        text NOT NULL DEFAULT ''
