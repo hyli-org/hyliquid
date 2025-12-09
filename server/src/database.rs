@@ -460,7 +460,7 @@ impl DatabaseService {
                         sqlx::query(
                             "
                             INSERT INTO order_events (commit_id, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status)
-                            VALUES select $1, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status from orders where order_id = $2"
+                            VALUES select $1, order_id, identity, instrument_id, side, type, price, qty, qty_filled, 'cancelled' from orders where order_id = $2"
                         )
                         .bind(commit_id)
                         .bind(order_id)
@@ -503,7 +503,7 @@ impl DatabaseService {
                         sqlx::query(
                             "
                             INSERT INTO order_events (commit_id, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status)
-                            SELECT $1, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
+                            SELECT $1, order_id, identity, instrument_id, side, type, price, qty, qty, 'filled' FROM orders WHERE order_id = $2
                             "
                         )
                         .bind(commit_id)
@@ -550,7 +550,7 @@ impl DatabaseService {
                 OrderbookEvent::OrderUpdate {
                     order_id,
                     taker_order_id,
-                    remaining_quantity: _remaining_quantity,
+                    remaining_quantity,
                     executed_quantity,
                     pair,
                 } => {
@@ -571,11 +571,12 @@ impl DatabaseService {
                         sqlx::query(
                             "
                             INSERT INTO order_events (commit_id, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status)
-                            SELECT $1, order_id, identity, instrument_id, side, type, price, qty, qty_filled, status FROM orders WHERE order_id = $2
+                            SELECT $1, order_id, identity, instrument_id, side, type, price, qty, qty - $3, 'partially_filled' FROM orders WHERE order_id = $2
                             "
                         )
                         .bind(commit_id)
                         .bind(order_id.clone())
+                        .bind(remaining_quantity as i64)
                         .execute(&mut *tx)
                         .instrument(tracing::info_span!("create_order_event"))
                         .await,
