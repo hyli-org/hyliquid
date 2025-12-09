@@ -10,7 +10,7 @@ use hyli_modules::{
         rest::{RestApi, RestApiRunContext},
         BuildApiContextInner, ModulesHandler,
     },
-    utils::logger::setup_tracing,
+    utils::logger::setup_otlp,
 };
 use prometheus::Registry;
 use sdk::{api::NodeInfo, info};
@@ -21,7 +21,7 @@ use server::{
     conf::Conf,
     database::{DatabaseModule, DatabaseModuleCtx},
     prover::{OrderbookProverCtx, OrderbookProverModule},
-    setup::{init_tracing, setup_database, setup_services, ServiceContext},
+    setup::{setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
 use std::sync::Arc;
@@ -73,10 +73,6 @@ fn main() -> Result<()> {
     let args = Args::parse();
     let config = Conf::new(args.config_file.clone()).context("reading config file")?;
 
-    if !args.tracing {
-        setup_tracing(&config.log_format, "hyliquid".to_string())?;
-    }
-
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         // Results in poor threading performance otherwise.
@@ -87,9 +83,7 @@ fn main() -> Result<()> {
 }
 
 async fn actual_main(args: Args, config: Conf) -> Result<()> {
-    if args.tracing {
-        init_tracing(args.tracing);
-    }
+    setup_otlp(&config.log_format, "hyliquid".into(), args.tracing)?;
 
     let config = Arc::new(config);
 

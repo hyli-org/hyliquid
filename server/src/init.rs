@@ -45,6 +45,10 @@ pub async fn init_node(
     Ok(())
 }
 
+#[cfg_attr(
+    feature = "instrumentation",
+    tracing::instrument(skip(node, contract, check_commitment))
+)]
 async fn init_contract(
     node: &NodeApiHttpClient,
     contract: ContractInit,
@@ -113,6 +117,10 @@ fn init_empty_orderbook(secret: Vec<u8>, lane_id: LaneId) -> (ExecuteState, Full
 }
 
 #[allow(clippy::too_many_arguments)]
+#[cfg_attr(
+    feature = "instrumentation",
+    tracing::instrument(skip(secret, asset_service, user_service, book_service, node, indexer))
+)]
 pub async fn init_orderbook_from_database(
     lane_id: LaneId,
     secret: Vec<u8>,

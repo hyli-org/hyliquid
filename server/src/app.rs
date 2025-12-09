@@ -44,10 +44,9 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, RwLock};
 use tower_http::{
     cors::{Any, CorsLayer},
-    trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer},
-    LatencyUnit,
+    trace::TraceLayer,
 };
-use tracing::{debug, field, info_span, Level, Span};
+use tracing::{debug, field, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{

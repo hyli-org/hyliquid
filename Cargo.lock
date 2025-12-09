@@ -3916,7 +3916,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hyli-client-sdk"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
+source = "git+https://github.com/hyli-org/hyli.git?branch=instrumentation#79cd6b7fb37aab1a841565a50c49d40494114475"
 dependencies = [
  "anyhow",
  "axum 0.8.7",
@@ -3937,7 +3937,7 @@ dependencies = [
 [[package]]
 name = "hyli-contract-sdk"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
+source = "git+https://github.com/hyli-org/hyli.git?branch=instrumentation#79cd6b7fb37aab1a841565a50c49d40494114475"
 dependencies = [
  "borsh",
  "hyli-model",
@@ -3951,7 +3951,7 @@ dependencies = [
 [[package]]
 name = "hyli-crypto"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
+source = "git+https://github.com/hyli-org/hyli.git?branch=instrumentation#79cd6b7fb37aab1a841565a50c49d40494114475"
 dependencies = [
  "anyhow",
  "blst",
@@ -3964,7 +3964,7 @@ dependencies = [
 [[package]]
 name = "hyli-model"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
+source = "git+https://github.com/hyli-org/hyli.git?branch=instrumentation#79cd6b7fb37aab1a841565a50c49d40494114475"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3987,7 +3987,7 @@ dependencies = [
 [[package]]
 name = "hyli-modules"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
+source = "git+https://github.com/hyli-org/hyli.git?branch=instrumentation#79cd6b7fb37aab1a841565a50c49d40494114475"
 dependencies = [
  "anyhow",
  "anymap",
@@ -4005,6 +4005,9 @@ dependencies = [
  "hyli-net",
  "indexmap 2.12.1",
  "opentelemetry",
+ "opentelemetry-http",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "paste",
  "prometheus",
  "quote",
@@ -4018,6 +4021,7 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "utoipa",
  "utoipa-axum",
@@ -4027,7 +4031,7 @@ dependencies = [
 [[package]]
 name = "hyli-net"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
+source = "git+https://github.com/hyli-org/hyli.git?branch=instrumentation#79cd6b7fb37aab1a841565a50c49d40494114475"
 dependencies = [
  "anyhow",
  "axum 0.8.7",
@@ -4048,12 +4052,13 @@ dependencies = [
  "tokio-util",
  "tower-service",
  "tracing",
+ "tracing-opentelemetry",
 ]
 
 [[package]]
 name = "hyli-smt-token"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#6660aab946d3f736bf70ca32d2ef2c92fc9a0539"
+source = "git+https://github.com/hyli-org/hyli.git?branch=instrumentation#79cd6b7fb37aab1a841565a50c49d40494114475"
 dependencies = [
  "anyhow",
  "borsh",

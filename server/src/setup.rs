@@ -1,20 +1,11 @@
 use crate::conf::Conf;
 use anyhow::{Context, Result};
 use client_sdk::rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient};
-use opentelemetry::{global, trace::TracerProvider as _};
-use opentelemetry_otlp::{SpanExporter, WithExportConfig};
-use opentelemetry_sdk::{
-    propagation::TraceContextPropagator,
-    trace::{self, BatchConfigBuilder, SdkTracerProvider},
-    Resource,
-};
 use sdk::LaneId;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, level_filters::LevelFilter};
-use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing::{error, info};
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/migrations");
 
@@ -82,56 +73,6 @@ pub async fn setup_database(config: &Conf, clean_db: bool) -> Result<PgPool> {
     info!("Database migrations completed");
 
     Ok(pool)
-}
-
-pub fn init_tracing(tracing_enabled: bool) {
-    // Configure tracing subscriber with env filter
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-
-    let tracing = tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(env_filter));
-
-    if tracing_enabled {
-        let endpoint =
-            std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
-
-        opentelemetry::global::set_text_map_propagator(TraceContextPropagator::new());
-        tracing
-            .with(otlp_layer(endpoint, "hyliquid-server").expect("Failed to create OTLP layer"))
-            .init()
-    } else {
-        tracing.init()
-    }
-}
-
-/// Create an OTLP layer exporting tracing data.
-fn otlp_layer<S>(
-    endpoint: String,
-    service_name: &'static str,
-) -> Result<impl tracing_subscriber::Layer<S>>
-where
-    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
-{
-    let exporter = SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(endpoint)
-        .build()?;
-
-    let resource = Resource::builder().with_service_name(service_name).build();
-
-    let provider = SdkTracerProvider::builder()
-        .with_resource(resource)
-        .with_batch_exporter(exporter)
-        .build();
-
-    let tracer = provider.tracer(service_name);
-
-    Ok(tracing_opentelemetry::layer()
-        .with_tracer(tracer)
-        .with_filter(LevelFilter::INFO))
 }
 
 pub struct ServiceContext {
