@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -984,7 +984,10 @@ pub struct DatabaseModule {
     worker_txs: Vec<mpsc::UnboundedSender<DatabaseRequest>>,
     next_worker: std::sync::atomic::AtomicUsize,
     aggregator: DatabaseAggregator,
+    pending_blob_txs: VecDeque<BlobTransaction>,
 }
+
+const MAX_PENDING_BLOB_TXS: usize = 10_000;
 
 impl Module for DatabaseModule {
     type Context = Arc<DatabaseModuleCtx>;
@@ -1050,6 +1053,7 @@ impl Module for DatabaseModule {
             worker_txs,
             next_worker: AtomicUsize::new(0),
             aggregator: DatabaseAggregator::default(),
+            pending_blob_txs: VecDeque::new(),
         })
     }
 
@@ -1074,6 +1078,9 @@ impl DatabaseModule {
             }
              _ = interval.tick() => {
                 _ = log_error!(self.aggregator.dump_to_db(&self.ctx.pool, &self.ctx.metrics).await, "dump database aggregator to db");
+                if !self.ctx.no_blobs {
+                    log_error!(self.flush_blob_queue().await, "flush blob queue from tick")?;
+                }
             }
         };
         Ok(())
@@ -1149,19 +1156,49 @@ impl DatabaseModule {
                 // By sending the blob tx here, we guarantee the order, but we might send blob txs
                 // that can't be proved if the database write fails.
                 if !self.ctx.no_blobs {
-                    let blob_send_start = Instant::now();
+                    if self.pending_blob_txs.len() >= MAX_PENDING_BLOB_TXS {
+                        // TODO: handle this more gracefully: serializing + resending later
+                        panic!(
+                            "Pending blob transaction queue is full ({}). Time to die.",
+                            MAX_PENDING_BLOB_TXS
+                        );
+                    }
+
+                    self.pending_blob_txs.push_back(blob_tx);
                     log_error!(
-                        self.ctx.client.send_tx_blob(blob_tx).await,
-                        "Failed to send blob tx"
+                        self.flush_blob_queue().await,
+                        "flush blob queue from request"
                     )?;
-                    self.ctx.metrics.record(
-                        &self.ctx.metrics.blob_send_duration,
-                        blob_send_start,
-                        &[],
-                    );
                 }
             }
         }
+        Ok(())
+    }
+
+    async fn flush_blob_queue(&mut self) -> Result<()> {
+        while let Some(blob_tx) = self.pending_blob_txs.front() {
+            let blob_send_start = Instant::now();
+            let send_res = log_error!(
+                self.ctx.client.send_tx_blob(blob_tx.clone()).await,
+                "Failed to send blob tx"
+            );
+
+            self.ctx
+                .metrics
+                .record(&self.ctx.metrics.blob_send_duration, blob_send_start, &[]);
+
+            if let Err(e) = send_res {
+                tracing::warn!(
+                    "Failed to send blob transaction ({} pending, will retry): {:#}",
+                    self.pending_blob_txs.len(),
+                    e
+                );
+                return Err(e);
+            }
+
+            self.pending_blob_txs.pop_front();
+        }
+
         Ok(())
     }
 }
