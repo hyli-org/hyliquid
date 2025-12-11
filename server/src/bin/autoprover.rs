@@ -76,6 +76,14 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     let secret = config.secret.clone();
 
+    let last_settled_tx = server::init::get_last_settled_tx(
+        asset_service.clone(),
+        false,
+        &args.orderbook_cn.clone().into(),
+        &indexer_client,
+    )
+    .await?;
+
     let (_, full_state) = server::init::init_orderbook_from_database(
         validator_lane_id.clone(),
         secret.clone(),
@@ -83,9 +91,8 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         user_service.clone(),
         book_service.clone(),
         &node_client,
-        &indexer_client,
-        &args.orderbook_cn.clone().into(),
         !args.no_check,
+        &last_settled_tx,
         false,
     )
     .await
@@ -119,9 +126,19 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     let mut handler = ModulesHandler::new(&bus).await;
 
     // This module connects to the da_address and receives all the blocks
+    let start_block = match last_settled_tx {
+        Some(tx_hash) => {
+            indexer_client
+                .get_transaction_with_hash(&tx_hash)
+                .await?
+                .block_height
+        }
+        None => None,
+    };
+
     handler
         .build_module::<DAListener>(DAListenerConf {
-            start_block: None,
+            start_block,
             data_directory: config.data_directory.clone(),
             da_read_from: config.da_read_from.clone(),
             timeout_client_secs: 10,

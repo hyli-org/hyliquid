@@ -116,6 +116,14 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     let secret = config.secret.clone();
 
+    let last_settled_tx = server::init::get_last_settled_tx(
+        asset_service.clone(),
+        args.offline,
+        &args.orderbook_cn.clone().into(),
+        &indexer_client,
+    )
+    .await?;
+
     let (light_state, full_state) = server::init::init_orderbook_from_database(
         validator_lane_id.clone(),
         secret.clone(),
@@ -123,9 +131,8 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         user_service.clone(),
         book_service.clone(),
         &node_client,
-        &indexer_client,
-        &args.orderbook_cn.clone().into(),
         !args.no_check,
+        &last_settled_tx,
         args.offline,
     )
     .await
@@ -195,17 +202,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         contract1_cn: args.orderbook_cn.clone().into(),
     });
 
-    if !args.offline {
-        handler
-            .build_module::<DAListener>(DAListenerConf {
-                start_block: None,
-                data_directory: config.data_directory.clone(),
-                da_read_from: config.da_read_from.clone(),
-                timeout_client_secs: 10,
-            })
-            .await?;
-    }
-
     handler
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
         .await?;
@@ -230,6 +226,25 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
         handler
             .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
+            .await?;
+
+        let start_block = match last_settled_tx {
+            Some(tx_hash) => {
+                indexer_client
+                    .get_transaction_with_hash(&tx_hash)
+                    .await?
+                    .block_height
+            }
+            None => None,
+        };
+
+        handler
+            .build_module::<DAListener>(DAListenerConf {
+                start_block,
+                data_directory: config.data_directory.clone(),
+                da_read_from: config.da_read_from.clone(),
+                timeout_client_secs: 10,
+            })
             .await?;
     }
 
