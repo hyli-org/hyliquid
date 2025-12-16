@@ -6,7 +6,7 @@ use contracts::ORDERBOOK_ELF;
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
-        da_listener::{DAListener, DAListenerConf},
+        contract_listener::{ContractListener, ContractListenerConf},
         rest::{RestApi, RestApiRunContext},
         BuildApiContextInner, ModulesHandler,
     },
@@ -20,7 +20,7 @@ use server::{
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -114,7 +114,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     });
 
     let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
-        api: api_ctx.clone(),
         node_client: node_client.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
@@ -125,23 +124,11 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     let mut handler = ModulesHandler::new(&bus).await;
 
-    // This module connects to the da_address and receives all the blocks
-    let start_block = match last_settled_tx {
-        Some(tx_hash) => {
-            indexer_client
-                .get_transaction_with_hash(&tx_hash)
-                .await?
-                .block_height
-        }
-        None => None,
-    };
-
     handler
-        .build_module::<DAListener>(DAListenerConf {
-            start_block,
-            data_directory: config.data_directory.clone(),
-            da_read_from: config.da_read_from.clone(),
-            timeout_client_secs: 10,
+        .build_module::<ContractListener>(ContractListenerConf {
+            database_url: config.indexer_database_url.clone(),
+            contracts: vec![args.orderbook_cn.clone().into()],
+            poll_interval: Duration::from_secs(5),
         })
         .await?;
 
