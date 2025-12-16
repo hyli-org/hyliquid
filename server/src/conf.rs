@@ -14,6 +14,7 @@ pub struct Conf {
     pub da_read_from: String,
     pub node_url: String,
     pub indexer_url: String,
+    pub indexer_database_url: String,
 
     pub database_url: String,
     pub database_name: String,
