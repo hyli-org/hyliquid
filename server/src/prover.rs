@@ -166,12 +166,12 @@ impl OrderbookProverModule {
 
     async fn handle_contract_listener_event(&mut self, event: ContractListenerEvent) -> Result<()> {
         match event {
-            ContractListenerEvent::NewTx(tx_hash, _indexed_blobs, status, tx_ctx) => {
+            ContractListenerEvent::NewTx(tx_hash, _indexed_blobs, tx_ctx, status) => {
                 match status {
                     TransactionStatusDb::Success
                     | TransactionStatusDb::Failure
                     | TransactionStatusDb::TimedOut => {
-                        info!("⏭️ Skipping tx {tx_hash:#} because it has settled");
+                        info!("⏭️ Skipping tx {tx_hash:#} because it has settled {status}");
 
                         // Delete settled tx from the database
                         log_error!(

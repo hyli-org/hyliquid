@@ -24,7 +24,7 @@ use server::{
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
-use std::{sync::Arc, time::Duration};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tracing::error;
 
 #[derive(Parser, Debug)]
@@ -230,7 +230,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         handler
             .build_module::<ContractListener>(ContractListenerConf {
                 database_url: config.indexer_database_url.clone(),
-                contracts: vec![args.orderbook_cn.clone().into()],
+                contracts: HashSet::from([args.orderbook_cn.clone().into()]),
                 poll_interval: Duration::from_secs(5),
             })
             .await?;
