@@ -3902,6 +3902,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hyli-client-sdk"
 version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#f769b22a717fbdd640bbdb6ff32344a74069596b"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -3922,6 +3923,7 @@ dependencies = [
 [[package]]
 name = "hyli-contract-sdk"
 version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#f769b22a717fbdd640bbdb6ff32344a74069596b"
 dependencies = [
  "borsh",
  "hyli-model",
@@ -3935,6 +3937,7 @@ dependencies = [
 [[package]]
 name = "hyli-crypto"
 version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#f769b22a717fbdd640bbdb6ff32344a74069596b"
 dependencies = [
  "anyhow",
  "blst",
@@ -3947,6 +3950,7 @@ dependencies = [
 [[package]]
 name = "hyli-model"
 version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#f769b22a717fbdd640bbdb6ff32344a74069596b"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3961,6 +3965,7 @@ dependencies = [
  "serde_with",
  "sha2",
  "sha3",
+ "sqlx",
  "strum 0.27.2",
  "strum_macros 0.27.2",
  "utoipa",
@@ -3969,6 +3974,7 @@ dependencies = [
 [[package]]
 name = "hyli-modules"
 version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#f769b22a717fbdd640bbdb6ff32344a74069596b"
 dependencies = [
  "anyhow",
  "anymap",
@@ -3983,6 +3989,7 @@ dependencies = [
  "hyli-client-sdk",
  "hyli-contract-sdk",
  "hyli-crypto",
+ "hyli-model",
  "hyli-net",
  "indexmap 2.12.1",
  "opentelemetry",
@@ -4009,6 +4016,7 @@ dependencies = [
 [[package]]
 name = "hyli-net"
 version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#f769b22a717fbdd640bbdb6ff32344a74069596b"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -4034,6 +4042,7 @@ dependencies = [
 [[package]]
 name = "hyli-smt-token"
 version = "0.14.0"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#f769b22a717fbdd640bbdb6ff32344a74069596b"
 dependencies = [
  "anyhow",
  "borsh",
