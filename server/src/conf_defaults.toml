@@ -5,9 +5,10 @@ data_directory = "data"
 da_read_from = "127.0.0.1:4141"
 
 rest_server_port = 9002
-rest_server_max_body_size = 10_485_760 # 10 MB
+rest_server_max_body_size = 10_485_760                                              # 10 MB
 node_url = "http://localhost:4321"
 indexer_url = "http://localhost:4321"
+indexer_database_url = "postgresql://postgres:postgres@localhost:5432/hyli_indexer"
 
 database_url = "postgresql://postgres:postgres@localhost:5432"
 database_name = "orderbook"
