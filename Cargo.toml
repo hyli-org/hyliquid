@@ -6,7 +6,9 @@ members = ["contracts", "contracts/orderbook", "server", "loadtest"]
 sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "main" }
 client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "main" }
 hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "main" }
-hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "main" }
+hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "main", features = [
+    "db",
+] }
 hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "main" }
 
 sp1-sdk = { version = "5.0.3", default-features = false }
@@ -19,7 +21,7 @@ contracts = { path = "contracts", default-features = false, package = "contracts
 orderbook = { path = "contracts/orderbook", package = "orderbook" }
 server = { path = "server", default-features = false, package = "server" }
 
-sqlx = { version = "0.8.6", default-features = false }
+sqlx = { version = "0.8.6" }
 
 
 [workspace.package]

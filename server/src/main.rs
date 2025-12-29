@@ -6,7 +6,7 @@ use contracts::{ORDERBOOK_ELF, ORDERBOOK_VK};
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
-        da_listener::{DAListener, DAListenerConf},
+        contract_listener::{ContractListener, ContractListenerConf},
         rest::{RestApi, RestApiRunContext},
         BuildApiContextInner, ModulesHandler,
     },
@@ -24,7 +24,7 @@ use server::{
     setup::{init_tracing, setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tracing::error;
 
 #[derive(Parser, Debug)]
@@ -215,7 +215,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         let prover = SP1Prover::new(pk).await;
 
         let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
-            api: api_ctx.clone(),
             node_client: node_client.clone(),
             orderbook_cn: args.orderbook_cn.clone().into(),
             prover: Arc::new(prover),
@@ -228,22 +227,11 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
             .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
             .await?;
 
-        let start_block = match last_settled_tx {
-            Some(tx_hash) => {
-                indexer_client
-                    .get_transaction_with_hash(&tx_hash)
-                    .await?
-                    .block_height
-            }
-            None => None,
-        };
-
         handler
-            .build_module::<DAListener>(DAListenerConf {
-                start_block,
-                data_directory: config.data_directory.clone(),
-                da_read_from: config.da_read_from.clone(),
-                timeout_client_secs: 10,
+            .build_module::<ContractListener>(ContractListenerConf {
+                database_url: config.indexer_database_url.clone(),
+                contracts: HashSet::from([args.orderbook_cn.clone().into()]),
+                poll_interval: Duration::from_secs(5),
             })
             .await?;
     }
