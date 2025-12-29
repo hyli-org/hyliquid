@@ -681,11 +681,14 @@ async fn get_nonce(
 
         // TODO: do some checks on headers to verify identify the user
 
-        let nonce = {
-            let user_service = ctx.user_service.read().await;
-            let ui = user_service.get_user_info(&user).await?;
-            ui.nonce
-        };
+        let lock_start = Instant::now();
+        let orderbook = ctx.orderbook.lock().await;
+        ctx.metrics.record_lock(lock_start.elapsed(), "get_nonce");
+
+        let nonce = orderbook
+            .get_user_info(&user)
+            .map(|u| u.nonce)
+            .unwrap_or_default();
 
         Ok(Json(nonce))
     }
