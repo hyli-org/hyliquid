@@ -171,7 +171,7 @@ impl OrderbookProverModule {
                     TransactionStatusDb::Success
                     | TransactionStatusDb::Failure
                     | TransactionStatusDb::TimedOut => {
-                        info!("⏭️ Skipping tx {tx_hash:#} because it has settled {status}");
+                        info!("✨ {tx_hash:#} has settled {status}");
 
                         // Delete settled tx from the database
                         log_error!(
