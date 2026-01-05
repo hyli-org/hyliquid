@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicUsize;
 use std::sync::Arc;
 use std::time::Instant;
@@ -18,6 +18,7 @@ use opentelemetry::{
 use orderbook::model::{OrderId, OrderbookEvent, UserInfo};
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, TxHash};
+use sqlx::types::Json;
 use sqlx::PgPool;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info, Instrument};
@@ -254,7 +255,7 @@ impl DatabaseService {
     ) -> Result<()> {
         tracing::Span::current().set_parent(context);
         log_error!(
-            self.write_events_internal(&user, tx_hash.clone(), &prover_request)
+            self.write_events_internal(&user, tx_hash.clone(), &blob_tx, &prover_request)
                 .await,
             "Failed to write events"
         )?;
@@ -266,6 +267,7 @@ impl DatabaseService {
         &self,
         user_info: &UserInfo,
         tx_hash: TxHash,
+        blob_tx: &BlobTransaction,
         prover_request: &OrderbookProverRequest,
     ) -> Result<()> {
         let write_events_start = Instant::now();
@@ -758,6 +760,21 @@ impl DatabaseService {
             &[],
         );
 
+        if !self.ctx.no_blobs {
+            log_error!(
+                sqlx::query(
+                    "INSERT INTO blob_tx_outbox (commit_id, tx_hash, blob_tx) VALUES ($1, $2, $3)"
+                )
+                .bind(commit_id)
+                .bind(tx_hash.0.clone())
+                .bind(Json(blob_tx.clone()))
+                .execute(&mut *tx)
+                .instrument(tracing::info_span!("insert_blob_outbox"))
+                .await,
+                "Failed to enqueue blob transaction"
+            )?;
+        }
+
         let commit_start = Instant::now();
         log_error!(
             tx.commit()
@@ -984,10 +1001,7 @@ pub struct DatabaseModule {
     worker_txs: Vec<mpsc::UnboundedSender<DatabaseRequest>>,
     next_worker: std::sync::atomic::AtomicUsize,
     aggregator: DatabaseAggregator,
-    pending_blob_txs: VecDeque<BlobTransaction>,
 }
-
-const MAX_PENDING_BLOB_TXS: usize = 10_000;
 
 impl Module for DatabaseModule {
     type Context = Arc<DatabaseModuleCtx>;
@@ -1053,7 +1067,6 @@ impl Module for DatabaseModule {
             worker_txs,
             next_worker: AtomicUsize::new(0),
             aggregator: DatabaseAggregator::default(),
-            pending_blob_txs: VecDeque::new(),
         })
     }
 
@@ -1103,7 +1116,6 @@ impl DatabaseModule {
         match request {
             DatabaseRequest::WriteEvents {
                 prover_request,
-                blob_tx,
                 context,
                 ..
             } => {
@@ -1146,25 +1158,7 @@ impl DatabaseModule {
                         _ => {}
                     }
                 }
-
-                // TODO: sending blob tx should be done only if the write_events succeeded
-                // and blob tx must be sent in the same order as the DatabaseRequest::WriteEvents
-                // arrived.
-                // But a broader question exists: how do we handle a failure in write_events ?
-                // If we don't send the blob tx, we might write blob txs that refer to non-existing
-                // orders or do balance updates that should not happen...
-                // By sending the blob tx here, we guarantee the order, but we might send blob txs
-                // that can't be proved if the database write fails.
                 if !self.ctx.no_blobs {
-                    if self.pending_blob_txs.len() >= MAX_PENDING_BLOB_TXS {
-                        // TODO: handle this more gracefully: serializing + resending later
-                        panic!(
-                            "Pending blob transaction queue is full ({}). Time to die.",
-                            MAX_PENDING_BLOB_TXS
-                        );
-                    }
-
-                    self.pending_blob_txs.push_back(blob_tx);
                     log_error!(
                         self.flush_blob_queue().await,
                         "flush blob queue from request"
@@ -1176,7 +1170,17 @@ impl DatabaseModule {
     }
 
     async fn flush_blob_queue(&mut self) -> Result<()> {
-        while let Some(blob_tx) = self.pending_blob_txs.front() {
+        loop {
+            let next = sqlx::query_as::<_, (i64, Json<BlobTransaction>)>(
+                "SELECT commit_id, blob_tx FROM blob_tx_outbox WHERE status = 'pending' ORDER BY commit_id LIMIT 1"
+            )
+            .fetch_optional(&self.ctx.pool)
+            .await?;
+            let Some((commit_id, blob_tx)) = next else {
+                break;
+            };
+
+            let blob_tx = blob_tx.0;
             let blob_send_start = Instant::now();
             let send_res = log_error!(
                 self.ctx.client.send_tx_blob(blob_tx.clone()).await,
@@ -1188,15 +1192,33 @@ impl DatabaseModule {
                 .record(&self.ctx.metrics.blob_send_duration, blob_send_start, &[]);
 
             if let Err(e) = send_res {
+                log_error!(
+                    sqlx::query(
+                        "UPDATE blob_tx_outbox SET attempts = attempts + 1, last_error = $2 WHERE commit_id = $1"
+                    )
+                    .bind(commit_id)
+                    .bind(e.to_string())
+                    .execute(&self.ctx.pool)
+                    .await,
+                    "Failed to update blob transaction error"
+                )?;
                 tracing::warn!(
-                    "Failed to send blob transaction ({} pending, will retry): {:#}",
-                    self.pending_blob_txs.len(),
+                    "Failed to send blob transaction (commit_id {}, will retry): {:#}",
+                    commit_id,
                     e
                 );
                 return Err(e);
             }
 
-            self.pending_blob_txs.pop_front();
+            log_error!(
+                sqlx::query(
+                    "UPDATE blob_tx_outbox SET status = 'sent', sent_at = now(), attempts = attempts + 1, last_error = NULL WHERE commit_id = $1"
+                )
+                .bind(commit_id)
+                .execute(&self.ctx.pool)
+                .await,
+                "Failed to mark blob transaction as sent"
+            )?;
         }
 
         Ok(())
