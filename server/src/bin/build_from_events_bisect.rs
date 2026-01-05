@@ -6,10 +6,10 @@ use orderbook::{
     model::{ExecuteState, OrderbookEvent, UserInfo},
     zk::FullState,
 };
-use sdk::{info, BlockHeight, LaneId, StateCommitment};
-use server::{init::DebugStateCommitment, setup::setup_database};
+use sdk::{info, BlockHeight, LaneId};
+use server::setup::setup_database;
 use sqlx::{postgres::PgRow, FromRow, Row};
-use tracing::{error, warn};
+use tracing::warn;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -19,20 +19,16 @@ pub struct Args {
 
     #[arg(long, default_value = "0")]
     pub commit_id: u32,
-
-    #[arg(long, default_value = "false")]
-    pub fast_mode: bool,
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    setup_tracing("full", "build_from_events".to_string()).unwrap();
+    setup_tracing("full", "build_from_events_bisect".to_string()).unwrap();
 
     let args = Args::parse();
     let config =
         server::conf::Conf::new(args.config_file.clone()).context("reading config file")?;
     let commit_id = args.commit_id as i64;
-    let fast_mode = args.fast_mode;
     let index_database_url = config.indexer_database_url.clone();
 
     let pool = setup_database(&config, false)
@@ -69,101 +65,39 @@ async fn main() -> Result<()> {
         events.push((user_info, r, orderbook_events));
     }
 
-    let mut commitments = fetch_commitments(index_database_url).await.unwrap();
+    let commitments = fetch_commitments(index_database_url).await.unwrap();
 
-    info!("Executing {} events", events.len());
-    let mut light_state = ExecuteState::default();
-
-    let last_commit_id = commit_id;
-    for (user_info, commit_id, events) in events {
-        info!("Executing events of commit id: {}", commit_id);
-        for event in &events {
-            info!("\tEvent: {}", event);
-        }
-
-        light_state
-            .apply_events(&user_info, &events.clone())
-            .unwrap();
-
-        if fast_mode && commit_id <= last_commit_id - 5 {
-            commitments.remove(0);
-            continue;
-        }
-        info!("events: {:?}", events);
-
-        let full_orderbook_from_light = FullState::from_data(
-            &light_state,
-            secret.clone(),
-            validator_lane_id.clone(),
-            last_block_height,
-        )
-        .expect("failed to build full state");
-
-        let commitment = full_orderbook_from_light.commit();
-        let onchain_commitment = commitments.remove(0);
-
-        let onchain =
-            DebugStateCommitment::from(StateCommitment(onchain_commitment.next_state.clone()));
-        // Log existing & new orderbook and spot diff
-        let rebuilt_from_light_debug =
-            DebugStateCommitment::from(full_orderbook_from_light.commit());
-
-        info!("blob_tx_hash: {:?}", onchain_commitment.blob_tx_hash);
-
-        info!(
-            "balances_roots.BTC onchain: {:?}",
-            onchain.balances_roots.get("BTC")
+    if commitments.len() != events.len() {
+        warn!(
+            "Commitment count ({}) != event batch count ({}). Bisect may be unreliable.",
+            commitments.len(),
+            events.len()
         );
-
-        info!(
-            "balances_roots.BTC rebuilt: {:?}",
-            rebuilt_from_light_debug.balances_roots.get("BTC")
-        );
-
-        let diff = onchain.diff(&rebuilt_from_light_debug);
-        let mut has_diff = false;
-        if !diff.is_empty() {
-            warn!("⚠️  Differences (onchain vs rebuilt):");
-            for (key, value) in diff.iter() {
-                warn!("  {}: {}", key, value);
-            }
-
-            // info!("onchain state: {:#?}", onchain);
-            // info!("db state: {:#?}", db_state);
-            // info!("Light state: {:#?}", light_state);
-
-            has_diff = true;
-        }
-
-        if commitment.0 != onchain_commitment.next_state {
-            error!("Built commitment: {:?}", commitment);
-            error!(
-                "Onchain commitment: {:?}",
-                StateCommitment(onchain_commitment.next_state)
-            );
-            error!(
-                "Initial state: {:?}",
-                StateCommitment(onchain_commitment.initial_state)
-            );
-            panic!("Commitment mismatch");
-        }
-
-        if has_diff {
-            panic!("Differences found in states, but commitment matches");
-        }
-        info!("✅ No differences found between onchain and rebuilt");
     }
 
-    info!("Executed all events");
+    let first_bad = bisect_first_mismatch(
+        &events,
+        &commitments,
+        &secret,
+        &validator_lane_id,
+        last_block_height,
+    )?;
+    match first_bad {
+        Some(index) => {
+            let (_, commit_id, _) = &events[index];
+            warn!(
+                "First mismatch at index {} (commit_id: {}).",
+                index, commit_id
+            );
+            if let Some(onchain) = commitments.get(index) {
+                warn!("Onchain blob_tx_hash: {}", onchain.blob_tx_hash);
+            }
+        }
+        None => {
+            info!("No mismatches found in range.");
+        }
+    }
 
-    let full_orderbook =
-        FullState::from_data(&light_state, secret, validator_lane_id, last_block_height)
-            .expect("failed to build full state");
-
-    server::init::check(&node_client, light_state, full_orderbook)
-        .await
-        .map_err(|e| anyhow::anyhow!(e.1))
-        .unwrap();
     Ok(())
 }
 
@@ -180,7 +114,8 @@ impl std::fmt::Display for CommitmentRow {
         write!(
             f,
             "CommitmentRow {{ blob_tx_hash: {}, block_height: {}, initial_state: {}, next_state: {} }}",
-            self.blob_tx_hash, self.block_height,
+            self.blob_tx_hash,
+            self.block_height,
             hex::encode(self.initial_state.as_slice()),
             hex::encode(self.next_state.as_slice())
         )
@@ -236,6 +171,82 @@ async fn fetch_commitments(index_database_url: String) -> Result<Vec<CommitmentR
     }
 
     Ok(rows)
+}
+
+fn bisect_first_mismatch(
+    events: &[(UserInfo, i64, Vec<OrderbookEvent>)],
+    commitments: &[CommitmentRow],
+    secret: &[u8],
+    validator_lane_id: &LaneId,
+    last_block_height: BlockHeight,
+) -> Result<Option<usize>> {
+    if events.is_empty() || commitments.is_empty() {
+        return Ok(None);
+    }
+
+    let mut low = 0usize;
+    let mut high = events.len().saturating_sub(1);
+    let mut first_bad = None;
+
+    while low <= high {
+        let mid = low + (high - low) / 2;
+        let matches = commitment_matches_at(
+            mid,
+            events,
+            commitments,
+            secret,
+            validator_lane_id,
+            last_block_height,
+        )?;
+
+        if matches {
+            if mid == events.len() - 1 {
+                break;
+            }
+            low = mid + 1;
+        } else {
+            first_bad = Some(mid);
+            if mid == 0 {
+                break;
+            }
+            high = mid - 1;
+        }
+    }
+
+    Ok(first_bad)
+}
+
+fn commitment_matches_at(
+    index: usize,
+    events: &[(UserInfo, i64, Vec<OrderbookEvent>)],
+    commitments: &[CommitmentRow],
+    secret: &[u8],
+    validator_lane_id: &LaneId,
+    last_block_height: BlockHeight,
+) -> Result<bool> {
+    let mut light_state = ExecuteState::default();
+    let max_index = index.min(events.len().saturating_sub(1));
+    for (i, (user_info, _, batch)) in events.iter().enumerate() {
+        light_state.apply_events(user_info, batch).unwrap();
+        if i == max_index {
+            break;
+        }
+    }
+
+    let full_orderbook_from_light = FullState::from_data(
+        &light_state,
+        secret.to_vec(),
+        validator_lane_id.clone(),
+        last_block_height,
+    )
+    .expect("failed to build full state");
+
+    let commitment = full_orderbook_from_light.commit();
+    let onchain_commitment = commitments
+        .get(max_index)
+        .expect("missing onchain commitment for index");
+
+    Ok(commitment.0 == onchain_commitment.next_state)
 }
 
 fn check_chain_breaks(rows: &[CommitmentRow]) -> Vec<usize> {
