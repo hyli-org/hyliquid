@@ -43,11 +43,8 @@ use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneI
 use serde::{Deserialize, Serialize};
 use sqlx::query_scalar;
 use tokio::sync::{Mutex, RwLock};
-use tower_http::{
-    cors::{Any, CorsLayer},
-    trace::TraceLayer,
-};
-use tracing::{debug, field, warn, Span};
+use tower_http::cors::{Any, CorsLayer};
+use tracing::{debug, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
@@ -314,37 +311,7 @@ impl Module for OrderbookModule {
             // FIXME: to be removed. Only here for debugging purposes
             .route("/state", get(get_state))
             .with_state(router_ctx.clone())
-            .layer(
-                TraceLayer::new_for_http()
-                    .make_span_with(make_span)
-                    .on_response(close_span),
-            )
             .layer(cors);
-
-        fn make_span<B>(request: &Request<B>) -> Span {
-            let headers = request.headers();
-            let name = format!("{} {}", request.method(), request.uri());
-            tracing::span!(
-                target:module_path!(),
-                tracing::Level::INFO,
-                "http-request",
-                name,
-                ?headers,
-                trace_id = field::Empty,
-                http.status = field::Empty,
-                http.method =  %request.method(),
-                http.uri =  %request.uri(),
-                http.duration = field::Empty
-            )
-        }
-
-        fn close_span<B>(response: &Response<B>, latency: Duration, span: &Span) {
-            span.record("http.status", tracing::field::display(response.status()));
-            span.record(
-                "http.duration",
-                tracing::field::display(latency.as_micros()),
-            );
-        }
 
         if let Ok(mut guard) = ctx.api.router.lock() {
             if let Some(router) = guard.take() {
