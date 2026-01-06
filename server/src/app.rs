@@ -41,12 +41,13 @@ use orderbook::{
 use reqwest::StatusCode;
 use sdk::{BlobTransaction, ContractAction, ContractName, Hashed, Identity, LaneId};
 use serde::{Deserialize, Serialize};
+use sqlx::query_scalar;
 use tokio::sync::{Mutex, RwLock};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing::{debug, field, Span};
+use tracing::{debug, field, warn, Span};
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use crate::{
@@ -261,6 +262,27 @@ impl Module for OrderbookModule {
         let router_bus = RouterBusClient::new_from_bus(bus.new_handle()).await;
         let bus = OrderbookModuleBusClient::new_from_bus(bus.new_handle()).await;
 
+        // Bootstrap the global nonce (action_id) from the latest commit id so we don't collide after a restart.
+        let last_commit_id: i64 = query_scalar("SELECT COALESCE(MAX(commit_id), 0) FROM commits")
+            .fetch_one(&ctx.database_ctx.pool)
+            .await
+            .unwrap_or(0);
+        let next_action_id = last_commit_id.saturating_add(1);
+        let initial_action_id = match u32::try_from(next_action_id) {
+            Ok(id) => id,
+            Err(_) => {
+                bail!(
+                    "Cannot start server: max commit_id {} exceeds u32::MAX ({}). Please migrate to a larger ID type or reset the database.",
+                    last_commit_id,
+                    u32::MAX
+                );
+            }
+        };
+        debug!(
+            "Starting action_id_counter at {} (last commit_id was {})",
+            initial_action_id, last_commit_id
+        );
+
         let database_service = DatabaseService::new(ctx.database_ctx.clone());
         let router_ctx = RouterCtx {
             orderbook_cn: ctx.orderbook_cn.clone(),
@@ -271,7 +293,7 @@ impl Module for OrderbookModule {
             asset_service: ctx.asset_service.clone(),
             user_service: ctx.user_service.clone(),
             client: ctx.client.clone(),
-            action_id_counter: Arc::new(AtomicU32::new(0)),
+            action_id_counter: Arc::new(AtomicU32::new(initial_action_id)),
             metrics: AppMetrics::new(),
             database_service: Arc::new(RwLock::new(database_service)),
         };
@@ -410,7 +432,6 @@ impl OrderbookModule {
             &action_private_input,
             &self.router_ctx,
         )
-        .await
         .map_err(|AppError(_, inner)| anyhow!("Failed to submit deposit action: {inner}"))?;
 
         Ok(())
@@ -830,7 +851,6 @@ async fn create_pair(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -927,7 +947,6 @@ async fn add_session_key(
             action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -1004,7 +1023,6 @@ async fn deposit(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -1122,7 +1140,6 @@ async fn create_order(
                 action_private_input,
                 &ctx,
             )
-            .await
         }
         .await;
 
@@ -1231,7 +1248,6 @@ async fn cancel_order(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -1341,7 +1357,6 @@ async fn withdraw(
             &action_private_input,
             &ctx,
         )
-        .await
     }
     .await;
 
@@ -1358,7 +1373,7 @@ async fn withdraw(
     feature = "instrumentation",
     tracing::instrument(skip(ctx, action_private_input))
 )]
-async fn process_orderbook_action<T: BorshSerialize>(
+fn process_orderbook_action<T: BorshSerialize>(
     user_info: UserInfo,
     events: Vec<OrderbookEvent>,
     orderbook_action: PermissionedOrderbookAction,

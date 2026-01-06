@@ -119,7 +119,7 @@ fn init_empty_orderbook(secret: Vec<u8>, lane_id: LaneId) -> (ExecuteState, Full
 #[allow(clippy::too_many_arguments)]
 #[cfg_attr(
     feature = "instrumentation",
-    tracing::instrument(skip(secret, asset_service, user_service, book_service, node, indexer))
+    tracing::instrument(skip(secret, asset_service, user_service, book_service, node))
 )]
 pub async fn init_orderbook_from_database(
     lane_id: LaneId,
@@ -128,9 +128,8 @@ pub async fn init_orderbook_from_database(
     user_service: Arc<RwLock<UserService>>,
     book_service: Arc<RwLock<BookService>>,
     node: &NodeApiHttpClient,
-    indexer: &IndexerApiHttpClient,
-    contract_name: &ContractName,
     check_commitment: bool,
+    last_settled_tx: &Option<TxHash>,
     offline: bool,
 ) -> Result<(ExecuteState, FullState), AppError> {
     let asset_service = asset_service.read().await;
@@ -138,19 +137,6 @@ pub async fn init_orderbook_from_database(
     let book_service = book_service.read().await;
 
     info!("🔍 Initializing orderbook from database");
-
-    let last_settled_tx: Option<TxHash> = if offline {
-        asset_service.get_last_tx_hash_in_commit_table().await
-    } else {
-        indexer
-            .get_last_settled_txid_by_contract(
-                contract_name,
-                Some(vec![TransactionStatusDb::Success]),
-            )
-            .await?
-            .map(|tx| tx.1)
-    };
-
     if last_settled_tx.is_none() {
         info!("🔍 No last settled success tx found, initializing orderbook with empty state");
         let (light_orderbook, full_orderbook) = init_empty_orderbook(secret, lane_id);
@@ -161,12 +147,12 @@ pub async fn init_orderbook_from_database(
         }
     }
 
-    let last_settled_tx = last_settled_tx.unwrap();
+    let last_settled_tx = last_settled_tx.as_ref().unwrap();
 
     info!("🔍 Last settled tx found: {}", last_settled_tx);
 
     let commit_id = asset_service
-        .get_commit_id_from_tx_hash(&last_settled_tx)
+        .get_commit_id_from_tx_hash(last_settled_tx)
         .await;
 
     if commit_id.is_none() {
@@ -286,6 +272,27 @@ pub async fn init_orderbook_from_database(
     }
 
     check(node, light_orderbook, full_orderbook).await
+}
+
+pub async fn get_last_settled_tx(
+    asset_service: Arc<RwLock<AssetService>>,
+    offline: bool,
+    contract_name: &ContractName,
+    indexer_client: &IndexerApiHttpClient,
+) -> Result<Option<TxHash>> {
+    let asset_service = asset_service.read().await;
+    let last_settled_tx = if offline {
+        asset_service.get_last_tx_hash_in_commit_table().await
+    } else {
+        indexer_client
+            .get_last_settled_txid_by_contract(
+                contract_name,
+                Some(vec![TransactionStatusDb::Success]),
+            )
+            .await?
+            .map(|tx| tx.1)
+    };
+    Ok(last_settled_tx)
 }
 
 pub async fn check(

@@ -1,14 +1,11 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use axum::{extract::State, response::IntoResponse, routing::get, Json, Router};
-use client_sdk::{
-    contract_indexer::AppError, helpers::ClientSdkProver, rest_client::NodeApiClient,
-};
+use client_sdk::{helpers::ClientSdkProver, rest_client::NodeApiClient};
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_bus_client, module_handle_messages,
-    modules::{BuildApiContextInner, Module},
+    modules::{contract_listener::ContractListenerEvent, Module},
 };
 use orderbook::{
     model::{OrderbookEvent, UserInfo},
@@ -16,18 +13,13 @@ use orderbook::{
     zk::FullState,
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
-use reqwest::Method;
 use sdk::{
-    BlobIndex, BlockHeight, Calldata, ContractName, LaneId, NodeStateEvent, ProofTransaction,
-    TxHash,
+    api::TransactionStatusDb, BlobIndex, Calldata, ContractName, LaneId, ProofTransaction, TxHash,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use tokio::sync::Mutex;
-use tower_http::cors::{Any, CorsLayer};
 use tracing::{debug, error, info};
-
-use crate::app::ExecuteStateAPI;
 
 #[derive(Debug, Clone)]
 pub struct PendingTx {
@@ -48,13 +40,11 @@ pub struct OrderbookProverRequest {
 module_bus_client! {
     #[derive(Debug)]
     struct OrderbookProverBusClient {
-        receiver(NodeStateEvent),
+        receiver(ContractListenerEvent),
     }
 }
 
 pub struct OrderbookProverCtx {
-    // TO BE REMOVED
-    pub api: Arc<BuildApiContextInner>,
     pub prover: Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>,
     pub orderbook_cn: ContractName,
     pub lane_id: LaneId,
@@ -72,7 +62,6 @@ pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
     orderbook: Arc<Mutex<FullState>>,
-    settled_block_height: Option<BlockHeight>,
 }
 
 impl Module for OrderbookProverModule {
@@ -82,41 +71,10 @@ impl Module for OrderbookProverModule {
         let bus = OrderbookProverBusClient::new_from_bus(bus.new_handle()).await;
         let orderbook = Arc::new(Mutex::new(ctx.initial_orderbook.clone()));
 
-        let router_ctx = Ctx {
-            orderbook: orderbook.clone(),
-        };
-
-        let cors = CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(vec![Method::GET, Method::POST])
-            .allow_headers(Any);
-
-        // FIXME: to be removed. Only here  for debugging purposes
-        let api = Router::new()
-            .route("/prover/state", get(get_state))
-            .with_state(router_ctx.clone())
-            .layer(cors);
-
-        if let Ok(mut guard) = ctx.api.router.lock() {
-            if let Some(router) = guard.take() {
-                guard.replace(router.merge(api));
-            }
-        }
-
-        let settled_block_height = ctx
-            .node_client
-            .get_settled_height(ctx.orderbook_cn.clone())
-            .await
-            .ok();
-        if let Some(settled_block_height) = settled_block_height {
-            info!("🔍 Settled block height: {}", settled_block_height);
-        }
-
         Ok(OrderbookProverModule {
             ctx,
             bus,
             orderbook,
-            settled_block_height,
         })
     }
 
@@ -131,8 +89,8 @@ impl OrderbookProverModule {
         module_handle_messages! {
             on_self self,
 
-            listen<NodeStateEvent> event => {
-                if log_error!(self.handle_node_state_event(event).await, "handle node state event").is_err() {
+            listen<ContractListenerEvent> event => {
+                if log_error!(self.handle_contract_listener_event(event).await, "handle node state event").is_err() {
                     error!("❌ Hard failure in handle_node_state_event");
                     error!("❌ Exiting prover module");
                     return Err(anyhow!("Hard failure in handle_node_state_event"));
@@ -206,172 +164,95 @@ impl OrderbookProverModule {
         Ok(pending_tx)
     }
 
-    async fn handle_node_state_event(&mut self, event: NodeStateEvent) -> Result<()> {
+    async fn handle_contract_listener_event(&mut self, event: ContractListenerEvent) -> Result<()> {
         match event {
-            NodeStateEvent::NewBlock(block) => {
-                if let Some(settled_block_height) = self.settled_block_height {
-                    if block.signed_block.height().0 < settled_block_height.0 {
-                        if block.signed_block.height().0 % 1000 == 0 {
-                            info!(
-                                "⏭️ Skipping block {} because it is before the settled block height",
-                                block.signed_block.height()
-                            );
-                        }
-                        return Ok(());
+            ContractListenerEvent::NewTx(tx_hash, _indexed_blobs, tx_ctx, status) => {
+                match status {
+                    TransactionStatusDb::Success
+                    | TransactionStatusDb::Failure
+                    | TransactionStatusDb::TimedOut => {
+                        info!("✨ {tx_hash:#} has settled {status}");
+
+                        // Delete settled tx from the database
+                        log_error!(
+                            sqlx::query("DELETE FROM prover_requests WHERE tx_hash = $1")
+                                .bind(tx_hash.0.clone())
+                                .execute(&self.ctx.pool)
+                                .await,
+                            "Failed to delete settled txs from the database"
+                        )?;
+                        Ok(())
                     }
-                }
-                if block.signed_block.height().0 % 1000 == 0 {
-                    info!("Prover received block: {}", block.signed_block.height());
-                }
-                tracing::debug!("New block received: {:?}", block);
-
-                // Use signed_block to efficiently filter transactions by lane_id
-                let tx_hashes: Vec<TxHash> = block
-                    .signed_block
-                    .iter_txs_with_id()
-                    .filter_map(|(lane_id, tx_id, _)| {
-                        if lane_id == self.ctx.lane_id {
-                            Some(tx_id.1)
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-
-                if tx_hashes.is_empty() {
-                    // No transactions to prove on validator's lane
-                    return Ok(());
-                }
-
-                // Get the first transaction hash for computing tx_ctx
-                let first_tx_hash = &tx_hashes[0];
-
-                // Compute tx_ctx that will be used to prove transactions
-                let tx_ctx = block.parsed_block.build_tx_ctx(first_tx_hash)?;
-
-                // Extract all transactions that need to be proved and that have been sequenced
-                let mut txs_to_prove = Vec::new();
-                for tx_hash in tx_hashes {
-                    if let Some(settled_block_height) = self.settled_block_height {
-                        if block.signed_block.height().0 == settled_block_height.0 {
-                            let is_unsettled = self
-                                .ctx
-                                .node_client
-                                .get_unsettled_tx(tx_hash.clone())
-                                .await
-                                .is_ok();
-                            if !is_unsettled {
-                                info!("⏭️ Skipping tx {tx_hash:#} because it is settled");
-                                continue;
-                            }
-                        }
+                    TransactionStatusDb::DataProposalCreated
+                    | TransactionStatusDb::WaitingDissemination => {
+                        debug!("🤚 Waiting tx {tx_hash:#} to be sequenced");
+                        Ok(())
                     }
-                    // Query the database for the prover request
-                    let row = sqlx::query("SELECT request FROM prover_requests WHERE tx_hash = $1")
-                        .bind(tx_hash.0.clone())
-                        .fetch_optional(&self.ctx.pool)
-                        .await?;
+                    TransactionStatusDb::Sequenced => {
+                        // Query the database for the prover request
+                        let row =
+                            sqlx::query("SELECT request FROM prover_requests WHERE tx_hash = $1")
+                                .bind(tx_hash.0.clone())
+                                .fetch_optional(&self.ctx.pool)
+                                .await?;
 
-                    if let Some(row) = row {
-                        let request_json: Vec<u8> = row.get("request");
-                        let prover_request: OrderbookProverRequest =
-                            serde_json::from_slice(&request_json)
-                                .map_err(|e| anyhow!("Failed to parse prover request JSON: {e}"))?;
+                        if let Some(row) = row {
+                            let request_json: Vec<u8> = row.get("request");
+                            let prover_request: OrderbookProverRequest =
+                                serde_json::from_slice(&request_json).map_err(|e| {
+                                    anyhow!("Failed to parse prover request JSON: {e}")
+                                })?;
 
-                        // Process the request to get the pending transaction
-                        let pending_tx = self.handle_prover_request(prover_request).await?;
-                        txs_to_prove.push((tx_hash, pending_tx));
-                    }
-                }
+                            // Process the request to get the pending transaction
+                            let pending_tx = self.handle_prover_request(prover_request).await?;
 
-                // For each transaction to prove, spawn a new task to generate and send the proof
-                for (tx_hash, pending_tx) in txs_to_prove {
-                    let prover = self.ctx.prover.clone();
-                    let contract_name = self.ctx.orderbook_cn.clone();
-                    let node_client = self.ctx.node_client.clone();
-                    let tx_context_cloned = tx_ctx.clone();
+                            let prover = self.ctx.prover.clone();
+                            let contract_name = self.ctx.orderbook_cn.clone();
+                            let node_client = self.ctx.node_client.clone();
+                            let tx_context_cloned = tx_ctx.clone();
+                            let tx_hash_cloned = tx_hash.clone();
 
-                    tokio::spawn(async move {
-                        let mut calldata = pending_tx.calldata;
+                            tokio::spawn(async move {
+                                let mut calldata = pending_tx.calldata;
 
-                        calldata.tx_ctx = Some(tx_context_cloned);
+                                calldata.tx_ctx = Some(tx_context_cloned);
 
-                        match prover
-                            .prove(pending_tx.commitment_metadata, vec![calldata])
-                            .await
-                        {
-                            Ok(proof) => {
-                                let tx = ProofTransaction {
-                                    contract_name: contract_name.clone(),
-                                    program_id: prover.program_id(),
-                                    verifier: prover.verifier(),
-                                    proof: proof.data,
-                                };
+                                match prover
+                                    .prove(pending_tx.commitment_metadata, vec![calldata])
+                                    .await
+                                {
+                                    Ok(proof) => {
+                                        let tx = ProofTransaction {
+                                            contract_name: contract_name.clone(),
+                                            program_id: prover.program_id(),
+                                            verifier: prover.verifier(),
+                                            proof: proof.data,
+                                        };
 
-                                info!("Proof took {:?} cycles", proof.metadata.cycles);
+                                        info!("Proof took {:?} cycles", proof.metadata.cycles);
 
-                                match node_client.send_tx_proof(tx).await {
-                                    Ok(proof_tx_hash) => {
-                                        debug!("Successfully sent proof for {tx_hash:#}: {proof_tx_hash:#}");
+                                        match node_client.send_tx_proof(tx).await {
+                                            Ok(proof_tx_hash) => {
+                                                debug!("Successfully sent proof for {tx_hash_cloned:#}: {proof_tx_hash:#}");
+                                            }
+                                            Err(e) => {
+                                                error!(
+                                            "Failed to send proof for {tx_hash_cloned:#}: {e:#}"
+                                        );
+                                            }
+                                        }
                                     }
                                     Err(e) => {
-                                        error!("Failed to send proof for {tx_hash:#}: {e:#}");
+                                        bail!("failed to generate proof for {tx_hash_cloned:#}: {e:#}");
                                     }
                                 }
-                            }
-                            Err(e) => {
-                                bail!("failed to generate proof for {tx_hash:#}: {e:#}");
-                            }
+                                Ok(())
+                            });
                         }
                         Ok(())
-                    });
+                    }
                 }
-
-                // Gather settled txs
-                let mut settled_txs: Vec<&String> = block
-                    .parsed_block
-                    .successful_txs
-                    .iter()
-                    .map(|tx_hash| &tx_hash.0)
-                    .collect();
-                settled_txs.extend(
-                    block
-                        .parsed_block
-                        .failed_txs
-                        .iter()
-                        .map(|tx_hash| &tx_hash.0),
-                );
-                settled_txs.extend(
-                    block
-                        .parsed_block
-                        .timed_out_txs
-                        .iter()
-                        .map(|tx_hash| &tx_hash.0),
-                );
-
-                if !settled_txs.is_empty() {
-                    // Delete settled txs from the database
-                    log_error!(
-                        sqlx::query("DELETE FROM prover_requests WHERE tx_hash = ANY($1)")
-                            .bind(settled_txs)
-                            .execute(&self.ctx.pool)
-                            .await,
-                        "Failed to delete settled txs from the database"
-                    )?;
-                }
-
-                Ok(())
             }
         }
     }
-}
-
-// --------------------------------------------------------
-//     Routes
-// --------------------------------------------------------
-async fn get_state(State(ctx): State<Ctx>) -> Result<impl IntoResponse, AppError> {
-    let orderbook_full_state = ctx.orderbook.lock().await;
-
-    let api_state = ExecuteStateAPI::from(&orderbook_full_state.state);
-    Ok(Json(api_state))
 }

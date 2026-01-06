@@ -6,7 +6,7 @@ use contracts::{ORDERBOOK_ELF, ORDERBOOK_VK};
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
-        da_listener::{DAListener, DAListenerConf},
+        contract_listener::{ContractListener, ContractListenerConf},
         rest::{RestApi, RestApiRunContext},
         BuildApiContextInner, ModulesHandler,
     },
@@ -24,7 +24,7 @@ use server::{
     setup::{setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc, time::Duration};
 use tracing::error;
 
 #[derive(Parser, Debug)]
@@ -108,6 +108,14 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     let secret = config.secret.clone();
 
+    let last_settled_tx = server::init::get_last_settled_tx(
+        asset_service.clone(),
+        args.offline,
+        &args.orderbook_cn.clone().into(),
+        &indexer_client,
+    )
+    .await?;
+
     let (light_state, full_state) = server::init::init_orderbook_from_database(
         validator_lane_id.clone(),
         secret.clone(),
@@ -115,9 +123,8 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         user_service.clone(),
         book_service.clone(),
         &node_client,
-        &indexer_client,
-        &args.orderbook_cn.clone().into(),
         !args.no_check,
+        &last_settled_tx,
         args.offline,
     )
     .await
@@ -187,17 +194,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         contract1_cn: args.orderbook_cn.clone().into(),
     });
 
-    if !args.offline {
-        handler
-            .build_module::<DAListener>(DAListenerConf {
-                start_block: None,
-                data_directory: config.data_directory.clone(),
-                da_read_from: config.da_read_from.clone(),
-                timeout_client_secs: 10,
-            })
-            .await?;
-    }
-
     handler
         .build_module::<OrderbookModule>(orderbook_ctx.clone())
         .await?;
@@ -211,7 +207,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         let prover = SP1Prover::new(pk).await;
 
         let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
-            api: api_ctx.clone(),
             node_client: node_client.clone(),
             orderbook_cn: args.orderbook_cn.clone().into(),
             prover: Arc::new(prover),
@@ -222,6 +217,14 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
         handler
             .build_module::<OrderbookProverModule>(orderbook_prover_ctx.clone())
+            .await?;
+
+        handler
+            .build_module::<ContractListener>(ContractListenerConf {
+                database_url: config.indexer_database_url.clone(),
+                contracts: HashSet::from([args.orderbook_cn.clone().into()]),
+                poll_interval: Duration::from_secs(5),
+            })
             .await?;
     }
 

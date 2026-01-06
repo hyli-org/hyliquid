@@ -6,7 +6,7 @@ use contracts::ORDERBOOK_ELF;
 use hyli_modules::{
     bus::{metrics::BusMetrics, SharedMessageBus},
     modules::{
-        da_listener::{DAListener, DAListenerConf},
+        contract_listener::{ContractListener, ContractListenerConf},
         rest::{RestApi, RestApiRunContext},
         BuildApiContextInner, ModulesHandler,
     },
@@ -20,7 +20,7 @@ use server::{
     setup::{setup_database, setup_services, ServiceContext},
 };
 use sp1_sdk::{Prover, ProverClient};
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -71,6 +71,14 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     let secret = config.secret.clone();
 
+    let last_settled_tx = server::init::get_last_settled_tx(
+        asset_service.clone(),
+        false,
+        &args.orderbook_cn.clone().into(),
+        &indexer_client,
+    )
+    .await?;
+
     let (_, full_state) = server::init::init_orderbook_from_database(
         validator_lane_id.clone(),
         secret.clone(),
@@ -78,9 +86,8 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         user_service.clone(),
         book_service.clone(),
         &node_client,
-        &indexer_client,
-        &args.orderbook_cn.clone().into(),
         !args.no_check,
+        &last_settled_tx,
         false,
     )
     .await
@@ -102,7 +109,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     });
 
     let orderbook_prover_ctx = Arc::new(OrderbookProverCtx {
-        api: api_ctx.clone(),
         node_client: node_client.clone(),
         orderbook_cn: args.orderbook_cn.clone().into(),
         prover: Arc::new(prover),
@@ -113,13 +119,11 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     let mut handler = ModulesHandler::new(&bus).await;
 
-    // This module connects to the da_address and receives all the blocks
     handler
-        .build_module::<DAListener>(DAListenerConf {
-            start_block: None,
-            data_directory: config.data_directory.clone(),
-            da_read_from: config.da_read_from.clone(),
-            timeout_client_secs: 10,
+        .build_module::<ContractListener>(ContractListenerConf {
+            database_url: config.indexer_database_url.clone(),
+            contracts: HashSet::from([args.orderbook_cn.clone().into()]),
+            poll_interval: Duration::from_secs(5),
         })
         .await?;
 

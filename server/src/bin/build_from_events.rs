@@ -1,6 +1,5 @@
-use std::env;
-
 use anyhow::{Context, Result};
+use clap::Parser;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_modules::utils::logger::setup_tracing;
 use orderbook::{
@@ -8,32 +7,39 @@ use orderbook::{
     zk::FullState,
 };
 use sdk::{info, BlockHeight, LaneId, StateCommitment};
-use server::init::DebugStateCommitment;
+use server::{init::DebugStateCommitment, setup::setup_database};
 use sqlx::{postgres::PgRow, FromRow, Row};
 use tracing::{error, warn};
 
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct Args {
+    #[arg(long, default_value = "config.toml")]
+    pub config_file: Vec<String>,
+
+    #[arg(long, default_value = "0")]
+    pub commit_id: u32,
+
+    #[arg(long, default_value = "false")]
+    pub fast_mode: bool,
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     setup_tracing("full", "build_from_events".to_string()).unwrap();
 
-    let mut args = env::args().skip(1);
-    let commit_id = args
-        .next()
-        .expect("usage: build_from_events <commit_id> [--fast]");
-    let commit_id = commit_id.parse::<i64>().expect("invalid commit id");
-    let fast_mode = args.next().unwrap_or("false".to_string()) == "--fast";
-    let database_url = std::env::var("HYLI_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/orderbook".to_string());
-
-    info!("Connecting to database at {}", database_url);
+    let args = Args::parse();
     let config =
-        server::conf::Conf::new(vec!["config.toml".to_string()]).expect("failed to load config");
+        server::conf::Conf::new(args.config_file.clone()).context("reading config file")?;
+    let commit_id = args.commit_id as i64;
+    let fast_mode = args.fast_mode;
+    let index_database_url = config.indexer_database_url.clone();
 
-    let pool = sqlx::PgPool::connect(&database_url)
+    let pool = setup_database(&config, false)
         .await
-        .expect("failed to connect to database");
-    let node_url =
-        std::env::var("HYLI_NODE_URL").unwrap_or_else(|_| "http://localhost:4321".to_string());
+        .expect("failed to setup database");
+
+    let node_url = config.node_url;
     let node_client = NodeApiHttpClient::new(node_url).unwrap();
 
     let secret = config.secret.clone();
@@ -63,14 +69,14 @@ async fn main() {
         events.push((user_info, r, orderbook_events));
     }
 
-    let mut commitments = fetch_commitments().await.unwrap();
+    let mut commitments = fetch_commitments(index_database_url).await.unwrap();
 
     info!("Executing {} events", events.len());
     let mut light_state = ExecuteState::default();
 
     let last_commit_id = commit_id;
     for (user_info, commit_id, events) in events {
-        info!("Executing events: {}", commit_id);
+        info!("Executing events of commit id: {}", commit_id);
         for event in &events {
             info!("\tEvent: {}", event);
         }
@@ -158,6 +164,7 @@ async fn main() {
         .await
         .map_err(|e| anyhow::anyhow!(e.1))
         .unwrap();
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -199,11 +206,9 @@ impl FromRow<'_, PgRow> for CommitmentRow {
     }
 }
 
-async fn fetch_commitments() -> Result<Vec<CommitmentRow>> {
-    let database_url = std::env::var("HYLI_INDEXER_DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://postgres:postgres@localhost:5432/hyli-indexer".to_string());
-    info!("Connecting to indexer database at {}", database_url);
-    let pool = sqlx::PgPool::connect(&database_url)
+async fn fetch_commitments(index_database_url: String) -> Result<Vec<CommitmentRow>> {
+    info!("Connecting to indexer database at {}", index_database_url);
+    let pool = sqlx::PgPool::connect(&index_database_url)
         .await
         .expect("failed to connect to database");
 
