@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{command, Parser};
+use clap::Parser;
 use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use hyli_modules::utils::logger::setup_tracing;
 use orderbook::{
