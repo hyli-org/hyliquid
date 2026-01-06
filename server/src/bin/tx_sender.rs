@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use clap::{command, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use hyli_modules::utils::logger::setup_tracing;
 use k256::{
     ecdsa::{signature::DigestSigner, Signature, SigningKey},
