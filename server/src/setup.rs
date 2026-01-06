@@ -1,19 +1,11 @@
 use crate::conf::Conf;
 use anyhow::{Context, Result};
 use client_sdk::rest_client::{IndexerApiHttpClient, NodeApiClient, NodeApiHttpClient};
-use opentelemetry::{global, trace::TracerProvider as _};
-use opentelemetry_otlp::WithExportConfig;
-use opentelemetry_sdk::{
-    trace::{self, BatchConfigBuilder, SdkTracerProvider},
-    Resource,
-};
 use sdk::LaneId;
 use sqlx::postgres::{PgPool, PgPoolOptions};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{error, info, level_filters::LevelFilter};
-use tracing_opentelemetry::OpenTelemetryLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer};
+use tracing::{error, info};
 
 pub static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./src/migrations");
 
@@ -80,59 +72,6 @@ pub async fn setup_database(config: &Conf, clean_db: bool) -> Result<PgPool> {
     info!("Database migrations completed");
 
     Ok(pool)
-}
-
-pub fn init_tracing() -> opentelemetry_sdk::trace::SdkTracerProvider {
-    // Set up W3C trace context propagator
-    global::set_text_map_propagator(opentelemetry_sdk::propagation::TraceContextPropagator::new());
-
-    // Configure resource with service name
-    let resource = Resource::builder_empty()
-        .with_service_name("hyliquid-orderbook")
-        .build();
-
-    // Build OTLP exporter using tonic (grpc)
-    let endpoint =
-        std::env::var("OTLP_ENDPOINT").unwrap_or_else(|_| "http://localhost:4317".to_string());
-    let otlp_exporter = opentelemetry_otlp::SpanExporter::builder()
-        .with_tonic()
-        .with_endpoint(endpoint.clone())
-        .build()
-        .expect("Failed to create OTLP exporter");
-
-    // Create batch span processor
-    let batch_config = BatchConfigBuilder::default().build();
-    let batch_processor = trace::BatchSpanProcessor::builder(otlp_exporter)
-        .with_batch_config(batch_config)
-        .build();
-
-    // Create tracer provider
-    let tracer_provider = SdkTracerProvider::builder()
-        .with_span_processor(batch_processor)
-        .with_resource(resource)
-        .build();
-
-    // Get tracer before setting as global
-    let tracer = tracer_provider.tracer("hyliquid-orderbook");
-
-    // Set as global tracer provider (keep a clone so caller can choose to flush/shutdown)
-    let _ = global::set_tracer_provider(tracer_provider.clone());
-
-    // Configure tracing subscriber with env filter
-    let env_filter = EnvFilter::builder()
-        .with_default_directive(LevelFilter::INFO.into())
-        .from_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
-
-    // Initialize the tracing subscriber with both console output and OTLP
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_filter(env_filter))
-        .with(OpenTelemetryLayer::new(tracer).with_filter(LevelFilter::INFO))
-        .init();
-
-    tracing::info!("Tracing initialized with OTLP exporter to {}", endpoint);
-
-    tracer_provider
 }
 
 pub struct ServiceContext {

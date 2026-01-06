@@ -60,7 +60,7 @@
           "links": [
             {
               "title": "Set trace",
-              "url": "/d/edodkfmj0tce8f/traces-panel?orgId=1&var-traceId=${__data.fields[\"traceID\"]}"
+              "url": "/d/edodkfmj0tce8f/traces-panel?orgId=1&var-traceId=${__data.fields[\"traceIdHidden\"]}"
             }
           ],
           "mappings": [],
@@ -108,6 +108,7 @@
       "id": 3,
       "options": {
         "cellHeight": "sm",
+        "frameIndex": 0,
         "showHeader": true,
         "sortBy": [
           {
@@ -135,9 +136,7 @@
               "operator": "=",
               "scope": "resource",
               "tag": "service.name",
-              "value": [
-                "hyliquid-orderbook"
-              ],
+              "value": ["hyliquid-orderbook"],
               "valueType": "string"
             },
             {
@@ -150,11 +149,11 @@
           ],
           "limit": 20,
           "metricsQueryType": "range",
-          "query": "{resource.service.name=\"hyliquid-orderbook\" && duration>$minDuration}",
+          "query": "{name=\"http-request\"} | select(span.name, span.http.status, span.http.duration)",
           "queryType": "traceql",
           "refId": "A",
           "serviceMapUseNativeHistograms": false,
-          "tableType": "traces"
+          "tableType": "spans"
         }
       ],
       "title": "Traces",
@@ -169,17 +168,31 @@
           "id": "organize",
           "options": {
             "excludeByName": {
+              "Name": true,
               "Service": true,
-              "Span ID": false,
+              "Span ID": true,
               "Trace ID": false,
+              "Trace Name": true,
               "Trace Service": true,
+              "http.duration": true,
               "nested": true,
               "traceIdHidden": false
             },
             "includeByName": {},
-            "indexByName": {},
+            "indexByName": {
+              "Duration": 9,
+              "Name": 7,
+              "Span ID": 3,
+              "Start time": 4,
+              "Trace Name": 2,
+              "Trace Service": 1,
+              "http.duration": 8,
+              "http.status": 6,
+              "name": 5,
+              "traceIdHidden": 0
+            },
             "orderBy": [],
-            "orderByMode": "auto",
+            "orderByMode": "manual",
             "renameByName": {
               "Duration": ""
             }
@@ -373,10 +386,7 @@
   "preload": false,
   "refresh": "",
   "schemaVersion": 42,
-  "tags": [
-    "demo",
-    "visualization"
-  ],
+  "tags": ["demo", "visualization"],
   "templating": {
     "list": [
       {
@@ -445,7 +455,8 @@
   },
   "timepicker": {},
   "timezone": "browser",
-  "title": "Traces Panel",
+  "title": "Traces - HTTP Requests",
   "uid": "edodkfmj0tce8f",
-  "version": 6
+  "version": 7
 }
+

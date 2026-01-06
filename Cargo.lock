@@ -3993,6 +3993,9 @@ dependencies = [
  "hyli-net",
  "indexmap 2.12.1",
  "opentelemetry",
+ "opentelemetry-http",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
  "paste",
  "prometheus",
  "quote",
@@ -4007,6 +4010,7 @@ dependencies = [
  "tokio-util",
  "tower-http",
  "tracing",
+ "tracing-opentelemetry",
  "tracing-subscriber",
  "utoipa",
  "utoipa-axum",
@@ -4037,6 +4041,7 @@ dependencies = [
  "tokio-util",
  "tower-service",
  "tracing",
+ "tracing-opentelemetry",
 ]
 
 [[package]]
