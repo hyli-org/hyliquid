@@ -11,7 +11,7 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use axum::{
     extract::{Json, State},
-    http::{HeaderMap, Method, Request, Response},
+    http::{HeaderMap, Method},
     response::IntoResponse,
     routing::{get, post},
     Router,
