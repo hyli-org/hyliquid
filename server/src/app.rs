@@ -1022,37 +1022,72 @@ async fn create_order(
     let request_start = Instant::now();
     let endpoint = "create_order";
 
-    let result =
-        async {
-            let auth = AuthHeaders::from_headers(&headers)?;
-            let user = auth.identity;
-            let public_key = auth.public_key.expect("Missing public key in headers");
-            let signature = auth.signature.expect("Missing signature in headers");
+    let result = async {
+        let auth = AuthHeaders::from_headers(&headers)?;
+        let user = auth.identity;
+        let public_key = auth.public_key.expect("Missing public key in headers");
+        let signature = auth.signature.expect("Missing signature in headers");
 
-            let user_info = {
-                let user_service = ctx.user_service.read().await;
-                user_service.get_user_info(&user).await?
-            };
+        let user_info = {
+            let user_service = ctx.user_service.read().await;
+            user_service.get_user_info(&user).await?
+        };
 
-            orderbook::utils::verify_user_signature_authorization(
-                &user_info,
-                &public_key,
-                &format!(
-                    "{}:{}:create_order:{}",
-                    user_info.user, user_info.nonce, request.order_id
-                ),
-                &signature,
+        orderbook::utils::verify_user_signature_authorization(
+            &user_info,
+            &public_key,
+            &format!(
+                "{}:{}:create_order:{}",
+                user_info.user, user_info.nonce, request.order_id
+            ),
+            &signature,
+        )
+        .map_err(|e| {
+            AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
             )
-            .map_err(|e| {
-                AppError(
-                    StatusCode::BAD_REQUEST,
-                    anyhow::anyhow!("Failed to verify user signature authorization: {e}"),
-                )
-            })?;
+        })?;
 
-            debug!("Creating order for user {user}. Order: {:?}", request);
+        debug!("Creating order for user {user}. Order: {:?}", request);
 
-            let (
+        let (
+            action_id,
+            user_info,
+            events,
+            lock_duration,
+            method_duration,
+            apply_duration,
+            operation_duration,
+        ) = {
+            let lock_start = Instant::now();
+            let mut orderbook = ctx.orderbook.lock().await;
+            let lock_duration = lock_start.elapsed();
+            let operation_start = Instant::now();
+
+            let method_start = Instant::now();
+            let events = log_warn!(
+                orderbook
+                    .execute_order(&user_info, request.clone())
+                    .map_err(|e| anyhow::anyhow!(e)),
+                "Failed to execute order"
+            )
+            .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
+            let method_duration = method_start.elapsed();
+
+            let apply_start = Instant::now();
+            log_error!(
+                orderbook
+                    .apply_events(&user_info, &events)
+                    .map_err(|e| anyhow::anyhow!(e)),
+                "Failed to apply events"
+            )
+            .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
+            let apply_duration = apply_start.elapsed();
+            let operation_duration = operation_start.elapsed();
+
+            let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+            (
                 action_id,
                 user_info,
                 events,
@@ -1060,70 +1095,34 @@ async fn create_order(
                 method_duration,
                 apply_duration,
                 operation_duration,
-            ) = {
-                let lock_start = Instant::now();
-                let mut orderbook = ctx.orderbook.lock().await;
-                let lock_duration = lock_start.elapsed();
-                let operation_start = Instant::now();
-
-                let method_start = Instant::now();
-                let events = log_warn!(
-                    orderbook
-                        .execute_order(&user_info, request.clone())
-                        .map_err(|e| anyhow::anyhow!(e)),
-                    "Failed to execute order"
-                )
-                .map_err(|e| AppError(StatusCode::BAD_REQUEST, e))?;
-                let method_duration = method_start.elapsed();
-
-                let apply_start = Instant::now();
-                log_error!(
-                    orderbook
-                        .apply_events(&user_info, &events)
-                        .map_err(|e| anyhow::anyhow!(e)),
-                    "Failed to apply events"
-                )
-                .map_err(|e| AppError(StatusCode::INTERNAL_SERVER_ERROR, e))?;
-                let apply_duration = apply_start.elapsed();
-                let operation_duration = operation_start.elapsed();
-
-                let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
-                (
-                    action_id,
-                    user_info,
-                    events,
-                    lock_duration,
-                    method_duration,
-                    apply_duration,
-                    operation_duration,
-                )
-            };
-            ctx.metrics.record_lock(lock_duration, "create_order");
-            ctx.metrics.record_method(method_duration, "execute_order");
-            ctx.metrics
-                .record_event_apply(apply_duration, "create_order");
-            ctx.metrics
-                .record_operation(operation_duration, "create_order");
-            ctx.metrics
-                .record_events_applied(events.len(), "create_order");
-
-            let action_private_input = &CreateOrderPrivateInput {
-                public_key,
-                signature,
-            };
-
-            let orderbook_action = PermissionedOrderbookAction::CreateOrder(request);
-
-            process_orderbook_action(
-                user_info,
-                events,
-                orderbook_action,
-                action_id,
-                action_private_input,
-                &ctx,
             )
-        }
-        .await;
+        };
+        ctx.metrics.record_lock(lock_duration, "create_order");
+        ctx.metrics.record_method(method_duration, "execute_order");
+        ctx.metrics
+            .record_event_apply(apply_duration, "create_order");
+        ctx.metrics
+            .record_operation(operation_duration, "create_order");
+        ctx.metrics
+            .record_events_applied(events.len(), "create_order");
+
+        let action_private_input = &CreateOrderPrivateInput {
+            public_key,
+            signature,
+        };
+
+        let orderbook_action = PermissionedOrderbookAction::CreateOrder(request);
+
+        process_orderbook_action(
+            user_info,
+            events,
+            orderbook_action,
+            action_id,
+            action_private_input,
+            &ctx,
+        )
+    }
+    .await;
 
     let status = match &result {
         Ok(_) => 200,
