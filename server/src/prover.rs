@@ -19,7 +19,7 @@ use sdk::{
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
 use tokio::sync::Mutex;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct PendingTx {
@@ -166,12 +166,12 @@ impl OrderbookProverModule {
 
     async fn handle_contract_listener_event(&mut self, event: ContractListenerEvent) -> Result<()> {
         match event {
-            ContractListenerEvent::NewTx(tx_hash, _indexed_blobs, tx_ctx, status) => {
+            ContractListenerEvent::SettledTx(tx_hash, _indexed_blobs, _tx_ctx, status) => {
                 match status {
                     TransactionStatusDb::Success
                     | TransactionStatusDb::Failure
                     | TransactionStatusDb::TimedOut => {
-                        info!("✨ {tx_hash:#} has settled {status}");
+                        info!("✨ {tx_hash:#} has settled: {status}");
 
                         // Delete settled tx from the database
                         log_error!(
@@ -183,75 +183,72 @@ impl OrderbookProverModule {
                         )?;
                         Ok(())
                     }
-                    TransactionStatusDb::DataProposalCreated
-                    | TransactionStatusDb::WaitingDissemination => {
-                        debug!("🤚 Waiting tx {tx_hash:#} to be sequenced");
-                        Ok(())
-                    }
-                    TransactionStatusDb::Sequenced => {
-                        // Query the database for the prover request
-                        let row =
-                            sqlx::query("SELECT request FROM prover_requests WHERE tx_hash = $1")
-                                .bind(tx_hash.0.clone())
-                                .fetch_optional(&self.ctx.pool)
-                                .await?;
-
-                        if let Some(row) = row {
-                            let request_json: Vec<u8> = row.get("request");
-                            let prover_request: OrderbookProverRequest =
-                                serde_json::from_slice(&request_json).map_err(|e| {
-                                    anyhow!("Failed to parse prover request JSON: {e}")
-                                })?;
-
-                            // Process the request to get the pending transaction
-                            let pending_tx = self.handle_prover_request(prover_request).await?;
-
-                            let prover = self.ctx.prover.clone();
-                            let contract_name = self.ctx.orderbook_cn.clone();
-                            let node_client = self.ctx.node_client.clone();
-                            let tx_context_cloned = tx_ctx.clone();
-                            let tx_hash_cloned = tx_hash.clone();
-
-                            tokio::spawn(async move {
-                                let mut calldata = pending_tx.calldata;
-
-                                calldata.tx_ctx = Some(tx_context_cloned);
-
-                                match prover
-                                    .prove(pending_tx.commitment_metadata, vec![calldata])
-                                    .await
-                                {
-                                    Ok(proof) => {
-                                        let tx = ProofTransaction {
-                                            contract_name: contract_name.clone(),
-                                            program_id: prover.program_id(),
-                                            verifier: prover.verifier(),
-                                            proof: proof.data,
-                                        };
-
-                                        info!("Proof took {:?} cycles", proof.metadata.cycles);
-
-                                        match node_client.send_tx_proof(tx).await {
-                                            Ok(proof_tx_hash) => {
-                                                debug!("Successfully sent proof for {tx_hash_cloned:#}: {proof_tx_hash:#}");
-                                            }
-                                            Err(e) => {
-                                                error!(
-                                            "Failed to send proof for {tx_hash_cloned:#}: {e:#}"
-                                        );
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        bail!("failed to generate proof for {tx_hash_cloned:#}: {e:#}");
-                                    }
-                                }
-                                Ok(())
-                            });
-                        }
+                    _ => {
+                        warn!("⚠️ Ignoring unexpected settled tx status {status} for {tx_hash:#}");
                         Ok(())
                     }
                 }
+            }
+            ContractListenerEvent::SequencedTx(tx_hash, _indexed_blobs, tx_ctx) => {
+                // Query the database for the prover request
+                let row = sqlx::query("SELECT request FROM prover_requests WHERE tx_hash = $1")
+                    .bind(tx_hash.0.clone())
+                    .fetch_optional(&self.ctx.pool)
+                    .await?;
+
+                if let Some(row) = row {
+                    let request_json: Vec<u8> = row.get("request");
+                    let prover_request: OrderbookProverRequest =
+                        serde_json::from_slice(&request_json)
+                            .map_err(|e| anyhow!("Failed to parse prover request JSON: {e}"))?;
+
+                    // Process the request to get the pending transaction
+                    let pending_tx = self.handle_prover_request(prover_request).await?;
+
+                    let prover = self.ctx.prover.clone();
+                    let contract_name = self.ctx.orderbook_cn.clone();
+                    let node_client = self.ctx.node_client.clone();
+                    let tx_context_cloned = tx_ctx.clone();
+                    let tx_hash_cloned = tx_hash.clone();
+
+                    tokio::spawn(async move {
+                        let mut calldata = pending_tx.calldata;
+
+                        calldata.tx_ctx = Some(tx_context_cloned);
+
+                        match prover
+                            .prove(pending_tx.commitment_metadata, vec![calldata])
+                            .await
+                        {
+                            Ok(proof) => {
+                                let tx = ProofTransaction {
+                                    contract_name: contract_name.clone(),
+                                    program_id: prover.program_id(),
+                                    verifier: prover.verifier(),
+                                    proof: proof.data,
+                                };
+
+                                info!("Proof took {:?} cycles", proof.metadata.cycles);
+
+                                match node_client.send_tx_proof(tx).await {
+                                    Ok(proof_tx_hash) => {
+                                        debug!("Successfully sent proof for {tx_hash_cloned:#}: {proof_tx_hash:#}");
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "Failed to send proof for {tx_hash_cloned:#}: {e:#}"
+                                        );
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                bail!("failed to generate proof for {tx_hash_cloned:#}: {e:#}");
+                            }
+                        }
+                        Ok(())
+                    });
+                }
+                Ok(())
             }
         }
     }

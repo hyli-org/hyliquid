@@ -122,6 +122,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     handler
         .build_module::<ContractListener>(ContractListenerConf {
             database_url: config.indexer_database_url.clone(),
+            data_directory: config.data_directory.clone(),
             contracts: HashSet::from([args.orderbook_cn.clone().into()]),
             poll_interval: Duration::from_secs(5),
         })

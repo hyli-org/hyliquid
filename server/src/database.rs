@@ -1174,9 +1174,19 @@ impl DatabaseModule {
 
     async fn flush_blob_queue(&mut self) -> Result<()> {
         loop {
-            let next = sqlx::query_as::<_, (i64, Json<BlobTransaction>)>(
-                "SELECT commit_id, blob_tx FROM blob_tx_outbox WHERE status = 'pending' ORDER BY commit_id LIMIT 1"
+            let last_sent_commit_id = sqlx::query_scalar::<_, Option<i64>>(
+                "SELECT MAX(commit_id) FROM blob_tx_outbox WHERE status = 'sent'",
             )
+            .fetch_one(&self.ctx.pool)
+            .await?
+            .unwrap_or(0);
+
+            let next_commit_id = last_sent_commit_id + 1;
+
+            let next = sqlx::query_as::<_, (i64, Json<BlobTransaction>)>(
+                "SELECT commit_id, blob_tx FROM blob_tx_outbox WHERE status = 'pending' AND commit_id = $1"
+            )
+            .bind(next_commit_id)
             .fetch_optional(&self.ctx.pool)
             .await?;
             let Some((commit_id, blob_tx)) = next else {

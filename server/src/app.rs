@@ -366,7 +366,7 @@ impl OrderbookModule {
         let amount_u64 =
             u64::try_from(amount).context("Deposit amount exceeds supported range (u64)")?;
 
-        let (user_info, events) = {
+        let (action_id, user_info, events) = {
             let mut orderbook = self.router_ctx.orderbook.lock().await;
             let user_info = orderbook.get_user_info(&user).unwrap_or_else(|_| {
                 let mut salt = [0u8; 32];
@@ -382,7 +382,11 @@ impl OrderbookModule {
                 .apply_events(&user_info, &events)
                 .map_err(|e| anyhow!("Failed to update orderbook state after deposit: {e}"))?;
 
-            (user_info, events)
+            let action_id = self
+                .router_ctx
+                .action_id_counter
+                .fetch_add(1, Ordering::Relaxed);
+            (action_id, user_info, events)
         };
 
         let action_private_input = Vec::<u8>::new();
@@ -396,6 +400,7 @@ impl OrderbookModule {
             user_info,
             events,
             orderbook_action,
+            action_id,
             &action_private_input,
             &self.router_ctx,
         )
@@ -777,7 +782,7 @@ async fn create_pair(
         drop(asset_service);
 
         let operation_start = Instant::now();
-        let (user_info, events) = {
+        let (action_id, user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
             ctx.metrics.record_lock(lock_start.elapsed(), "create_pair");
@@ -803,7 +808,8 @@ async fn create_pair(
             ctx.metrics
                 .record_event_apply(apply_start.elapsed(), "create_pair");
 
-            (user_info, events)
+            let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+            (action_id, user_info, events)
         };
         ctx.metrics
             .record_operation(operation_start.elapsed(), "create_pair");
@@ -815,6 +821,7 @@ async fn create_pair(
             user_info,
             events,
             orderbook_action,
+            action_id,
             &action_private_input,
             &ctx,
         )
@@ -850,7 +857,7 @@ async fn add_session_key(
 
         let operation_start = Instant::now();
         // FIXME: locking here makes locking another time in execute_orderbook_action ...
-        let (user_info, events) = {
+        let (action_id, user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
             ctx.metrics
@@ -896,7 +903,8 @@ async fn add_session_key(
             ctx.metrics
                 .record_event_apply(apply_start.elapsed(), "add_session_key");
 
-            (user_info, events)
+            let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+            (action_id, user_info, events)
         };
         ctx.metrics
             .record_operation(operation_start.elapsed(), "add_session_key");
@@ -911,6 +919,7 @@ async fn add_session_key(
             user_info,
             events,
             orderbook_action,
+            action_id,
             action_private_input,
             &ctx,
         )
@@ -946,7 +955,7 @@ async fn deposit(
         );
 
         let operation_start = Instant::now();
-        let (user_info, events) = {
+        let (action_id, user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
             ctx.metrics.record_lock(lock_start.elapsed(), "deposit");
@@ -971,7 +980,8 @@ async fn deposit(
             ctx.metrics
                 .record_event_apply(apply_start.elapsed(), "deposit");
 
-            (user_info, events)
+            let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+            (action_id, user_info, events)
         };
         ctx.metrics
             .record_operation(operation_start.elapsed(), "deposit");
@@ -987,6 +997,7 @@ async fn deposit(
             user_info,
             events,
             orderbook_action,
+            action_id,
             &action_private_input,
             &ctx,
         )
@@ -1042,6 +1053,7 @@ async fn create_order(
             debug!("Creating order for user {user}. Order: {:?}", request);
 
             let (
+                action_id,
                 user_info,
                 events,
                 lock_duration,
@@ -1075,7 +1087,9 @@ async fn create_order(
                 let apply_duration = apply_start.elapsed();
                 let operation_duration = operation_start.elapsed();
 
+                let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
                 (
+                    action_id,
                     user_info,
                     events,
                     lock_duration,
@@ -1104,6 +1118,7 @@ async fn create_order(
                 user_info,
                 events,
                 orderbook_action,
+                action_id,
                 action_private_input,
                 &ctx,
             )
@@ -1161,7 +1176,7 @@ async fn cancel_order(
         );
 
         let operation_start = Instant::now();
-        let (user_info, events) = {
+        let (action_id, user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
             ctx.metrics
@@ -1194,7 +1209,8 @@ async fn cancel_order(
             ctx.metrics
                 .record_event_apply(apply_start.elapsed(), "cancel_order");
 
-            (user_info, events)
+            let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+            (action_id, user_info, events)
         };
         ctx.metrics
             .record_operation(operation_start.elapsed(), "cancel_order");
@@ -1212,6 +1228,7 @@ async fn cancel_order(
             user_info,
             events,
             orderbook_action,
+            action_id,
             &action_private_input,
             &ctx,
         )
@@ -1269,7 +1286,7 @@ async fn withdraw(
         );
 
         let operation_start = Instant::now();
-        let (user_info, events) = {
+        let (action_id, user_info, events) = {
             let lock_start = Instant::now();
             let mut orderbook = ctx.orderbook.lock().await;
             ctx.metrics.record_lock(lock_start.elapsed(), "withdraw");
@@ -1301,7 +1318,8 @@ async fn withdraw(
             ctx.metrics
                 .record_event_apply(apply_start.elapsed(), "withdraw");
 
-            (user_info, events)
+            let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
+            (action_id, user_info, events)
         };
         ctx.metrics
             .record_operation(operation_start.elapsed(), "withdraw");
@@ -1321,6 +1339,7 @@ async fn withdraw(
             user_info,
             events,
             orderbook_action,
+            action_id,
             &action_private_input,
             &ctx,
         )
@@ -1344,10 +1363,10 @@ fn process_orderbook_action<T: BorshSerialize>(
     user_info: UserInfo,
     events: Vec<OrderbookEvent>,
     orderbook_action: PermissionedOrderbookAction,
+    action_id: u32,
     action_private_input: &T,
     ctx: &RouterCtx,
 ) -> Result<impl IntoResponse, AppError> {
-    let action_id = ctx.action_id_counter.fetch_add(1, Ordering::Relaxed);
     let blob_tx = BlobTransaction::new(
         ORDERBOOK_ACCOUNT_IDENTITY,
         vec![

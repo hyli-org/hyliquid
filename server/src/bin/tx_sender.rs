@@ -516,6 +516,9 @@ async fn main() -> Result<()> {
                 anyhow::bail!("Server returned error {status}: {error_text}");
             }
 
+            // Wait 10 seconds before starting simulation
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
             let quantity = quantity * 10_u64.pow(asset_1.scale as u32);
             let middle_price = middle_price * 10_u64.pow(asset_2.scale as u32);
             let price_offset = price_offset * 10_u64.pow(asset_2.scale as u32);
