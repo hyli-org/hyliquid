@@ -1,5 +1,5 @@
 use borsh::{BorshDeserialize, BorshSerialize};
-use sdk::merkle_utils::BorshableMerkleProof;
+use sdk::{merkle_utils::BorshableMerkleProof, ProgramId};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -86,6 +86,7 @@ pub enum PermissionedOrderbookAction {
         amount: u64,
         destination: WithdrawDestination,
     },
+    UpgradeContract(ProgramId),
 }
 
 #[derive(Serialize, Deserialize, BorshSerialize, BorshDeserialize, Debug, Clone, PartialEq)]
@@ -128,6 +129,11 @@ impl ExecuteState {
         match action {
             PermissionedOrderbookAction::Identify => {
                 Ok(vec![]) // Identify action does not change the state
+            }
+            PermissionedOrderbookAction::UpgradeContract(_program_id) => {
+                // UpgradeContract action does not change the state
+                // The actual upgrade is handled off-chain by the orderbook server
+                Ok(vec![])
             }
             PermissionedOrderbookAction::CreatePair { pair, info } => {
                 self.create_pair(&pair, &info)

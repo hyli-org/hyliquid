@@ -33,6 +33,9 @@ impl FullState {
         base_user: &UserInfo,
         events: &[OrderbookEvent],
     ) -> Result<UsersAndBalancesNeeded, String> {
+        if events.is_empty() {
+            return Ok((HashSet::new(), HashMap::new()));
+        }
         let mut users_info_needed: HashSet<UserInfo> = HashSet::new();
         let base = self.resolve_user_from_state(base_user, &base_user.user)?;
         users_info_needed.insert(base);

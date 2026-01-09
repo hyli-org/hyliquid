@@ -1,7 +1,10 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{anyhow, bail, Result};
-use client_sdk::{helpers::ClientSdkProver, rest_client::NodeApiClient};
+use anyhow::{anyhow, bail, Context, Result};
+use client_sdk::{
+    helpers::{sp1::SP1Prover, ClientSdkProver},
+    rest_client::NodeApiClient,
+};
 use hyli_modules::{
     bus::SharedMessageBus,
     log_error, module_bus_client, module_handle_messages,
@@ -14,7 +17,8 @@ use orderbook::{
     ORDERBOOK_ACCOUNT_IDENTITY,
 };
 use sdk::{
-    api::TransactionStatusDb, BlobIndex, Calldata, ContractName, LaneId, ProofTransaction, TxHash,
+    api::TransactionStatusDb, BlobIndex, Calldata, ContractName, LaneId, ProgramId,
+    ProofTransaction, TxHash,
 };
 use serde::{Deserialize, Serialize};
 use sqlx::{PgPool, Row};
@@ -62,6 +66,8 @@ pub struct OrderbookProverModule {
     ctx: Arc<OrderbookProverCtx>,
     bus: OrderbookProverBusClient,
     orderbook: Arc<Mutex<FullState>>,
+    current_program_id: ProgramId,
+    provers: HashMap<ProgramId, Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>>,
 }
 
 impl Module for OrderbookProverModule {
@@ -71,10 +77,20 @@ impl Module for OrderbookProverModule {
         let bus = OrderbookProverBusClient::new_from_bus(bus.new_handle()).await;
         let orderbook = Arc::new(Mutex::new(ctx.initial_orderbook.clone()));
 
+        let current_program_id = ctx
+            .node_client
+            .get_contract(ctx.orderbook_cn.clone())
+            .await?
+            .program_id;
+        let mut provers = HashMap::new();
+        provers.insert(ctx.prover.program_id(), ctx.prover.clone());
+
         Ok(OrderbookProverModule {
             ctx,
             bus,
             orderbook,
+            provers,
+            current_program_id,
         })
     }
 
@@ -202,10 +218,24 @@ impl OrderbookProverModule {
                         serde_json::from_slice(&request_json)
                             .map_err(|e| anyhow!("Failed to parse prover request JSON: {e}"))?;
 
+                    if let PermissionedOrderbookAction::UpgradeContract(new_program_id) =
+                        &prover_request.orderbook_action
+                    {
+                        // Update current program ID if it's different
+                        if &self.current_program_id != new_program_id {
+                            info!(
+                                "Updating current program ID from {} to {}",
+                                self.current_program_id, new_program_id
+                            );
+                            self.current_program_id = new_program_id.clone();
+                        }
+                    }
+
+                    let prover = self.get_prover().await?;
+
                     // Process the request to get the pending transaction
                     let pending_tx = self.handle_prover_request(prover_request).await?;
 
-                    let prover = self.ctx.prover.clone();
                     let contract_name = self.ctx.orderbook_cn.clone();
                     let node_client = self.ctx.node_client.clone();
                     let tx_context_cloned = tx_ctx.clone();
@@ -247,9 +277,47 @@ impl OrderbookProverModule {
                         }
                         Ok(())
                     });
+                } else {
+                    error!("No prover request found for tx {tx_hash:#}");
                 }
                 Ok(())
             }
         }
+    }
+
+    async fn get_prover(
+        &mut self,
+    ) -> Result<Arc<dyn ClientSdkProver<Vec<Calldata>> + Send + Sync>> {
+        let program_id = &self.current_program_id.clone();
+        // If prover for current program ID does not exist, call add_prover
+        if !self.provers.contains_key(program_id) {
+            self.add_prover(program_id)
+                .await
+                .context("Fetching latest contract for orderbook prover")?;
+        }
+
+        Ok(self
+            .provers
+            .get(program_id)
+            .cloned()
+            .expect("Prover should exist for current program ID"))
+    }
+
+    async fn add_prover(&mut self, program_id: &ProgramId) -> Result<()> {
+        let prover = <SP1Prover as ClientSdkProver<Vec<Calldata>>>::new_from_registry(
+            &self.ctx.orderbook_cn,
+            program_id.clone(),
+        )
+        .await
+        .context("Creating new prover with updated ELF")?;
+
+        self.provers.insert(program_id.clone(), Arc::new(prover));
+
+        info!(
+            cn =% self.ctx.orderbook_cn,
+            "Prover ELF added for program ID: {}",
+            program_id
+        );
+        Ok(())
     }
 }
