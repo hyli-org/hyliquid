@@ -3,13 +3,15 @@ resolver = "2"
 members = ["contracts", "contracts/orderbook", "server", "loadtest"]
 
 [workspace.dependencies]
-sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "main" }
-client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "main" }
-hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "main" }
-hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "main", features = [
-    "db",
+sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "prover_update_from_registry" }
+client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "prover_update_from_registry" }
+hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "prover_update_from_registry" }
+hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "prover_update_from_registry", features = [
+  "db",
 ] }
-hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "main" }
+hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "prover_update_from_registry" }
+
+hyli-registry = "0.4.0"
 
 sp1-sdk = { version = "5.0.3", default-features = false }
 sp1-build = "5.0.3"

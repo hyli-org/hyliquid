@@ -28,6 +28,7 @@ pub struct Conf {
 
     /// Secret used to derive commitments (configured per deployment)
     pub secret: Vec<u8>,
+    pub admin_secret: String,
 
     // Bridge configuration
     pub bridge: BridgeConfig,

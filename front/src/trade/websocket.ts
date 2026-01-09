@@ -352,7 +352,6 @@ class WebSocketManager {
                 });
                 this.state.orders = orders || [];
             } else if (data.type === "candlestick" && data.data) {
-                console.log("Received candlestick data:", data.data.candlesticks);
                 this.notifyCandlestickCallbacks(data.data.candlesticks || []);
             } else if (data.type === "error") {
                 this.state.error = data.message || "Unknown WebSocket error";

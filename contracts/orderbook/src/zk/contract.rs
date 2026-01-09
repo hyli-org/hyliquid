@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use sdk::{ContractName, RunResult, StateCommitment};
+use sdk::{ContractName, OnchainEffect, RunResult, StateCommitment};
 use sha3::{Digest, Sha3_256};
 use sparse_merkle_tree::traits::Value;
 
@@ -75,6 +75,20 @@ impl sdk::ZkContract for ZkVmState {
                     // Identify action does not change the state
                     self.take_changes_back(&mut state)?;
                     return Ok((vec![], ctx, vec![]));
+                }
+                if let PermissionedOrderbookAction::UpgradeContract(program_id) = action {
+                    let contract_name = ctx.contract_name.clone();
+                    if program_id == sdk::ProgramId::default() {
+                        return Err("Cannot upgrade to default program ID".to_string());
+                    }
+                    return Ok((
+                        vec![],
+                        ctx,
+                        vec![OnchainEffect::UpdateContractProgramId(
+                            contract_name,
+                            program_id,
+                        )],
+                    ));
                 }
 
                 let user_info = permissioned_private_input.user_info.clone();

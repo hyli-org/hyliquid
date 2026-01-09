@@ -137,6 +137,16 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
             initial_state: full_state.commit(),
         }];
 
+        hyli_registry::upload_elf(
+            ORDERBOOK_ELF,
+            &hex::encode(ORDERBOOK_VK),
+            &args.orderbook_cn,
+            "sp1",
+            None,
+        )
+        .await
+        .context("Uploading orderbook ELF to registry")?;
+
         match server::init::init_node(node_client.clone(), contracts, !args.no_check).await {
             Ok(_) => {}
             Err(e) => {
@@ -187,6 +197,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         user_service: user_service.clone(),
         client: node_client.clone(),
         database_ctx: database_ctx.clone(),
+        admin_secret: config.admin_secret.clone(),
     });
 
     let api_module_ctx = Arc::new(ApiModuleCtx {
@@ -224,7 +235,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
                 database_url: config.indexer_database_url.clone(),
                 data_directory: config.data_directory.clone(),
                 contracts: HashSet::from([args.orderbook_cn.clone().into()]),
-                poll_interval: Duration::from_secs(5),
+                poll_interval: Duration::from_secs(1),
             })
             .await?;
     }
