@@ -398,8 +398,8 @@ impl DebugStateCommitment {
                 "lane_id".to_string(),
                 format!(
                     "{} != {}",
-                    hex::encode(&self.lane_id.0 .0),
-                    hex::encode(&other.lane_id.0 .0)
+                    hex::encode(&self.lane_id.operator().0),
+                    hex::encode(&other.lane_id.operator().0)
                 ),
             );
         }
