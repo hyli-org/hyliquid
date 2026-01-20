@@ -10,6 +10,7 @@ hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-m
     "db",
 ] }
 hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "main" }
+hyli-turmoil-shims = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-turmoil-shims", branch = "main" }
 
 sp1-sdk = { version = "5.0.3", default-features = false }
 sp1-build = "5.0.3"

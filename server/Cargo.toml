@@ -28,6 +28,7 @@ sdk = { workspace = true, features = ["tracing"] }
 client-sdk = { workspace = true, features = ["sp1", "rest"] }
 hyli-modules = { workspace = true }
 hyli-net = { workspace = true }
+hyli-turmoil-shims = { workspace = true }
 hyli-smt-token = { workspace = true, features = ["client"] }
 # Remove features if you want reproducible builds with docker
 contracts = { workspace = true, features = ["nonreproducible", "nobuild"] }
@@ -82,3 +83,4 @@ instrumentation = [
   "client-sdk/instrumentation",
   "hyli-modules/instrumentation",
 ]
+turmoil = ["hyli-turmoil-shims/turmoil"]
