@@ -8,7 +8,6 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use client_sdk::{
-    helpers::ClientSdkProver,
     rest_client::{NodeApiClient, NodeApiHttpClient},
 };
 use orderbook::{

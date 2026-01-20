@@ -128,7 +128,7 @@ pub async fn setup_services(
             .get_node_info()
             .await?
             .pubkey
-            .map(|pk| LaneId::new(pk))
+            .map(LaneId::new)
             .ok_or_else(|| {
                 error!("Validator lane id not found");
                 anyhow::anyhow!("Validator lane id not found")

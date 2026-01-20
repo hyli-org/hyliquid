@@ -396,7 +396,11 @@ impl DebugStateCommitment {
         if self.lane_id != other.lane_id {
             diff.insert(
                 "lane_id".to_string(),
-                format!("{} != {}", self.lane_id, other.lane_id),
+                format!(
+                    "{} != {}",
+                    hex::encode(&self.lane_id.operator().0),
+                    hex::encode(&other.lane_id.operator().0)
+                ),
             );
         }
 

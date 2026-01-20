@@ -44,7 +44,7 @@ async fn main() -> Result<()> {
         .await
         .unwrap()
         .pubkey
-        .map(LaneId)
+        .map(LaneId::new)
         .unwrap();
     let last_block_height = BlockHeight::default();
 

@@ -3,13 +3,14 @@ resolver = "2"
 members = ["contracts", "contracts/orderbook", "server", "loadtest"]
 
 [workspace.dependencies]
-sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "prover_update_from_registry" }
-client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "prover_update_from_registry" }
-hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "prover_update_from_registry" }
-hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "prover_update_from_registry", features = [
+sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "main" }
+client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "main" }
+hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "main" }
+hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "main", features = [
   "db",
 ] }
-hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "prover_update_from_registry" }
+hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "main" }
+hyli-turmoil-shims = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-turmoil-shims", branch = "main" }
 
 hyli-registry = "0.4.0"
 
