@@ -4060,7 +4060,7 @@ checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 [[package]]
 name = "hyli-bus"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "anyhow",
  "anymap",
@@ -4083,7 +4083,7 @@ dependencies = [
 [[package]]
 name = "hyli-client-sdk"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -4106,7 +4106,7 @@ dependencies = [
 [[package]]
 name = "hyli-contract-sdk"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "borsh",
  "hyli-model",
@@ -4120,7 +4120,7 @@ dependencies = [
 [[package]]
 name = "hyli-crypto"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "anyhow",
  "blst",
@@ -4133,7 +4133,7 @@ dependencies = [
 [[package]]
 name = "hyli-model"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4158,7 +4158,7 @@ dependencies = [
 [[package]]
 name = "hyli-modules"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "anyhow",
  "assertables",
@@ -4202,7 +4202,7 @@ dependencies = [
 [[package]]
 name = "hyli-net"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "anyhow",
  "axum 0.8.8",
@@ -4248,7 +4248,7 @@ dependencies = [
 [[package]]
 name = "hyli-smt-token"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "anyhow",
  "borsh",
@@ -4262,7 +4262,7 @@ dependencies = [
 [[package]]
 name = "hyli-turmoil-shims"
 version = "0.14.0"
-source = "git+https://github.com/hyli-org/hyli.git?branch=main#ee6429a0f3d57d8951cddf08b3e849e0777413ce"
+source = "git+https://github.com/hyli-org/hyli.git?branch=main#08f528ff3fd9c08b46a7dcab91a8e17c8d3537b6"
 dependencies = [
  "borsh",
  "rand 0.9.2",
@@ -7340,6 +7340,7 @@ dependencies = [
  "hyli-contract-sdk",
  "hyli-modules",
  "hyli-net",
+ "hyli-registry",
  "hyli-smt-token",
  "hyli-turmoil-shims",
  "k256",

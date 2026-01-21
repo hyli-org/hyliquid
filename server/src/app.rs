@@ -210,6 +210,7 @@ pub struct OrderbookModuleCtx {
     pub asset_service: Arc<RwLock<AssetService>>,
     pub user_service: Arc<RwLock<UserService>>,
     pub database_ctx: Arc<DatabaseModuleCtx>,
+    pub admin_secret: String,
 }
 
 #[derive(Debug, Clone)]
@@ -293,6 +294,7 @@ impl Module for OrderbookModule {
             action_id_counter: Arc::new(AtomicU32::new(initial_action_id)),
             metrics: AppMetrics::new(),
             database_service: Arc::new(RwLock::new(database_service)),
+            admin_secret: ctx.admin_secret.clone(),
         };
 
         let cors = CorsLayer::new()
@@ -308,6 +310,7 @@ impl Module for OrderbookModule {
             .route("/cancel_order", post(cancel_order))
             .route("/withdraw", post(withdraw))
             .route("/nonce", get(get_nonce))
+            .route("/admin/submit_prover_request", post(submit_prover_request))
             // FIXME: to be removed. Only here for debugging purposes
             .route("/state", get(get_state))
             .with_state(router_ctx.clone())
@@ -488,6 +491,7 @@ struct RouterCtx {
     pub action_id_counter: Arc<AtomicU32>,
     pub metrics: AppMetrics,
     pub database_service: Arc<RwLock<DatabaseService>>,
+    pub admin_secret: String,
 }
 
 // --------------------------------------------------------
@@ -540,6 +544,13 @@ impl AuthHeaders {
 pub struct CreatePairRequest {
     pub base_contract: String,
     pub quote_contract: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct SubmitProverRequest {
+    pub secret: String,
+    pub blob_tx: BlobTransaction,
+    pub prover_request: OrderbookProverRequest,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -660,6 +671,54 @@ async fn get_state(State(ctx): State<RouterCtx>) -> Result<impl IntoResponse, Ap
 
         let api_state = ExecuteStateAPI::from(&*orderbook);
         Ok(Json(api_state))
+    }
+    .await;
+
+    let status = match &result {
+        Ok(_) => 200,
+        Err(AppError(status, _)) => status.as_u16(),
+    };
+    ctx.metrics.record_request(request_start, endpoint, status);
+
+    result
+}
+
+#[axum::debug_handler]
+#[cfg_attr(feature = "instrumentation", tracing::instrument(skip(ctx, request)))]
+async fn submit_prover_request(
+    State(ctx): State<RouterCtx>,
+    Json(request): Json<SubmitProverRequest>,
+) -> Result<impl IntoResponse, AppError> {
+    let request_start = Instant::now();
+    let endpoint = "submit_prover_request";
+
+    let result = async {
+        if request.secret != ctx.admin_secret {
+            return Err(AppError(
+                StatusCode::UNAUTHORIZED,
+                anyhow::anyhow!("Invalid secret"),
+            ));
+        }
+
+        let tx_hash = request.blob_tx.hashed();
+        if tx_hash != request.prover_request.tx_hash {
+            return Err(AppError(
+                StatusCode::BAD_REQUEST,
+                anyhow::anyhow!("tx_hash mismatch"),
+            ));
+        }
+
+        let mut bus = ctx.bus.clone();
+        let context = Span::current().context();
+        bus.send(DatabaseRequest::WriteEvents {
+            user: UserInfo::new(ORDERBOOK_ACCOUNT_IDENTITY.to_string(), Vec::new()),
+            tx_hash: tx_hash.clone(),
+            blob_tx: request.blob_tx,
+            prover_request: request.prover_request,
+            context,
+        })?;
+
+        Ok(Json(tx_hash))
     }
     .await;
 

@@ -7,10 +7,12 @@ sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-s
 client-sdk = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-client-sdk", branch = "main" }
 hyli-smt-token = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-smt-token", branch = "main" }
 hyli-modules = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-modules", branch = "main", features = [
-    "db",
+  "db",
 ] }
 hyli-net = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-net", branch = "main" }
 hyli-turmoil-shims = { git = "https://github.com/hyli-org/hyli.git", default-features = false, package = "hyli-turmoil-shims", branch = "main" }
+
+hyli-registry = "0.4.0"
 
 sp1-sdk = { version = "5.0.3", default-features = false }
 sp1-build = "5.0.3"

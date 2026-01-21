@@ -1,10 +1,6 @@
 import { computed, ref } from "vue";
 import { useWallet } from "hyli-wallet-vue";
-import {
-    BACKEND_API_URL,
-    NETWORK,
-    WALLET_SERVER_BASE_URL,
-} from "../config";
+import { BACKEND_API_URL, NETWORK, WALLET_SERVER_BASE_URL } from "../config";
 import { Interface, parseUnits } from "ethers";
 import { normalizeHexLike, requireHexAddress } from "../utils";
 
@@ -19,20 +15,20 @@ interface AccountInfo {
     account: string;
     auth_method:
         | {
-            Password: {
-                hash: string;
-            };
-        }
+              Password: {
+                  hash: string;
+              };
+          }
         | {
-            Jwt: {
-                hash: number[];
-            };
-        }
+              Jwt: {
+                  hash: number[];
+              };
+          }
         | {
-            Ethereum: {
-                address: string;
-            };
-        };
+              Ethereum: {
+                  address: string;
+              };
+          };
     session_keys: BackendSessionKey[];
     nonce: number;
     salt: string;
@@ -43,7 +39,6 @@ const buildClaimMessage = (chain: string, ethAddress: string, userIdentity: stri
     const normalizedAddress = normalizeHexLike(ethAddress);
     return `${normalizedChain}:${normalizedAddress}:${userIdentity}`;
 };
-
 
 const fetchAccountInfo = async (username: string): Promise<AccountInfo | null> => {
     try {
@@ -114,9 +109,7 @@ export function useEthereumBridge() {
 
     const needsManualAssociation = computed(() => {
         return (
-            normalizedWalletAddress.value === null &&
-            manualAssociation.value === null &&
-            claimAddress.value === null
+            normalizedWalletAddress.value === null && manualAssociation.value === null && claimAddress.value === null
         );
     });
 
@@ -167,19 +160,18 @@ export function useEthereumBridge() {
     const switchToSepoliaNetwork = async () => {
         isSwitchingNetwork.value = true;
         switchNetworkError.value = null;
-        
+
         try {
             const provider = getProvider();
-            
+
             // Try to switch to Sepolia
             await provider.request({
                 method: "wallet_switchEthereumChain",
                 params: [{ chainId: NETWORK.chainId }],
             });
-            
+
             // Update current chain ID and check match
             await checkNetworkMatch();
-            
         } catch (switchError: any) {
             // If the network is not added to MetaMask, try to add it
             if (switchError.code === 4902) {
@@ -187,38 +179,37 @@ export function useEthereumBridge() {
                     const provider = getProvider();
                     await provider.request({
                         method: "wallet_addEthereumChain",
-                        params: [{
-                            chainId: NETWORK.chainId,
-                            chainName: NETWORK.name,
-                            rpcUrls: [NETWORK.rpcUrl],
-                            blockExplorerUrls: [NETWORK.blockExplorerUrl],
-                            nativeCurrency: {
-                                name: "ETH",
-                                symbol: "ETH",
-                                decimals: 18,
+                        params: [
+                            {
+                                chainId: NETWORK.chainId,
+                                chainName: NETWORK.name,
+                                rpcUrls: [NETWORK.rpcUrl],
+                                blockExplorerUrls: [NETWORK.blockExplorerUrl],
+                                nativeCurrency: {
+                                    name: "ETH",
+                                    symbol: "ETH",
+                                    decimals: 18,
+                                },
                             },
-                        }],
+                        ],
                     });
-                    
+
                     // After adding, try to switch again
                     const providerAfterAdd = getProvider();
                     await providerAfterAdd.request({
                         method: "wallet_switchEthereumChain",
                         params: [{ chainId: NETWORK.chainId }],
                     });
-                    
+
                     await checkNetworkMatch();
-                    
                 } catch (addError) {
-                    switchNetworkError.value = addError instanceof Error 
-                        ? addError.message 
-                        : "Failed to add Sepolia network to MetaMask";
+                    switchNetworkError.value =
+                        addError instanceof Error ? addError.message : "Failed to add Sepolia network to MetaMask";
                     throw addError;
                 }
             } else {
-                switchNetworkError.value = switchError instanceof Error 
-                    ? switchError.message 
-                    : "Failed to switch to Sepolia network";
+                switchNetworkError.value =
+                    switchError instanceof Error ? switchError.message : "Failed to switch to Sepolia network";
                 throw switchError;
             }
         } finally {
@@ -228,14 +219,14 @@ export function useEthereumBridge() {
 
     const setupNetworkListener = () => {
         if (!providerAvailable.value || !window.ethereum?.on) return;
-        
+
         const handleChainChanged = (...args: unknown[]) => {
             const chainId = args[0] as string;
             isWrongNetwork.value = chainId !== NETWORK.chainId;
         };
-        
+
         window.ethereum.on("chainChanged", handleChainChanged);
-        
+
         // Cleanup function
         return () => {
             if (window.ethereum?.removeListener) {
@@ -256,9 +247,9 @@ export function useEthereumBridge() {
         claimStatusLoading.value = true;
 
         try {
-            const response = await fetch(
-                `${BACKEND_API_URL.value}/bridge/claim/${encodeURIComponent(identity)}`,
-            );
+            const response = await fetch(`${BACKEND_API_URL.value}/bridge/claim/${encodeURIComponent(identity)}`);
+
+            console.log("Bridge claim status response:", response);
 
             if (response.status === 404) {
                 resetClaimState();
@@ -276,8 +267,7 @@ export function useEthereumBridge() {
                 address: claimed && data.eth_address ? data.eth_address : null,
             });
         } catch (error) {
-            claimStatusError.value =
-                error instanceof Error ? error.message : "Failed to load bridge claim status";
+            claimStatusError.value = error instanceof Error ? error.message : "Failed to load bridge claim status";
             resetClaimState();
         } finally {
             claimStatusLoading.value = false;
@@ -325,18 +315,13 @@ export function useEthereumBridge() {
         return signature;
     };
 
-    const resolveSignerAccount = async (
-        provider: EthereumProvider,
-        targetAddress: string,
-    ): Promise<string> => {
+    const resolveSignerAccount = async (provider: EthereumProvider, targetAddress: string): Promise<string> => {
         const normalizedTarget = normalizeHexLike(targetAddress);
 
         try {
             const accounts = await provider.request<string[]>({ method: "eth_accounts" });
             if (accounts?.length) {
-                const match = accounts.find(
-                    (account) => normalizeHexLike(account) === normalizedTarget,
-                );
+                const match = accounts.find((account) => normalizeHexLike(account) === normalizedTarget);
                 if (match) {
                     return match;
                 }
@@ -388,7 +373,7 @@ export function useEthereumBridge() {
         }
 
         await checkBridgeClaimStatus();
-        
+
         // Also check network match when refreshing association
         await checkNetworkMatch();
     };
@@ -416,12 +401,7 @@ export function useEthereumBridge() {
             }
 
             const normalizedTarget = normalizeHexLike(targetAddress);
-            const signature = await claimBridgeIdentity(
-                provider,
-                NETWORK.chainId,
-                normalizedTarget,
-                signerAccount,
-            );
+            const signature = await claimBridgeIdentity(provider, NETWORK.chainId, normalizedTarget, signerAccount);
 
             manualAssociation.value = {
                 address: normalizedTarget,
@@ -436,7 +416,6 @@ export function useEthereumBridge() {
             submittingAssociation.value = false;
         }
     };
-
 
     const sendDepositTransaction = async (amountTokens: string) => {
         depositError.value = null;
@@ -457,7 +436,7 @@ export function useEthereumBridge() {
 
             const provider = getProvider();
             networkError.value = null;
-            
+
             // Check if we're on the correct network
             await checkNetworkMatch();
             if (isWrongNetwork.value) {
@@ -469,20 +448,18 @@ export function useEthereumBridge() {
                 signerAccount = await resolveSignerAccount(provider, address);
             } catch (accountError) {
                 const message =
-                    accountError instanceof Error
-                        ? accountError.message
-                        : "Unable to resolve Ethereum signer account";
+                    accountError instanceof Error ? accountError.message : "Unable to resolve Ethereum signer account";
                 throw new Error(message);
             }
 
             // Get decimals from the ERC20 contract
             const erc20 = new Interface([
-                'function transfer(address to, uint256 amount) returns (bool)',
-                'function decimals() view returns (uint8)'
+                "function transfer(address to, uint256 amount) returns (bool)",
+                "function decimals() view returns (uint8)",
             ]);
 
             // Query decimals from the contract
-            const decimalsCallData = erc20.encodeFunctionData('decimals', []);
+            const decimalsCallData = erc20.encodeFunctionData("decimals", []);
             const decimalsResult = await provider.request<string>({
                 method: "eth_call",
                 params: [
@@ -490,13 +467,13 @@ export function useEthereumBridge() {
                         to: tokenAddress,
                         data: decimalsCallData,
                     },
-                    "latest"
+                    "latest",
                 ],
             });
-            
-            const [decimals] = erc20.decodeFunctionResult('decimals', decimalsResult);
+
+            const [decimals] = erc20.decodeFunctionResult("decimals", decimalsResult);
             const amount = parseUnits(amountTokens, decimals);
-            const data = erc20.encodeFunctionData('transfer', [vaultAddress, amount]);
+            const data = erc20.encodeFunctionData("transfer", [vaultAddress, amount]);
 
             const hash = await provider.request<string>({
                 method: "eth_sendTransaction",
