@@ -1,15 +1,12 @@
 use std::{
-    env,
-    fs,
+    env, fs,
     io::{self, Write},
     path::{Path, PathBuf},
 };
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use client_sdk::{
-    rest_client::{NodeApiClient, NodeApiHttpClient},
-};
+use client_sdk::rest_client::{NodeApiClient, NodeApiHttpClient};
 use orderbook::{
     model::UserInfo,
     transaction::{OrderbookAction, PermissionedOrderbookAction},
@@ -201,8 +198,12 @@ async fn main() -> Result<()> {
 }
 
 fn read_contract_artifacts(dir: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
-    let entries = fs::read_dir(dir)
-        .with_context(|| format!("Failed to read contract artifacts directory {}", dir.display()))?;
+    let entries = fs::read_dir(dir).with_context(|| {
+        format!(
+            "Failed to read contract artifacts directory {}",
+            dir.display()
+        )
+    })?;
 
     let mut files = Vec::new();
     for entry in entries {
