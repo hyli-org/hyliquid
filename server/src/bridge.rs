@@ -227,9 +227,9 @@ impl BridgeModule {
         // Handle deposits (transfers to orderbook)
         for transfer in transfers {
             sdk::info!(
-                tx_hash = %tx_hash.0,
+                tx_hash = ?tx_hash.0,
                 token = %transfer.contract_name,
-                sender = %transfer.sender.0,
+                sender = ?transfer.sender.0,
                 amount = transfer.amount,
                 "Settled deposit transfer detected",
             );
@@ -239,7 +239,7 @@ impl BridgeModule {
         // Handle withdraws (orderbook withdraw actions)
         for withdraw in withdraws {
             sdk::info!(
-                tx_hash = %tx_hash.0,
+                tx_hash = ?tx_hash.0,
                 token = %withdraw.contract_name,
                 network = %withdraw.destination.network,
                 address = %withdraw.destination.address,

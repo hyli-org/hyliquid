@@ -228,6 +228,6 @@ impl AssetService {
             .fetch_one(&self.pool)
             .await
             .ok()?;
-        Some(TxHash(row.get::<String, _>("tx_hash")))
+        Some(TxHash(row.get::<Vec<u8>, _>("tx_hash")))
     }
 }
