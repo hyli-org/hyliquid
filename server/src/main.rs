@@ -13,7 +13,6 @@ use hyli_modules::{
     utils::db::use_fresh_db,
     utils::logger::setup_otlp,
 };
-use prometheus::Registry;
 use sdk::{api::NodeInfo, info};
 use server::{
     api::{ApiModule, ApiModuleCtx},
@@ -169,18 +168,7 @@ async fn actual_main(args: Args, mut config: Conf) -> Result<()> {
     }
     let bus = SharedMessageBus::new(BusMetrics::global());
 
-    let registry = Registry::new();
-    // Init global metrics meter we expose as an endpoint
-    let provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-        .with_reader(
-            opentelemetry_prometheus::exporter()
-                .with_registry(registry.clone())
-                .build()
-                .context("starting prometheus exporter")?,
-        )
-        .build();
-
-    opentelemetry::global::set_meter_provider(provider.clone());
+    let registry = hyli_modules::telemetry::init_prometheus_registry_meter_provider()?;
 
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
