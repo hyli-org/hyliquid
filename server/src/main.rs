@@ -103,6 +103,8 @@ async fn actual_main(args: Args, mut config: Conf) -> Result<()> {
 
     let config = Arc::new(config);
 
+    let registry = hyli_modules::telemetry::init_prometheus_registry_meter_provider()?;
+
     info!("Starting orderbook with config: {:?}", &config);
     info!("Args: {:?}", args);
 
@@ -166,9 +168,8 @@ async fn actual_main(args: Args, mut config: Conf) -> Result<()> {
             }
         }
     }
-    let bus = SharedMessageBus::new(BusMetrics::global());
 
-    let registry = hyli_modules::telemetry::init_prometheus_registry_meter_provider()?;
+    let bus = SharedMessageBus::new(BusMetrics::global());
 
     let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
