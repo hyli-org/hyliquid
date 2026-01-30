@@ -10,7 +10,7 @@ node_url = "http://localhost:4321"
 indexer_url = "http://localhost:4321"
 indexer_database_url = "postgresql://postgres:postgres@localhost:5432/hyli_indexer"
 
-database_url = "postgresql://postgres:postgres@localhost:5432"
+database_url = "postgresql://postgres:postgres@localhost:5432/{db}"
 database_name = "orderbook"
 
 buffer_blocks = 0

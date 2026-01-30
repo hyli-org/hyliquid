@@ -10,6 +10,7 @@ use hyli_modules::{
         rest::{RestApi, RestApiRunContext},
         BuildApiContextInner, ModulesHandler,
     },
+    utils::db::use_fresh_db,
     utils::logger::setup_otlp,
 };
 use prometheus::Registry;
@@ -82,15 +83,26 @@ fn main() -> Result<()> {
     runtime.block_on(actual_main(args, config))
 }
 
-async fn actual_main(args: Args, config: Conf) -> Result<()> {
+async fn actual_main(args: Args, mut config: Conf) -> Result<()> {
     setup_otlp(&config.log_format, "hyliquid".into(), args.tracing)?;
-
-    let config = Arc::new(config);
 
     if args.clean_data_directory && std::fs::exists(&config.data_directory).unwrap_or(false) {
         info!("Cleaning data directory: {:?}", &config.data_directory);
         std::fs::remove_dir_all(&config.data_directory).context("cleaning data directory")?;
     }
+
+    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
+    let had_db_placeholder = config.database_url.contains("{db}");
+    use_fresh_db(&config.data_directory, &mut config.database_url).await?;
+    if had_db_placeholder {
+        if let Some((_, db_name)) = config.database_url.rsplit_once('/') {
+            if !db_name.is_empty() {
+                config.database_name = db_name.to_string();
+            }
+        }
+    }
+
+    let config = Arc::new(config);
 
     info!("Starting orderbook with config: {:?}", &config);
     info!("Args: {:?}", args);
@@ -156,8 +168,6 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         }
     }
     let bus = SharedMessageBus::new(BusMetrics::global());
-
-    std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
     let registry = Registry::new();
     // Init global metrics meter we expose as an endpoint
