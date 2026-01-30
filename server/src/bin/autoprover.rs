@@ -100,6 +100,8 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     info!("Building Proving Key");
     let prover = SP1Prover::new(pk).await;
 
+    let _ = hyli_modules::telemetry::init_prometheus_registry_meter_provider()?;
+
     let bus = SharedMessageBus::new(BusMetrics::global());
     std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
