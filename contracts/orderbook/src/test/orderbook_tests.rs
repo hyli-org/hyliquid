@@ -120,7 +120,7 @@ fn run_action(
             .into(),
         tx_blob_count: 1,
         index: BlobIndex(0),
-        tx_hash: TxHash::from("test-tx-hash"),
+        tx_hash: TxHash::from("test-tx-hash".as_bytes()),
         tx_ctx: Some(tx_ctx.clone()),
         private_input: borsh::to_vec(&permissioned_private_input).expect("serialize private input"),
     };
@@ -1861,7 +1861,7 @@ fn test_escape_cancels_orders_and_resets_balances() {
         tx_blob_count: blobs.len(),
         blobs: blobs.into(),
         index: BlobIndex(0),
-        tx_hash: TxHash::from("escape-test-tx"),
+        tx_hash: TxHash::from("escape-test-tx".as_bytes()),
         tx_ctx: Some(escape_ctx),
         private_input: Vec::new(),
     };
