@@ -155,7 +155,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
             }
         }
     }
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
 
     std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
@@ -172,7 +172,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
 
     opentelemetry::global::set_meter_provider(provider.clone());
 
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     let api_ctx = Arc::new(BuildApiContextInner {
         router: std::sync::Mutex::new(Some(Router::new())),

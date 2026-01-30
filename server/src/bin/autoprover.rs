@@ -100,7 +100,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
     info!("Building Proving Key");
     let prover = SP1Prover::new(pk).await;
 
-    let bus = SharedMessageBus::new(BusMetrics::global(config.id.clone()));
+    let bus = SharedMessageBus::new(BusMetrics::global());
     std::fs::create_dir_all(&config.data_directory).context("creating data directory")?;
 
     let api_ctx = Arc::new(BuildApiContextInner {
@@ -117,7 +117,7 @@ async fn actual_main(args: Args, config: Conf) -> Result<()> {
         pool: pool.clone(),
     });
 
-    let mut handler = ModulesHandler::new(&bus).await;
+    let mut handler = ModulesHandler::new(&bus, config.data_directory.clone()).await;
 
     handler
         .build_module::<ContractListener>(ContractListenerConf {
