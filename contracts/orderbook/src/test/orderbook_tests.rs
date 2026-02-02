@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use borsh::BorshDeserialize;
 use k256::ecdsa::signature::DigestSigner;
 use k256::ecdsa::{Signature, SigningKey};
-use sdk::{guest, BlockHeight, LaneId, StateCommitment};
+use sdk::{guest, info, BlockHeight, LaneId, StateCommitment};
 use sdk::{tracing, ContractAction};
 use sdk::{BlobIndex, Calldata, ContractName, Identity, TxContext, TxHash};
 use sha3::{Digest, Sha3_256};
@@ -67,7 +67,7 @@ fn get_ctx() -> (ContractName, Identity, TxContext, LaneId, Vec<u8>) {
 }
 
 #[allow(dead_code)]
-#[derive(BorshDeserialize)]
+#[derive(BorshDeserialize, Debug)]
 struct OwnedCommitment {
     users_info_root: H256,
     balances_roots: BTreeMap<String, H256>,
@@ -543,6 +543,39 @@ fn test_multiple_deposits_state_commitment() {
     assert!(
         !second_parsed.balances_roots.contains_key(&quote_symbol),
         "quote symbol should not appear after chained deposits"
+    );
+}
+
+#[test_log::test]
+fn test_deposits_state_commitment() {
+    let ctx = get_ctx();
+    let lane_id = ctx.3.clone();
+    let secret = ctx.4.clone();
+    let mut light = ExecuteState::default();
+    let mut full = FullState::from_data(
+        &light,
+        secret.clone(),
+        lane_id.clone(),
+        BlockHeight::default(),
+    )
+    .expect("building full state");
+
+    let base_symbol = "HYLLAR".to_string();
+
+    let amount = 1_000_u64;
+    let _ = deposit(&mut light, &mut full, "alice", &base_symbol, amount);
+    let commitment = full.commit();
+    let parsed = decode_commitment(&commitment);
+
+    info!("commitment after deposit: {:#?}", parsed);
+
+    let root = *parsed
+        .balances_roots
+        .get(&base_symbol)
+        .unwrap_or_else(|| panic!("missing {base_symbol} root after first deposit"));
+    assert!(
+        root.as_ref().iter().any(|byte| *byte != 0),
+        "base symbol root should be non-zero after first deposit"
     );
 }
 
