@@ -8349,6 +8349,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ce2be8dc25455e1f91df71bfa12ad37d7af1092ae736f3a6cd0e37bc7810596"
 
 [[package]]
+name = "state-core"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "hex",
+ "hyli-contract-sdk",
+ "sha2",
+ "sparse-merkle-tree",
+]
+
+[[package]]
+name = "state-example"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "sha2",
+ "sparse-merkle-tree",
+ "state-core",
+ "state-macros",
+]
+
+[[package]]
+name = "state-macros"
+version = "0.1.0"
+dependencies = [
+ "borsh",
+ "proc-macro2",
+ "quote",
+ "sha2",
+ "sparse-merkle-tree",
+ "state-core",
+ "syn 2.0.106",
+]
+
+[[package]]
 name = "static_assertions"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
