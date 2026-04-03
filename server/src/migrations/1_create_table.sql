@@ -5,7 +5,7 @@
 --------------------
 CREATE TABLE commits (
   commit_id      bigint PRIMARY KEY,
-  tx_hash        text NOT NULL,
+  tx_hash        bytea NOT NULL,
   authored_at    timestamptz NOT NULL DEFAULT now(),
   message        text NOT NULL DEFAULT ''
 );
@@ -200,7 +200,7 @@ CREATE TABLE balance_events (
 
 CREATE TABLE prover_requests (
   commit_id bigint NOT NULL,
-  tx_hash text NOT NULL,
+  tx_hash bytea NOT NULL,
   request bytea NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
