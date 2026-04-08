@@ -1,6 +1,14 @@
 [workspace]
 resolver = "2"
-members = ["contracts", "contracts/orderbook", "server", "loadtest"]
+members = [
+    "macros/state-core",
+    "macros/state-macros",
+    "examples/state-example",
+    "contracts",
+    "contracts/orderbook",
+    "server",
+    "loadtest"
+]
 
 [workspace.dependencies]
 sdk = { git = "https://github.com/hyli-org/hyli.git", package = "hyli-contract-sdk", branch = "main" }
